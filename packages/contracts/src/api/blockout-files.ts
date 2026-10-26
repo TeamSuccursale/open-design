@@ -1,10 +1,12 @@
 import { type BlockoutDocument } from './blockout.js';
 import type { BlockoutFitAssessment } from './blockout-fit.js';
+import type { BlockoutReserveAdjustment } from './blockout-geometry.js';
 
 export const BLOCKOUT_DOCUMENTS_PATH = 'blockouts/.documents.json';
 export type BlockoutDocumentEntry = { id: string; title: string };
 export interface BlockoutDocumentCatalog { version: 1; documents: BlockoutDocumentEntry[] }
-export interface BlockoutWorkspaceResponse { document: BlockoutDocument | null; raw: string | null; comparisonPath?: string; comparisonError?: string; assessment?: BlockoutFitAssessment }
+/** `reserveAdjustments` lists the pages a run-authored save pulled out of the header/footer reserve. */
+export interface BlockoutWorkspaceResponse { document: BlockoutDocument | null; raw: string | null; comparisonPath?: string; comparisonError?: string; assessment?: BlockoutFitAssessment; reserveAdjustments?: BlockoutReserveAdjustment[] }
 export interface SaveBlockoutWorkspaceRequest { document: BlockoutDocument; baseRaw: string | null; startingPoint?: boolean }
 /** Legacy preview messages open selection; only an explicit saved choice may open editing. */
 export const BLOCKOUT_PREVIEW_OPEN = 'melillodesign:blockout-page-open';

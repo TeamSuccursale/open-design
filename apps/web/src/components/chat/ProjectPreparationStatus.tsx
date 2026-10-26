@@ -3,7 +3,7 @@ import { Button } from '@open-design/components';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { workspaceIdentityCacheKey } from '../../collab/workspace-identity';
-import { projectPreparationStatus, type CustodianStatusSnapshot, type IntakeStatusSnapshot, type PreparationState, type ResearchStatusSnapshot } from '../../runtime/chat/project-preparation-status';
+import { isImageIntakeSource, projectPreparationStatus, type CustodianStatusSnapshot, type IntakeStatusSnapshot, type PreparationState, type ResearchStatusSnapshot } from '../../runtime/chat/project-preparation-status';
 import { projectPreparationSources } from '../../runtime/chat/project-preparation-sources';
 import { ProjectIntakeProgress } from './ProjectIntakeProgress';
 import { DocumentResearchStatus } from './DocumentResearchStatus';
@@ -11,7 +11,7 @@ import { Icon, type IconName } from '../Icon';
 import styles from './ProjectPreparationStatus.module.css';
 
 interface Props { projectId: string; workspaceContext?: WorkspaceCollabContext | null; onIntakeSnapshot?: (snapshot: IntakeStatusSnapshot) => void }
-const stateIcons: Record<PreparationState, IconName> = { waiting: 'history', working: 'refresh', ready: 'check', attention: 'alert-triangle' };
+const stateIcons: Record<PreparationState, IconName> = { waiting: 'history', working: 'refresh', ready: 'check', attention: 'alert-triangle', none: 'minus' };
 
 export function ProjectPreparationStatus(props: Props) {
   return <PreparationStatusScope key={`${props.projectId}\0${workspaceIdentityCacheKey(props.workspaceContext)}`} {...props} />;
@@ -43,7 +43,7 @@ function PreparationStatusScope({ projectId, workspaceContext, onIntakeSnapshot 
         <tbody>{sources.map((source) => <tr key={source.path} data-testid="preparation-source">
           <th scope="row"><span>{source.title}</span><small>{source.path}</small>{source.stale || source.failed ? <span className={styles.sourceWarning}><Icon name="alert-triangle" size={12} />{t('projectStatus.attention')}</span> : null}</th>
           <td>{source.total ? `${source.textPages} / ${source.total}` : t('projectStatus.waiting')}</td>
-          <td>{custodian?.ledger?.imageConsent === false ? t('projectStatus.imagesOff') : source.total ? `${source.imagePages} / ${source.total}` : t('projectStatus.waiting')}</td>
+          <td>{custodian?.ledger?.imageConsent === false ? t('projectStatus.imagesOff') : !isImageIntakeSource(source.path) ? t('projectStatus.imagesNotApplicable') : source.total ? `${source.imagePages} / ${source.total}` : t('projectStatus.waiting')}</td>
         </tr>)}</tbody>
       </table> : <p className={styles.emptySources}>{t(status.text === 'working' || status.images === 'working' ? 'projectStatus.discoveringSources' : 'projectStatus.noIndexedSources')}</p>}
       <ProjectIntakeProgress projectId={projectId} workspaceContext={workspaceContext} onSnapshot={setIntake} />

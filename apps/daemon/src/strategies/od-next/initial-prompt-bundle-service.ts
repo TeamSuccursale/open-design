@@ -71,6 +71,8 @@ type ResearchInput = {
 export interface OdNextInitialPromptMeta {
   agentId: string;
   doneKey?: unknown;
+  /** Set by the run route for the host's own dispatch of a form-confirmed brief. */
+  odNextConfirmedBriefRequest?: unknown;
   message?: unknown;
   currentPrompt?: unknown;
   priorTranscript?: unknown;
@@ -359,7 +361,7 @@ export function createOdNextInitialPromptBundleService(
       clientSystemPrompt: [
         renderChatTurnHostProtocolInstructions(
           stringValue(meta.doneKey) ?? '',
-          'od_next_request',
+          meta.odNextConfirmedBriefRequest === true ? 'od_next_confirmed_request' : 'od_next_request',
           // Same run locale the Bundle's own system prompt was composed with
           // (OPEND-2765): the follow-up suggestions are user-visible prose and
           // must not fall back to English on a localized run.

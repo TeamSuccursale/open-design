@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BlockoutDesignRecordRequestSchema, BlockoutDesignStateSchema, BlockoutDocumentSchema, BlockoutHandoffSchema, blockoutHandoffSnapshot, blockoutWorkspacePath, type BlockoutDesignState, type BlockoutDesignRevision, type BlockoutDesignUnderlay } from '@open-design/contracts';
 import { containedIntakePath } from './project-intake-settings.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 
 export type BlockoutDesignRunTarget = Readonly<{ projectId: string; documentId: string; handoffId: string; handoffSha256: string }>;
 export type BlockoutDesignRun = { projectId: string | null; status: string; deliverableValid?: boolean; blockoutDesignTargets?: readonly BlockoutDesignRunTarget[] };
@@ -25,7 +26,10 @@ async function write(root: string, file: string, content: string): Promise<void>
   if (Buffer.byteLength(content) > 2_000_000) throw new Error('Design metadata exceeds its size limit');
   const folder = await containedIntakePath(root, path.posix.dirname(file), true); await mkdir(folder, { recursive: true });
   const target = await containedIntakePath(root, file), temporary = await containedIntakePath(root, `${file}.${randomUUID()}.tmp`);
-  await withProjectHistoryMutation({ root, paths: [file] }, async () => { await writeFile(temporary, content, { flag: 'wx' }); await rename(temporary, target); });
+  await withProjectHistoryMutation({ root, paths: [file] }, async () => {
+    try { await writeFile(temporary, content, { flag: 'wx' }); await replaceFileAtomically(temporary, target); }
+    finally { await rm(temporary, { force: true }); }
+  });
 }
 async function stored(root: string, id: string): Promise<BlockoutDesignState> {
   const value = await text(root, `${prefix(id)}/state.json`);

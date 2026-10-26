@@ -110,7 +110,7 @@ export async function historyTree(git: ProjectHistoryGit, files: StoredHistoryFi
     const entries: string[] = [];
     for (const [name, child] of tree.children) entries.push(`040000 tree ${await write(child)}\t${name}\0`);
     for (const file of tree.files) entries.push(`${file.mode & 0o111 ? '100755' : '100644'} blob ${file.hash}\t${file.path.split('/').at(-1)}\0`);
-    return (await git.run(['mktree', '-z'], Buffer.from(entries.join('')))).trim();
+    return git.tree(entries.join(''));
   };
   return write(root);
 }

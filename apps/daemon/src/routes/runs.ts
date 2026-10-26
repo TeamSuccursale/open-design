@@ -3,7 +3,7 @@ import { DocumentReferenceError, parseDocumentReferences, resolveConversationDoc
 import { blockoutHandoffDisplayName, isBlockoutHandoffAttachment, loadBlockoutContext, prepareBlockoutContextFiles, setRunBlockoutContext } from '../services/blockout-context.js';
 import type { BlockoutDesignRunTarget } from '../services/blockout-design.js';
 import { normalizeRunContextSelection } from '../runtimes/chat-run-context.js';
-import { documentSetupRunGate, prepareDocumentSetupContextFiles, readDocumentSetup } from '../services/document-setup.js';
+import { confirmedBlockoutDispatch, documentSetupRunGate, prepareDocumentSetupContextFiles, readDocumentSetup } from '../services/document-setup.js';
 import { readDocumentProjectReferences, resolveDocumentProjectReferences } from '../services/document-project-contexts.js';
 import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
@@ -2572,6 +2572,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         // freeze their private text, not a possibly virtual parent file path.
         const privateBlockoutContextFiles = await prepareBlockoutContextFiles(projectRoot, [], activeDocumentId, undefined, preparedBlockoutContext);
         const privateDocumentSetupFiles = runProject?.metadata?.projectMode === 'fast' ? [] : await prepareDocumentSetupContextFiles(projectRoot, meta.projectId!, runProject?.metadata?.documentSetupIntent, activeDocumentId);
+        // The engineer's form acceptance already approved this Blockout request: its request turn produces.
+        if (runProject?.metadata?.projectMode !== 'fast' && await confirmedBlockoutDispatch(projectRoot, meta, runProject?.metadata?.documentSetupIntent, meta.projectId)) meta.odNextConfirmedBriefRequest = true;
         createdTaskInputSnapshot = createOdNextTaskInputSnapshot({
           documentReferenceContext: documentReferencePrompt,
           snapshotsRoot: taskInputSnapshotsRoot,

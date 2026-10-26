@@ -37,11 +37,11 @@
       "assets": {
         "core": {
           "path": "./assets/core-system-prompt.md",
-          "version": "3.2.0"
+          "version": "3.2.1"
         },
         "orchestration": {
           "path": "./assets/general-orchestration.md",
-          "version": "3.2.0"
+          "version": "3.2.1"
         },
         "taskProfiles": [
           {

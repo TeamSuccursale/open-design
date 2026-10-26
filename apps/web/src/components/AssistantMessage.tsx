@@ -128,13 +128,16 @@ type TranslateFn = (
 
 // The host reports whether it accepted the answer into a real chat turn. A
 // `false` result means a pre-run guard (for example the AMR balance gate)
-// prevented the send, so the inline form must remain editable.
+// prevented the send, so the inline form must remain editable. `answers` is
+// the submitted values by question id, only for an explicit submit (never a
+// skip), so a host-owned form can act on them without parsing the text.
 export type QuestionFormSubmitHandler = (
   text: string,
   attachments?: ChatAttachment[],
   context?: RunContextSelection,
   sourceAssistantMessageId?: string,
   formId?: string,
+  answers?: Readonly<Record<string, string | string[]>>,
 ) => boolean | void | Promise<boolean | void>;
 
 const viewedInlineQuestionForms = new Set<string>();
@@ -3457,11 +3460,12 @@ function FormBlock({
         setDraftAnswers(undefined);
       };
       let submitOutcome: boolean | void | Promise<boolean | void>;
+      const submittedAnswers = source === "submit" ? answers : undefined;
       try {
         submitOutcome =
           attachments.length > 0 || context
-            ? onSubmit?.(submittedText, attachments, context, undefined, form.id)
-            : onSubmit?.(submittedText, undefined, undefined, undefined, form.id);
+            ? onSubmit?.(submittedText, attachments, context, undefined, form.id, submittedAnswers)
+            : onSubmit?.(submittedText, undefined, undefined, undefined, form.id, submittedAnswers);
       } catch {
         void rejectSubmission();
         return;

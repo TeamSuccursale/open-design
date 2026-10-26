@@ -5,6 +5,7 @@ import { allowQuestionTimeout } from '../runtime/chat/question-timeout-policy';
 import { reportExperienceEvent } from '../observability/experience-diagnostics';
 import { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { headerFooterRequestDisplay } from '../runtime/chat/header-footer-request-display';
+import { documentPreparationResumeDisplay } from '../runtime/document-preparation-continuation';
 export { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { QuoteBar } from './chat/QuoteBar';
 import { UserSendFailure } from './chat/UserSendFailure';
@@ -165,6 +166,7 @@ import {
   daemonFailureVerdictFrom,
   failureCardHandedToAmrBalanceCard,
   formatModelWindowRetryAt,
+  hasSelfContainedRecovery,
   isReconnectOwnedFailure,
   resolveRunErrorCardDescription,
   resolveRunFailureUi,
@@ -2341,11 +2343,16 @@ export function ChatPane({
   // OPEND-2807 / G16: the failed run selects one fixed recovery action.
   // The classifier still owns approved copy and handoffs, never extra buttons.
   const failedRunUsesCloud = retryAssistant?.agentId === 'amr';
-  const showCloudRetry = Boolean(retryAssistant && failedRunUsesCloud && onRetry);
   const showCloudSwitchCta = Boolean(
     retryAssistant && !failedRunUsesCloud
     && (onSwitchToAmrAndRetry || onOpenAmrSettings),
   );
+  // A host without a Cloud route (MelilloDesign runs the user's own CLI) must
+  // still offer a way forward: retry the same agent once its cause is fixed —
+  // but only where the classification says a retry can recover.
+  const showRetry = Boolean(retryAssistant && onRetry && (
+    failedRunUsesCloud || (!showCloudSwitchCta && hasSelfContainedRecovery(runFailureUi))
+  ));
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   // The separate balance card retains its existing plans entry.
   const openAmrPlans = useCallback((entrySource: 'chat_upgrade_card') => {
@@ -2366,10 +2373,10 @@ export function ChatPane({
   const visibleRecoveryActionTypes = useMemo(() => {
     const actions: TrackingRunRecoveryActionType[] = [];
     if (!displayError) return actions;
-    if (showCloudRetry) actions.push('manual_retry');
+    if (showRetry) actions.push('manual_retry');
     if (showCloudSwitchCta && onSwitchToAmrAndRetry) actions.push('switch_runtime_retry');
     return actions;
-  }, [displayError, onSwitchToAmrAndRetry, showCloudRetry, showCloudSwitchCta]);
+  }, [displayError, onSwitchToAmrAndRetry, showRetry, showCloudSwitchCta]);
   const recoveryAnalyticsProps = useCallback((
     assistantMessage: ChatMessage,
     actionType: TrackingRunRecoveryActionType,
@@ -4395,7 +4402,7 @@ export function ChatPane({
                           type="button" variant="primary" data-testid="chat-conversation-read-retry"
                           disabled={loading} onClick={onRetryConversationRead}
                         ><Icon name="refresh" size={11} />{t('promptTemplates.retry')}</RunErrorCardAction> : null}
-                        {showCloudRetry && retryAssistant && onRetry ? (
+                        {showRetry && retryAssistant && onRetry ? (
                           <RunErrorCardAction
                             type="button"
                             variant="primary"
@@ -5323,13 +5330,14 @@ function ChatRows({
         hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
         onSubmitQuestionForm={
           onSubmitQuestionForm
-            ? (text, attachments, context, _sourceAssistantMessageId, formId) =>
+            ? (text, attachments, context, _sourceAssistantMessageId, formId, answers) =>
                 assistantCallbacksRef.current.onSubmitQuestionForm?.(
                   text,
                   attachments,
                   context,
                   m.id,
                   formId,
+                  answers,
                 )
             : undefined
         }
@@ -6537,11 +6545,14 @@ const UserMessage = memo(UserMessageImpl);
      重发走的是 `message.content`(`handleResendUserMessage`),头一行原样保留。 */
   const headerFooterRequest = headerFooterRequestDisplay(message.content);
   const blockoutSetupRequest = message.content === DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT;
+  const preparationResume = documentPreparationResumeDisplay(message.content);
   const displayContent = isDesignSystemWorkspaceRequest
     ? t('chat.designSystemStatus.title')
     : headerFooterRequest
       ? t(headerFooterRequest.action === 'propose' ? 'documentChat.headerFooterPropose' : 'documentChat.headerFooterRefine', { name: headerFooterRequest.name })
-      : blockoutSetupRequest ? t('documentChat.blockoutStart') : formAnswersDisplayBody(message.content);
+      : blockoutSetupRequest ? t('documentChat.blockoutStart')
+        : preparationResume ? preparationResume.names ? t('documentChat.preparationResume', { name: preparationResume.names }) : t('documentChat.preparationResumeDocument')
+          : formAnswersDisplayBody(message.content);
 
   useEffect(() => {
     return () => {
@@ -6608,7 +6619,7 @@ const UserMessage = memo(UserMessageImpl);
                 description={t('chat.designSystemStatus.description')}
               />
             ) : (
-              <UserBubble content={displayContent} detailsContent={headerFooterRequest || blockoutSetupRequest ? message.content : undefined} t={t} />
+              <UserBubble content={displayContent} detailsContent={headerFooterRequest || blockoutSetupRequest || preparationResume ? message.content : undefined} t={t} />
             )}
             <div className="user-actions">
               {/* 稿子**渲染出来**是「时间 → 复制 → 重试」(它的说明文字写的是「时间在最右」,

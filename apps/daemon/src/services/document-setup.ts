@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
-  BLOCKOUT_LAYOUT_PATH, BLOCKOUT_START_PATH, documentSetupPath, DOCUMENT_SETUP_DELIVERABLE_SCOPE, ENGINEER_GRAPHICS_SKILL_SCOPE,
-  DocumentSetupConfirmationSchema, DocumentSetupIntentSchema, DocumentSetupSchema, DocumentPresentationSchema, documentPresentationMissingChoices, blockoutWorkspacePath,
-  createBlockoutDocument, createBlockoutPage, deriveBlockoutPageBudget,
+  BLOCKOUT_START_PATH, documentSetupPath, DOCUMENT_SETUP_DELIVERABLE_SCOPE, ENGINEER_GRAPHICS_SKILL_SCOPE,
+  DocumentSetupConfirmationSchema, DocumentSetupIntentSchema, DocumentSetupSchema, DocumentSetupSavedBriefConfirmationSchema, DocumentPresentationSchema, documentPresentationMissingChoices,
+  createBlockoutDocument, createBlockoutPage, deriveBlockoutPageBudget, renderDocumentSetupConfirmationForm, type DocumentSetupConfirmation,
   type DocumentContextSource, type DocumentLayoutConstraint, type DocumentSetup,
   type DocumentSetupIntent, type DocumentProjectContext, type DocumentContextScan, type DocumentTextContext, type ProjectMetadata,
 } from '@open-design/contracts';
@@ -15,8 +15,9 @@ import { validateLinkedDirs } from '../linked-dirs.js';
 import { containedIntakePath, insideDirectory, readIntakeConfig } from './project-intake-settings.js';
 import { loadDocumentOverviewReadingContext } from './document-overview-reading-context.js';
 import { readDocumentProjectReferences, saveDocumentProjectReferences } from './document-project-contexts.js';
-import { readBlockoutWorkspace, saveBlockoutWorkspace, saveBlockoutCatalog } from './blockout-workspaces.js';
+import { readBlockoutWorkspace, seedBlockoutWorkspaces } from './blockout-workspaces.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 
 const stamp = () => new Date().toISOString();
 const identity = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -35,8 +36,10 @@ async function writeProjectJson(root: string, relative: string, value: unknown):
   const target = await containedIntakePath(root, relative);
   const temporary = await containedIntakePath(root, `${relative}.${randomUUID()}.tmp`);
   await withProjectHistoryMutation({ root, paths: [relative] }, async () => {
-    await writeFile(temporary, typeof value === 'string' ? value : JSON.stringify(value, null, 2), { flag: 'wx' });
-    await rename(temporary, target);
+    try {
+      await writeFile(temporary, typeof value === 'string' ? value : JSON.stringify(value, null, 2), { flag: 'wx' });
+      await replaceFileAtomically(temporary, target);
+    } finally { await rm(temporary, { force: true }); }
   });
 }
 function draft(root: string, intent: DocumentSetupIntent, projectId?: string): DocumentSetup {
@@ -368,15 +371,25 @@ async function seedBlockout(root: string, setup: DocumentSetup): Promise<void> {
     }));
     return document;
   });
-  for (const [index, document] of documents.entries()) {
-    try { await stat(await containedIntakePath(root, blockoutWorkspacePath(document.documentId))); continue; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    // Avoid creating an unrelated placeholder document-1 in a new multi-output catalog.
-    try { await stat(await containedIntakePath(root, 'blockouts/.documents.json')); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      if (!existsSync(path.join(root, BLOCKOUT_LAYOUT_PATH))) await saveBlockoutCatalog(root, { version: 1, documents: [] }); }
-    await saveBlockoutWorkspace(root, document.documentId, { document, baseRaw: null, startingPoint: index === 0 });
-  }
+  await seedBlockoutWorkspaces(root, documents);
+}
+/**
+ * A saved-brief confirmation confirms what the agent saved, never more: the
+ * purpose and each output's own constraints and page target must already be
+ * in the intent. Anything missing is refused, so the answer goes back to the
+ * agent instead of the host confirming a partial brief.
+ */
+function savedBriefConfirmation(setup: DocumentSetup, input: unknown): DocumentSetupConfirmation | null {
+  if (!input || typeof input !== 'object' || (input as { source?: unknown }).source !== 'saved-brief') return null;
+  const { blockoutApproach } = DocumentSetupSavedBriefConfirmationSchema.parse(input);
+  const purpose = setup.intent.purpose.trim(), settings = setup.intent.editorialSettings ?? [];
+  if (!purpose) throw new Error('Save the brief purpose with document-setup set before the host can confirm it');
+  if (!settings.length) throw new Error('Confirm the named documents and editorial choices before confirming the brief');
+  const missing = settings.find((setting) => !setting.constraints?.length);
+  if (missing) throw new Error(`Save the formatting constraints of ${missing.presentation.name || missing.documentId} with document-setup set before the host can confirm the brief`);
+  // The first output's rules double as the top-level constraints, as an agent confirm of the same brief would send them.
+  const [first] = settings;
+  return { purpose, constraints: first!.constraints!, blockoutApproach, editorialSettings: settings, ...(first!.pageTarget === undefined ? {} : { pageTarget: first!.pageTarget }) };
 }
 export async function confirmDocumentSetup(root: string, input: unknown, metadata?: ProjectMetadata | null, projectId?: string): Promise<DocumentSetup> {
   return serialized(root, async () => {
@@ -384,7 +397,7 @@ export async function confirmDocumentSetup(root: string, input: unknown, metadat
     if (!setup) throw new Error('Choose the document type first');
     if (setup.scan.status !== 'complete') throw new Error('Run the quick context check before confirming');
     if (!setup.intent.imageIntakeDecision && !setup.intent.imageIntakeConsent) throw new Error('Choose whether to start image extraction or continue without it before confirming');
-    const parsed = DocumentSetupConfirmationSchema.parse(input);
+    const parsed = savedBriefConfirmation(setup, input) ?? DocumentSetupConfirmationSchema.parse(input);
     const editorialSettings = parsed.editorialSettings ?? setup.intent.editorialSettings;
     if (!editorialSettings?.length) throw new Error('Confirm the named documents and editorial choices before confirming the brief');
     for (const setting of editorialSettings) {
@@ -407,6 +420,18 @@ export async function confirmDocumentSetup(root: string, input: unknown, metadat
     await seedBlockout(root, updated);
     await writeProjectJson(root, documentSetupPath(projectId), updated); return updated;
   });
+}
+
+/**
+ * True only for the Blockout request the host sends under the setup's own
+ * saved request id once an agent-proposal brief is confirmed. That request
+ * already carries the engineer's acceptance, so it needs no planning turn.
+ */
+export async function confirmedBlockoutDispatch(root: string, request: { clientRequestId?: unknown; sessionMode?: unknown }, metadataIntent?: unknown, projectId?: string): Promise<boolean> {
+  if (request.sessionMode !== 'blockout' || typeof request.clientRequestId !== 'string' || !request.clientRequestId) return false;
+  const setup = await readDocumentSetup(root, metadataIntent, projectId).catch(() => null);
+  return setup?.status === 'confirmed' && setup.confirmed?.blockoutApproach === 'agent'
+    && setup.intent.preparationConversation?.blockoutRequestId === request.clientRequestId;
 }
 
 export async function documentSetupRunGate(root: string, metadata?: ProjectMetadata | null, projectId?: string, sessionMode?: string, activeDocumentId?: string): Promise<string | null> {
@@ -455,9 +480,9 @@ export async function loadDocumentSetupContext(root: string, projectId?: string,
     const preparation = [ENGINEER_GRAPHICS_SKILL_SCOPE,
       PROJECT_CONTEXT_DISCOVERY,
       SETUP_CLI_WRAPPER,
-      'PREPARATION-ONLY CHAT: the document setup has not been confirmed. Talk naturally with the engineer and group correlated choices from the actual text and materials already read. Use one native <question-form> with valid JSON whose top-level object contains "layout":"grouped", alongside lang and questions. Prefer 3–6 related fields in that form, such as one named document’s paper, page count, orientation and typography, so the engineer can answer together. Do not serialize those choices into one-question-at-a-time turns. Ask fewer fields when fewer are unresolved; never add filler or unrelated questions to reach a quota. Do not present a static setup form, a readiness checklist or a long questionnaire. Do not generate blockouts, layouts or graphic design yet.',
+      'PREPARATION-ONLY CHAT: the document setup has not been confirmed. Talk naturally with the engineer and group correlated choices from the actual text and materials already read. Use one native <question-form> with valid JSON whose top-level object contains "layout":"grouped", alongside lang and questions. Prefer 3–6 related fields in that form, such as one named document’s paper, page count, orientation and typography, so the engineer can answer together. Do not serialize those choices into one-question-at-a-time turns. Ask fewer fields when fewer are unresolved; never add filler or unrelated questions to reach a quota. Do not present a static setup form, a readiness checklist or a long questionnaire. Do not generate blockouts, layouts or page graphics yet; the header/footer proposal below is the one graphic step that belongs to preparation.',
       DOCUMENT_SETUP_DELIVERABLE_SCOPE,
-      'HEADER/FOOTER HANDOFF DURING PREPARATION: after a named document is registered and its saved choices enable either recurring region, direct the engineer to its existing "Intestazione e piè di pagina" / "Header and footer" button. That workspace collects logos and guidance, offers compositions and sends the scoped graphic-development request through the host. The host sets the execution phase automatically. Do not tell the engineer to switch to Design mode or find a session-mode selector: preparation has no such visible control. Keep this preparation turn free of graphic generation, preserve explicit graphic-preview approval and application in the dedicated editor, then resume the remaining saved-brief confirmation without restarting setup.',
+      'HEADER/FOOTER DURING PREPARATION: when a named document’s saved choices enable either recurring region, ask in a grouped form what the enabled regions must contain and the logo decision, with its file control, unless the engineer already answered. Once answered, follow the header/footer workflow in this same preparation turn: save the shared design, its guidance and the relevant logos, compose the actual graphic proposal for every such document, validate it and stop with a one- or two-sentence summary. The host opens the dedicated editor on the proposal when the turn ends; the engineer approves and applies it there, edits it by hand, or asks for changes in this chat. Do not tell the engineer to open the editor to supply inputs, to switch to Design mode or to find a session-mode selector: preparation has no such visible control. Keep page Blockout and page graphics out of preparation, preserve explicit graphic-preview approval and application in the dedicated editor, then resume the remaining saved-brief confirmation without restarting setup.',
       `Document type: ${setup.intent.kind}; specific type: ${setup.intent.subtype}; current purpose draft: ${setup.intent.purpose}`,
       ...(setup.intent.documentName && !setup.intent.editorialSettings?.some((setting) => setting.presentation.name.trim()) ? [`First document name already supplied at creation (user data): ${JSON.stringify(setup.intent.documentName)}. It belongs to the initial document-1 output of type ${setup.intent.kind}, subtype ${JSON.stringify(setup.intent.subtype)}; do not ask for it again or transfer it to another deliverable. Additional outputs need their own names.`] : []),
       `Material intake answers (user data): ${JSON.stringify(setup.intent.intakeAnswers ?? {})}`,
@@ -466,8 +491,9 @@ export async function loadDocumentSetupContext(root: string, projectId?: string,
       'Resolve purpose/scope and supplied material in small coherent groups, then group the remaining format choices per named deliverable. Prefill sourced defaults using each question’s default field, cite file/page evidence in the short prose introducing the group, and distinguish a binding rule from a suggested graphical choice or an unknown. Do not silently invent a sourced default, ask again about saved answers/image choices, or transfer rules between deliverables. Persist the engineer’s answers using document-setup set; keep provisional source findings distinct from the engineer’s decisions. Emit the complete question-form as assistant text, outside a code fence, and stop the turn to receive its answers.',
       'PAGE-COUNT QUESTION: label the editable target "Pagine da impaginare" (or the conversation-language equivalent). Immediately explain the actual sourced rule separately, with file/page evidence: for example, "Il disciplinare consente al massimo 8 pagine" means a ceiling, not an exact requirement. A proposed target of 8 is only a planning suggestion under that maximum; say that the engineer may choose fewer. Only call the count mandatory when the source explicitly requires an exact count. Preserve an explicit engineer page-count choice as each output’s editorialSettings.pageTarget (and confirm.pageTarget for the first output), not as a replacement source limit. A smaller target is allowed under a maximum; an exact source count must match. With no source page allowance, pageTarget is a flexible planning target. Keep source provenance and the chosen orientation unchanged when confirming; never expand back to the tender maximum after the engineer selected fewer pages.',
       'UNANSWERED FORM: skipping, cancelling, closing a form or saying "non rispondere ora" leaves its unanswered fields unresolved. Skip is not consent, not delegation to decide, and not approval of a displayed default. Keep unanswered editorial booleans null and presentation.status:"draft". Do not choose mandatory editorial settings for the engineer after a skip, even when an older button says "decidi tu". Acknowledge the pause and let the engineer continue the conversation; ask unresolved required choices explicitly before final confirmation, without repeating answers already saved. Never report the brief confirmed or launch Blockout until the required answers and final consent are explicit.',
-      'Once the necessary points are resolved, give a concise sourced summary of each selected document’s purpose and graphic constraints, including file/page references, deferred outputs and remaining uncertainty. Then ask for explicit engineer confirmation and whether they will draw the first blocks manually or want three parallel proposals; these related final choices can share a grouped native form. Acknowledgment or silence is not confirmation.',
-      'After the engineer explicitly confirms the final brief and chooses manual blocks or three proposals, call document-setup confirm with the agreed purpose, selected constraints, blockoutApproach and every selected output’s confirmed editorialSettings, each with its own constraints/pageTarget. The command must succeed before reporting confirmation. Then STOP this preparation turn: do not generate any proposals or graphics here. The app will open the manual editor or launch the separate parallel Blockout run. Never edit preparationConversation dispatch markers; the app owns those durable request identities.',
+      'Once the necessary points are resolved, give a concise sourced summary of each selected document’s purpose and graphic constraints, including file/page references, deferred outputs and remaining uncertainty. Then ask for explicit engineer confirmation and whether they will draw the first blocks manually or want three parallel proposals, in the final confirmation form below. Before emitting it, save the complete agreed brief with document-setup set: the purpose and every selected output’s editorialSettings with its confirmed presentation, its own constraints and its pageTarget; the host confirms exactly what is saved. End the turn with this host-owned form, translating only the title, labels and option labels into the conversation language and keeping every id and option value exactly as written:',
+      renderDocumentSetupConfirmationForm(),
+      'Acknowledgment or silence is not confirmation. When the engineer accepts that form, the host records the confirmation and starts the next step from the saved brief: it opens the manual editor or launches the separate parallel Blockout run, and the answer does not come back to you. If its answers do reach you, either the engineer declined or the host could not confirm the saved brief as it stands. After a decline, ask what to change, save it and emit the same final form again. Otherwise complete the saved brief, then call document-setup confirm with the agreed purpose, selected constraints, blockoutApproach and every selected output’s confirmed editorialSettings, each with its own constraints/pageTarget. The command must succeed before reporting confirmation. Then STOP this preparation turn: do not generate any proposals or graphics here. The app will open the manual editor or launch the separate parallel Blockout run. Never edit preparationConversation dispatch markers; the app owns those durable request identities.',
       'Never invent an answer, approve the brief yourself or start image extraction merely because text was read. The user chooses through conversation; graphical generation remains gated until confirmation and later explicit Blockout structure acceptance. Do not expose private context JSON as the deliverable.',
       renderReferenceData(setup.projectContexts ?? [], setup.scan),
     ].join('\n');

@@ -272,18 +272,74 @@ describe('header and footer workflow', () => {
     expect(screen.getByRole('button', { name: 'Prepara l’anteprima grafica' })).toBeTruthy(); expect(screen.queryByRole('button', { name: 'Applica a Relazione tecnica B' })).toBeNull();
     expect(mocks.applyHeaderFooterSet).not.toHaveBeenCalled(); expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
   });
-  it('shows a saved graphic draft as actual graphics and opens review without applying it', async () => {
+  it('opens a single saved graphic proposal directly for review without applying it', async () => {
     const state = workspace(), set = state.sets[0]!;
     set.publishedRevision = null; set.revision = 0; set.draft.stage = 'graphic'; state.bindings = [];
+    set.draft.variants[0]!.blocks.push({ id: 'rule', region: 'footer', kind: 'rule', x: .1, y: .1, width: .8, height: .02 });
     mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
     mount();
-    const preview = await screen.findByRole('button', { name: 'Rivedi la grafica Studio tecnico' });
-    expect(preview.querySelector('image')?.getAttribute('href')).toBe('/logo.svg');
-    expect(screen.getByText('Grafica pronta da approvare', { exact: false })).toBeTruthy();
-    fireEvent.click(preview);
-    expect(screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.')).toBeTruthy();
+    expect(await screen.findByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Rivedi la proposta' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Piè di pagina: Separatore' })).toBeTruthy();
+    expect(screen.getByTestId('header-footer-canonical-graphics')).toBeTruthy();
+    expect(screen.queryByText('Scelta del modello')).toBeNull(); expect(screen.queryByText('Composizione delle fasce')).toBeNull();
     expect(mocks.applyHeaderFooterSet).not.toHaveBeenCalled();
     expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
+  });
+  it('applies one approved proposal to every waiting document whose format it provides', async () => {
+    const state = workspace(), set = state.sets[0]!;
+    set.publishedRevision = null; set.revision = 0; set.draft.stage = 'graphic'; state.bindings = [];
+    set.draft.variants.push({ ...structuredClone(set.draft.variants[0]!), id: 'a3', name: 'A3 orizzontale', pageWidthMm: 420, pageHeightMm: 297 });
+    state.documents[0]!.presentation = { ...createDocumentPresentation('Relazione tecnica B'), header: true, footer: true };
+    state.documents.push({ ...state.documents[0]!, id: 'booklet', name: 'Fascicolo grafico B', presentation: { ...createDocumentPresentation('Fascicolo grafico B'), header: false, footer: true } });
+    state.pageContexts = [{ documentId: 'report', totalPages: 8, initialFormat: { widthMm: 210, heightMm: 297 } }, { documentId: 'booklet', totalPages: 4, initialFormat: { widthMm: 420, heightMm: 297 } }];
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    const published = structuredClone(state); published.sets[0]!.revision = 1; published.bindings = [{ documentId: 'report', setId: 'studio', followUpdates: true, header: true, footer: true, showOnCover: false, version: 1, appliedRevision: 1, snapshot: null, status: 'applied', updatedAt: time }];
+    mocks.publishHeaderFooterSet.mockResolvedValue(published);
+    mount();
+    const scope = await screen.findByRole('region', { name: 'Ambito di applicazione' });
+    expect(scope.textContent).toContain('Relazione tecnica B'); expect(scope.textContent).toContain('Fascicolo grafico B');
+    // The other document's version is reached through the document picker; a format switch alone keeps this document's name and pages.
+    expect(screen.getByText(/scegli in alto l’altro documento per vedere la sua versione/)).toBeTruthy();
+    const confirm = screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.') as HTMLInputElement;
+    await waitFor(() => expect(confirm.disabled).toBe(false)); fireEvent.click(confirm);
+    fireEvent.click(screen.getByRole('button', { name: 'Applica intestazione e piè di pagina' }));
+    await waitFor(() => expect(mocks.applyHeaderFooterSet).toHaveBeenCalledWith('project', 'booklet', expect.objectContaining({ setId: 'studio', revision: 1, followUpdates: true, header: false, footer: true }), undefined));
+    expect(mocks.publishHeaderFooterSet).toHaveBeenCalledWith('project', 'studio', expect.objectContaining({ binding: expect.objectContaining({ documentId: 'report' }) }), undefined);
+    // Applying re-renders pages already laid out; the notice must not suggest a separate update.
+    expect(await screen.findByText('Applicato a 2 documenti, comprese le pagine già impostate.')).toBeTruthy();
+  });
+  it('names the regions a proposal applies, so a header switched off in the brief does not read as missing', async () => {
+    const state = workspace(), set = state.sets[0]!;
+    set.publishedRevision = null; set.revision = 0; set.draft.stage = 'graphic'; state.bindings = [];
+    state.documents[0]!.presentation = { ...createDocumentPresentation('Relazione tecnica B'), header: false, footer: true };
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount();
+    const scope = await screen.findByRole('region', { name: 'Ambito di applicazione' });
+    await waitFor(() => expect(scope.textContent).toContain('Applica il piè di pagina a'));
+    expect(scope.textContent).toContain('senza intestazione');
+  });
+  it('hands a requested change to the chat with the draft saved instead of applying it', async () => {
+    const state = workspace(), set = state.sets[0]!; set.publishedRevision = null; set.revision = 0; set.draft.stage = 'graphic'; state.bindings = [];
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state); const onEditInChat = vi.fn();
+    mount({ onEditInChat });
+    fireEvent.click(await screen.findByRole('button', { name: 'Chiedi una modifica in chat' }));
+    await waitFor(() => expect(onEditInChat).toHaveBeenCalledOnce());
+    expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled(); expect(mocks.applyHeaderFooterSet).not.toHaveBeenCalled();
+  });
+  it('does not credit the agent with the engineer’s own save when the server re-serialises the draft', async () => {
+    mocks.saveHeaderFooterDraft.mockImplementation(async (_project: string, id: string, input: { draft: HeaderFooterSet['draft']; expectedDraftVersion: number }) => {
+      const next = workspace(); const { variants, stage, guidance, name, version, ...rest } = input.draft;
+      next.sets = next.sets.map((item) => item.id === id ? { ...item, draft: { variants, stage, ...rest, guidance, name, version }, draftVersion: input.expectedDraftVersion + 1 } : item);
+      mocks.getHeaderFooterWorkspace.mockResolvedValue(next); return next;
+    });
+    mount({ startAt: 'editor' }); fireEvent.click(await screen.findByRole('button', { name: 'Modello' }));
+    fireEvent.change(screen.getByLabelText('Indicazioni'), { target: { value: 'Filetto sottile sopra.' } });
+    await waitFor(() => expect(mocks.saveHeaderFooterDraft).toHaveBeenCalled(), { timeout: 3000 });
+    await act(async () => { window.dispatchEvent(new CustomEvent('melillodesign:header-footer-updated', { detail: { projectId: 'project' } })); });
+    await waitFor(() => expect(mocks.getHeaderFooterWorkspace.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.queryByText('Composizione aggiornata dall’agente. Controlla la nuova bozza prima di applicarla.')).toBeNull();
+    expect((screen.getByLabelText('Indicazioni') as HTMLTextAreaElement).value).toBe('Filetto sottile sopra.');
   });
   it('places visual proposals before secondary creation and keeps saved agent instructions out of their cards', async () => {
     const state = workspace(), set = state.sets[0]!; set.publishedRevision = null; set.draft.guidance = 'INTERNAL MODEL POLICY: preserve every saved field'; state.bindings = []; mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
@@ -359,6 +415,97 @@ describe('header and footer workflow', () => {
     fireEvent.change(screen.getByLabelText('Documento delle fasce'), { target: { value: 'booklet' } });
     await waitFor(() => expect(onDocumentChange).toHaveBeenCalledWith('booklet'));
     expect(mocks.saveHeaderFooterDraft).toHaveBeenCalledWith('project', 'studio', expect.objectContaining({ draft: expect.objectContaining({ guidance: 'Bozza del documento prima del cambio.' }) }), undefined);
+  });
+  it('keeps the shared draft open when the picker shows another document that uses it', async () => {
+    const state = workspace(); state.documents[0]!.presentation = { ...createDocumentPresentation('Relazione tecnica B'), header: false, footer: true };
+    state.documents.push({ ...state.documents[0]!, id: 'booklet', name: 'Fascicolo grafico B', presentation: { ...createDocumentPresentation('Fascicolo grafico B'), header: false, footer: true } });
+    state.bindings[0]!.header = false; state.bindings.push({ ...state.bindings[0]!, documentId: 'booklet' });
+    mocks.getHeaderFooterWorkspace.mockImplementation(async () => structuredClone(state));
+    mocks.saveHeaderFooterDraft.mockImplementation(async (_project: string, _id: string, input: { draft: HeaderFooterSet['draft']; expectedDraftVersion: number }) => { state.sets[0] = { ...state.sets[0]!, draft: input.draft, draftVersion: input.expectedDraftVersion + 1 }; return structuredClone(state); });
+    const onDocumentChange = vi.fn((id: string) => { view.rerender(<I18nProvider initial="it"><HeaderFooterWorkspace projectId="project" documentId={id} onClose={vi.fn()} onDocumentChange={onDocumentChange} /></I18nProvider>); });
+    const view = mount({ onDocumentChange });
+    fireEvent.click(await screen.findByRole('button', { name: 'Modifica il modello in uso' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Campo dinamico' }));
+    fireEvent.change(screen.getByLabelText('Documento delle fasce'), { target: { value: 'booklet' } });
+    await waitFor(() => expect(onDocumentChange).toHaveBeenCalledWith('booklet'));
+    // The review help sends the engineer to the picker to see the other document's version of the same draft.
+    // The name field now shows the booklet, and the field added before the switch is still there.
+    expect(await screen.findAllByRole('button', { name: 'Piè di pagina: Fascicolo grafico B' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Piè di pagina: Nome progetto' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Modifica il modello in uso' })).toBeNull();
+  });
+  it('adds a dynamic field the strip does not show yet in the widest free gap of that strip', async () => {
+    mount({ startAt: 'editor' });
+    fireEvent.click(await screen.findByTestId('header-footer-block-document-name'));
+    fireEvent.click(screen.getByRole('button', { name: 'Campo dinamico' }));
+    const field = () => (screen.getByLabelText(/^Valore del documento/) as HTMLSelectElement).value;
+    const span = () => [Number((screen.getByLabelText('Posizione X (%)') as HTMLInputElement).value), Number((screen.getByLabelText('Larghezza (%)') as HTMLInputElement).value)] as const;
+    expect((screen.getByLabelText('Fascia') as HTMLSelectElement).value).toBe('footer');
+    // The footer already shows the document name across 10–80 %: the next field is another one, in the wider right-hand gap.
+    expect(field()).toBe('projectName');
+    let [x, width] = span(); expect(x).toBeGreaterThanOrEqual(80); expect(x + width).toBeLessThanOrEqual(100);
+    fireEvent.click(screen.getByRole('button', { name: 'Campo dinamico' }));
+    // With the right end taken too, the widest gap left is before the name.
+    expect(field()).toBe('pageNumber');
+    [x, width] = span(); expect(x).toBeGreaterThanOrEqual(0); expect(x + width).toBeLessThanOrEqual(10);
+    expect(screen.queryByText(/L’elemento supera il bordo sicuro/)).toBeNull();
+  });
+  it('shows which formats lack the selected element and copies it there at the same printed size and edge distance', async () => {
+    const state = workspace(), set = state.sets[0]!;
+    set.draft.variants.push({ ...structuredClone(set.draft.variants[0]!), id: 'a3', name: 'A3 orizzontale', pageWidthMm: 420, pageHeightMm: 297 });
+    set.draft.variants[0]!.blocks.push({ id: 'date', region: 'footer', kind: 'field', field: 'date', x: .82, y: .2, width: .16, height: .5 });
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount({ startAt: 'editor' });
+    fireEvent.click(await screen.findByTestId('header-footer-block-date'));
+    expect(screen.getByText('Questo elemento manca in A3 orizzontale.').getAttribute('role')).toBe('status');
+    // An element both formats already show is not offered for copying.
+    fireEvent.click(screen.getByTestId('header-footer-block-document-name'));
+    expect(screen.getByText('Presente anche in A3 orizzontale.').getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('button', { name: /^Copia in/ })).toBeNull();
+    fireEvent.click(screen.getByTestId('header-footer-block-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copia in A3 orizzontale' }));
+    expect(screen.getByText('Presente anche in A3 orizzontale.').getAttribute('role')).toBe('status');
+    fireEvent.change(screen.getByLabelText('Formato'), { target: { value: 'a3' } });
+    fireEvent.click(screen.getByTestId('header-footer-block-date'));
+    expect((screen.getByLabelText(/^Valore del documento/) as HTMLSelectElement).value).toBe('date');
+    // 4.2 mm from the right edge and 33.6 mm wide, as in A4, on a page twice as wide.
+    expect(Number((screen.getByLabelText('Posizione X (%)') as HTMLInputElement).value)).toBe(91);
+    expect(Number((screen.getByLabelText('Larghezza (%)') as HTMLInputElement).value)).toBe(8);
+    expect(Number((screen.getByLabelText('Posizione Y (%)') as HTMLInputElement).value)).toBe(20);
+    await waitFor(() => expect(mocks.saveHeaderFooterDraft).toHaveBeenCalledWith('project', 'studio', expect.objectContaining({ draft: expect.objectContaining({ variants: expect.arrayContaining([expect.objectContaining({ id: 'a3', blocks: expect.arrayContaining([expect.objectContaining({ kind: 'field', field: 'date' })]) })]) }) }), undefined), { timeout: 3000 });
+    expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
+  });
+  it('keeps a copied element inside a shorter strip of the other format', async () => {
+    const state = workspace(), set = state.sets[0]!;
+    set.draft.variants.push({ ...structuredClone(set.draft.variants[0]!), id: 'a3', name: 'A3 orizzontale', pageWidthMm: 420, pageHeightMm: 297, footerHeightMm: 8 });
+    set.draft.variants[0]!.blocks.push({ id: 'date', region: 'footer', kind: 'field', field: 'date', x: .82, y: .2, width: .16, height: .5 });
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount({ startAt: 'editor' });
+    fireEvent.click(await screen.findByTestId('header-footer-block-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copia in A3 orizzontale' }));
+    fireEvent.change(screen.getByLabelText('Formato'), { target: { value: 'a3' } });
+    fireEvent.click(screen.getByTestId('header-footer-block-date'));
+    const value = (label: string) => Number((screen.getByLabelText(label) as HTMLInputElement).value);
+    expect(value('Posizione Y (%)')).toBeGreaterThanOrEqual(0); expect(value('Posizione Y (%)') + value('Altezza (%)')).toBeLessThanOrEqual(100);
+    expect(value('Posizione X (%)') + value('Larghezza (%)')).toBeLessThanOrEqual(100);
+    expect(screen.queryByText(/L’elemento supera il bordo sicuro/)).toBeNull();
+  });
+  it('names only the footer on the apply action when the header is off', async () => {
+    const state = workspace(), set = state.sets[0]!; set.publishedRevision = null; set.revision = 0; set.draft.stage = 'graphic'; state.bindings = [];
+    state.documents[0]!.presentation = { ...createDocumentPresentation('Relazione tecnica B'), header: false, footer: true };
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount();
+    expect(await screen.findByRole('button', { name: 'Applica il piè di pagina' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Applica intestazione e piè di pagina' })).toBeNull();
+  });
+  it('announces the same date the applied graphic prints', async () => {
+    const state = workspace(); const date = { id: 'date', region: 'footer' as const, kind: 'field' as const, field: 'date' as const, x: .5, y: .2, width: .2, height: .5 };
+    state.sets[0]!.draft.stage = 'graphic'; state.sets[0]!.draft.variants[0]!.blocks.push(date); state.sets[0]!.publishedRevision!.variants[0]!.blocks.push(date);
+    state.sets[0]!.publishedRevision!.stage = 'graphic'; state.sets[0]!.publishedRevision!.guidance = state.sets[0]!.draft.guidance; state.bindings[0]!.snapshot = state.sets[0]!.publishedRevision;
+    mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount({ startAt: 'editor' });
+    expect((await screen.findAllByRole('button', { name: 'Piè di pagina: 24/10/2026' })).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('header-footer-canonical-graphics').innerHTML).toContain('>24/10/2026</tspan>');
   });
   it('shows saved structural drafts instead of a first-model empty state', async () => {
     const state = workspace(); state.sets[0]!.publishedRevision = null; state.bindings = []; mocks.getHeaderFooterWorkspace.mockResolvedValue(state); mount();

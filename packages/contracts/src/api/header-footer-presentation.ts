@@ -22,13 +22,19 @@ export function headerFooterReservations(applied: AppliedHeaderFooter | undefine
   const variant = headerFooterVariantForFormat(applied.design.variants, page.widthMm, page.heightMm);
   return { headerMm: applied.header ? variant?.headerHeightMm ?? 0 : 0, footerMm: applied.footer ? variant?.footerHeightMm ?? 0 : 0 };
 }
+/** The date field prints the revision's local calendar day as dd/mm/yyyy: the form the editor shows and the engineer approves. */
+export function headerFooterDateText(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+}
 /** Render actual recurring graphics around a schematic body. All strings are escaped. */
 export function renderAppliedHeaderFooterSvg(applied: AppliedHeaderFooter, page: HeaderFooterRenderPage): string {
   const variant = headerFooterVariantForFormat(applied.design.variants, page.widthMm, page.heightMm);
   if (!variant || (page.isCover && !applied.showOnCover)) return '';
   const values = { projectName: applied.projectName, documentName: page.documentName,
     pageNumber: page.visibleNumber == null ? '' : String(page.visibleNumber), totalPages: page.totalPages === null ? '—' : String(page.totalPages),
-    date: applied.appliedAt.slice(0, 10), revision: String(applied.revision) };
+    date: headerFooterDateText(applied.appliedAt), revision: String(applied.revision) };
   const content = variant.blocks.filter((block) => block.region === 'header' ? applied.header : applied.footer).map((block) => {
     const strip = block.region === 'header' ? variant.headerHeightMm : variant.footerHeightMm;
     const y0 = block.region === 'header' ? 0 : page.heightMm - strip;

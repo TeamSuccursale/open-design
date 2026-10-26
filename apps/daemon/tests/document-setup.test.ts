@@ -6,8 +6,8 @@ import path from 'node:path';
 import { PDFDict, PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BlockoutDocumentSchema, type DocumentContextSource, type DocumentSetupIntent, type ProjectMetadata } from '@open-design/contracts';
-import { confirmDocumentSetup as confirmDocumentSetupRaw, documentSetupRunGate, extractLayoutConstraints, loadDocumentSetupContext,
+import { BlockoutDocumentSchema, DOCUMENT_SETUP_CONFIRMATION_FORM, type DocumentContextSource, type DocumentSetupIntent, type ProjectMetadata } from '@open-design/contracts';
+import { confirmDocumentSetup as confirmDocumentSetupRaw, confirmedBlockoutDispatch, documentSetupRunGate, extractLayoutConstraints, loadDocumentSetupContext,
   prepareDocumentSetupContextFiles, readDocumentSetup, renderFrozenDocumentSetupContext,
   saveDocumentSetupIntent, scanDocumentSetupContext, type DocumentContextText } from '../src/services/document-setup.js';
 import { readBlockoutWorkspace, saveBlockoutWorkspace } from '../src/services/blockout-workspaces.js';
@@ -46,11 +46,11 @@ describe('guided document setup', () => {
       content: await readFile(path.join(root, relative!)),
     }]);
     for (const context of [live, frozen]) {
-      expect(context).toContain('HEADER/FOOTER HANDOFF DURING PREPARATION');
-      expect(context).toContain('"Intestazione e piè di pagina" / "Header and footer" button');
-      expect(context).toContain('Do not tell the engineer to switch to Design mode');
-      expect(context).toContain('The host sets the execution phase automatically');
-      expect(context).toContain('Do not generate blockouts, layouts or graphic design yet');
+      expect(context).toContain('HEADER/FOOTER DURING PREPARATION');
+      expect(context).toContain('compose the actual graphic proposal for every such document');
+      expect(context).toContain('The host opens the dedicated editor on the proposal when the turn ends');
+      expect(context).toContain('Do not tell the engineer to open the editor to supply inputs, to switch to Design mode');
+      expect(context).toContain('Do not generate blockouts, layouts or page graphics yet');
       expect(context).toContain('explicit graphic-preview approval and application');
     }
   });
@@ -416,7 +416,7 @@ describe('guided document setup', () => {
     const context = await loadDocumentSetupContext(root);
     expect(context).toContain('PREPARATION-ONLY CHAT');
     expect(context).toContain('not yet asked');
-    expect(context).toContain('Do not generate blockouts, layouts or graphic design yet');
+    expect(context).toContain('Do not generate blockouts, layouts or page graphics yet');
     await scanDocumentSetupContext(root, undefined, noDocuments);
     await expect(confirmDocumentSetup(root, { purpose: 'Document', constraints: [], blockoutApproach: 'agent' })).rejects.toThrow('whether to start image extraction');
     await saveDocumentSetupIntent(root, { imageIntakeConsent: false, imageIntakeDecision: 'declined' });
@@ -550,6 +550,71 @@ describe('guided document setup', () => {
     const frozen = renderFrozenDocumentSetupContext([{ mediaType: 'text/plain', content: await readFile(path.join(root, relative!)) }]);
     expect(frozen).toContain(choices);
     expect(frozen).toContain('Complete all selected, settings-confirmed outputs in this Blockout run');
+  });
+
+  it('confirms exactly the saved two-document brief for the host when the engineer accepts it, without an agent turn copying it', async () => {
+    const root = await folder();
+    const presentation = (name: string) => ({ ...testEditorialSettings[0]!.presentation, name, footer: true, pageNumbers: true });
+    const constraint = (id: string, kind: 'paper' | 'orientation', value: string) => ({ id, kind, value, status: 'confirmed' as const, sourceIds: [] });
+    const report = [constraint('report-paper', 'paper', 'Relazione B: A4'), constraint('report-orientation', 'orientation', 'Relazione B: verticale')];
+    const booklet = [constraint('booklet-paper', 'paper', 'Fascicolo grafico B: A3'), constraint('booklet-orientation', 'orientation', 'Fascicolo grafico B: orizzontale')];
+    await saveDocumentSetupIntent(root, { ...intent, purpose: 'Due elaborati B con formati separati', editorialSettings: [
+      { documentId: 'document-1', presentation: presentation('Relazione B'), constraints: report, pageTarget: 8 },
+      { documentId: 'document-2', presentation: presentation('Fascicolo grafico B'), constraints: booklet, pageTarget: 4 },
+    ] });
+    await scanDocumentSetupContext(root, undefined, noDocuments);
+    const confirmed = await confirmDocumentSetupRaw(root, { source: 'saved-brief', blockoutApproach: 'agent' });
+    expect(confirmed.status).toBe('confirmed');
+    expect(confirmed.confirmed).toMatchObject({ purpose: 'Due elaborati B con formati separati', blockoutApproach: 'agent', pageTarget: 8, constraints: report });
+    expect(confirmed.confirmed?.editorialSettings?.map((setting) => [setting.documentId, setting.pageTarget, setting.constraints?.map((entry) => entry.id)]))
+      .toEqual([['document-1', 8, ['report-paper', 'report-orientation']], ['document-2', 4, ['booklet-paper', 'booklet-orientation']]]);
+    const pages = async (documentId: string) => (await readBlockoutWorkspace(root, documentId)).document!.variants[0]!.pages.map((page) => `${page.widthMm}x${page.heightMm}`);
+    expect(await pages('document-1')).toEqual(Array(8).fill('210x297'));
+    expect(await pages('document-2')).toEqual(Array(4).fill('420x297'));
+  });
+
+  it('refuses a saved-brief confirmation the agent never fully saved, leaving the answer for the agent to resolve', async () => {
+    const root = await folder();
+    await saveDocumentSetupIntent(root, { ...intent, purpose: 'Relazione B', editorialSettings: testEditorialSettings });
+    await scanDocumentSetupContext(root, undefined, noDocuments);
+    await expect(confirmDocumentSetupRaw(root, { source: 'saved-brief', blockoutApproach: 'agent' })).rejects.toThrow('constraints');
+    await saveDocumentSetupIntent(root, { purpose: '', editorialSettings: [{ ...testEditorialSettings[0]!, constraints: [] }] });
+    await expect(confirmDocumentSetupRaw(root, { source: 'saved-brief', blockoutApproach: 'agent' })).rejects.toThrow('purpose');
+    expect((await readDocumentSetup(root))?.status).toBe('review');
+    expect((await readBlockoutWorkspace(root, 'document-1')).document).toBeNull();
+  });
+
+  it('asks for the final confirmation through the host-owned form, saved first, in live and frozen preparation context', async () => {
+    const root = await folder();
+    await saveDocumentSetupIntent(root, intent);
+    await scanDocumentSetupContext(root, undefined, noDocuments);
+    const live = await loadDocumentSetupContext(root);
+    const [file] = await prepareDocumentSetupContextFiles(root);
+    const frozen = renderFrozenDocumentSetupContext([{ mediaType: 'text/plain', content: await readFile(path.join(root, file!)) }]);
+    for (const context of [live, frozen]) {
+      expect(context).toContain(`<question-form id="${DOCUMENT_SETUP_CONFIRMATION_FORM.id}"`);
+      expect(context).toContain(`"id":"${DOCUMENT_SETUP_CONFIRMATION_FORM.confirmQuestionId}"`);
+      expect(context).toContain(`"id":"${DOCUMENT_SETUP_CONFIRMATION_FORM.approachQuestionId}"`);
+      expect(context).toContain('the host records the confirmation and starts the next step');
+      expect(context).toContain('Before emitting it, save');
+    }
+  });
+
+  it('recognizes only the host’s own dispatch of a confirmed agent Blockout as the confirmed-brief request', async () => {
+    const root = await folder();
+    await saveDocumentSetupIntent(root, { ...intent, preparationConversation: { requestId: 'prepare', dispatched: true, blockoutRequestId: 'blockout-once' } });
+    await scanDocumentSetupContext(root, undefined, noDocuments);
+    const request = { clientRequestId: 'blockout-once', sessionMode: 'blockout' };
+    expect(await confirmedBlockoutDispatch(root, request)).toBe(false);
+    await confirmDocumentSetup(root, { purpose: 'Relazione', constraints: [], blockoutApproach: 'agent' });
+    expect(await confirmedBlockoutDispatch(root, request)).toBe(true);
+    expect(await confirmedBlockoutDispatch(root, { ...request, clientRequestId: 'typed-by-the-engineer' })).toBe(false);
+    expect(await confirmedBlockoutDispatch(root, { ...request, sessionMode: 'chat' })).toBe(false);
+    const manual = await folder();
+    await saveDocumentSetupIntent(manual, { ...intent, preparationConversation: { requestId: 'prepare', dispatched: true, blockoutRequestId: 'blockout-once' } });
+    await scanDocumentSetupContext(manual, undefined, noDocuments);
+    await confirmDocumentSetup(manual, { purpose: 'Relazione', constraints: [], blockoutApproach: 'manual' });
+    expect(await confirmedBlockoutDispatch(manual, request)).toBe(false);
   });
 
   it('rejects a setup directory symlink escaping its project', async () => {

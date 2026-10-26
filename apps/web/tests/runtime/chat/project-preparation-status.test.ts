@@ -16,6 +16,16 @@ describe('truthful compact project intake indicators', () => {
     text.run!.coverage.pendingPages = 1; text.run!.coverage.pagesAnalyzed = 2;
     expect(projectPreparationStatus(images, text, custody).text).not.toBe('ready');
   });
+  it('settles image preparation as nothing to read when every source is text-only, without hiding a real launch failure', () => {
+    const custody = custodianSnapshot(), images = intakeSnapshot();
+    custody.ledger!.sources = [{ sourceId: 'notes', title: 'notes.txt', path: 'notes.txt', pagesTotal: 1, textAnalyzedPages: [1], visualIndexedPages: [], assetIds: [], status: 'current' }];
+    custody.ledger!.imagesStatus = 'not-started';
+    images.catalog.documents = [];
+    expect(projectPreparationStatus(images, null, custody).images).toBe('none');
+    expect(projectPreparationStatus({ ...images, launchError: true }, null, custody).images).toBe('attention');
+    custody.ledger!.sources.push({ sourceId: 'survey', title: 'Survey.pdf', path: 'Survey.pdf', pagesTotal: 2, textAnalyzedPages: [1, 2], visualIndexedPages: [], assetIds: [], status: 'current' });
+    expect(projectPreparationStatus(images, null, custody).images).toBe('waiting');
+  });
   it('still flags a failed job of unknown domain even with older completed page coverage', () => {
     const custody = custodianSnapshot();
     custody.indexing = { indexing: false, phase: 'failed', queuedChanges: [], pendingDomains: [], message: 'Index process failed.' };

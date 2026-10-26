@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
 import {
@@ -8,9 +8,10 @@ import {
   BlockoutHandoffRequestSchema, BlockoutHandoffSchema, blockoutHandoffSnapshot, diffBlockoutSnapshots,
   BlockoutAppendAlternativesRequestSchema,
   type BlockoutHandoff, type BlockoutHandoffResponse, type BlockoutAppendAlternativesResponse,
-  type BlockoutDocument, type BlockoutDocumentCatalog, type BlockoutWorkspaceResponse,
+  type BlockoutDocument, type BlockoutDocumentCatalog, type BlockoutReserveAdjustment, type BlockoutWorkspaceResponse,
 } from '@open-design/contracts';
 import { containedIntakePath } from './project-intake-settings.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 import { readBlockoutDesignState, type BlockoutDesignRunLookup } from './blockout-design.js';
 
 const pending = new Map<string, Promise<unknown>>();
@@ -25,14 +26,24 @@ async function textFile(root: string, relative: string): Promise<string | null> 
     return await readFile(target, 'utf8');
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return null; }
 }
-async function write(root: string, relative: string, content: string): Promise<void> {
-  await containedIntakePath(root, path.dirname(relative), true);
-  const target = await containedIntakePath(root, relative);
-  const temporary = await containedIntakePath(root, `${relative}.${randomUUID()}.tmp`);
-  await withProjectHistoryMutation({ root, paths: [relative] }, async () => {
-    await writeFile(temporary, content, { flag: 'wx' }); await rename(temporary, target);
+/**
+ * Every file of one save is one history mutation. Each mutation captures the project before and
+ * after with Git, so a file-by-file save spawned Git dozens of times per Blockout document.
+ */
+async function writeAll(root: string, files: ReadonlyArray<readonly [relative: string, content: string]>): Promise<void> {
+  const prepared: Array<{ content: string; target: string; temporary: string }> = [];
+  for (const [relative, content] of files) {
+    await containedIntakePath(root, path.dirname(relative), true);
+    prepared.push({ content, target: await containedIntakePath(root, relative), temporary: await containedIntakePath(root, `${relative}.${randomUUID()}.tmp`) });
+  }
+  await withProjectHistoryMutation({ root, paths: files.map(([relative]) => relative) }, async () => {
+    for (const file of prepared) {
+      try { await writeFile(file.temporary, file.content, { flag: 'wx' }); await replaceFileAtomically(file.temporary, file.target); }
+      finally { await rm(file.temporary, { force: true }); }
+    }
   });
 }
+const write = (root: string, relative: string, content: string) => writeAll(root, [[relative, content]]);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 export class BlockoutWorkspaceConflict extends Error { constructor() { super('blockout.conflict'); } }
 export class BlockoutAlternativeConflict extends Error {
@@ -64,23 +75,44 @@ export async function readBlockoutWorkspace(root: string, documentId: string): P
   if (document.documentId !== documentId) throw new Error('Invalid blockout document identity');
   return { document, raw };
 }
-async function snapshot(root: string, document: BlockoutDocument): Promise<void> {
-  await write(root, BLOCKOUT_START_PATH, json(document));
-  await write(root, BLOCKOUT_BRIEF_PATH, renderBlockoutBrief(document));
-}
 /** Caller owns the project lock. The canonical rename commits document and receipts together. */
 async function persistWorkspace(root: string, document: BlockoutDocument, startingPoint = false): Promise<BlockoutWorkspaceResponse> {
   // Receipt preservation can change property order. Return the same canonical
   // schema order that readers/renderers hash, as well as the same field values.
   document = BlockoutDocumentSchema.parse(document);
-  for (const file of blockoutPageFiles(document)) await write(root, file.path, file.content);
   const catalog = await listBlockoutWorkspaces(root);
   const documents = [...catalog.documents.filter((entry) => entry.id !== document.documentId), { id: document.documentId, title: document.title }];
-  await write(root, BLOCKOUT_DOCUMENTS_PATH, json(parseBlockoutCatalog({ version: 1, documents })));
-  if (startingPoint) await snapshot(root, document);
   const raw = json(document);
-  await write(root, blockoutWorkspacePath(document.documentId), raw);
+  await writeAll(root, [
+    ...blockoutPageFiles(document).map((file) => [file.path, file.content] as const),
+    [BLOCKOUT_DOCUMENTS_PATH, json(parseBlockoutCatalog({ version: 1, documents }))],
+    ...(startingPoint ? [[BLOCKOUT_START_PATH, json(document)], [BLOCKOUT_BRIEF_PATH, renderBlockoutBrief(document)]] as const : []),
+    [blockoutWorkspacePath(document.documentId), raw],
+  ]);
   return { document, raw };
+}
+/**
+ * Seeds the missing documents of a confirmed brief as one save; existing workspaces stay as
+ * they are. The first document is the starting point when it is among the new ones.
+ */
+export async function seedBlockoutWorkspaces(root: string, documents: BlockoutDocument[]): Promise<void> {
+  await exclusive(root, async () => {
+    const missing: BlockoutDocument[] = [];
+    for (const document of documents) if (await textFile(root, blockoutWorkspacePath(document.documentId)) === null) missing.push(BlockoutDocumentSchema.parse(document));
+    if (!missing.length) return;
+    // Without a catalog file the listing infers document-1; a new multi-output catalog must not list it.
+    const listed = await textFile(root, BLOCKOUT_DOCUMENTS_PATH) !== null || await textFile(root, blockoutWorkspacePath('document-1')) !== null
+      ? (await listBlockoutWorkspaces(root)).documents : [];
+    const catalog = parseBlockoutCatalog({ version: 1, documents: [...listed.filter((entry) => !missing.some((document) => document.documentId === entry.id)),
+      ...missing.map((document) => ({ id: document.documentId, title: document.title }))] });
+    const start = missing[0]!.documentId === documents[0]?.documentId ? missing[0]! : null;
+    await writeAll(root, [
+      ...missing.flatMap((document) => blockoutPageFiles(document).map((file) => [file.path, file.content] as const)),
+      [BLOCKOUT_DOCUMENTS_PATH, json(catalog)],
+      ...(start ? [[BLOCKOUT_START_PATH, json(start)], [BLOCKOUT_BRIEF_PATH, renderBlockoutBrief(start)]] as const : []),
+      ...missing.map((document) => [blockoutWorkspacePath(document.documentId), json(document)] as const),
+    ]);
+  });
 }
 export async function saveBlockoutWorkspace(root: string, documentId: string, input: unknown): Promise<BlockoutWorkspaceResponse> {
   const value = input as { document?: unknown; baseRaw?: unknown; startingPoint?: unknown } | null;
@@ -142,9 +174,8 @@ export async function saveBlockoutWorkspaceStartingPoint(root: string, documentI
       snapshot: next, changes: comparable ? diffBlockoutSnapshots(before!, next) : [],
     };
     if (Buffer.byteLength(json(handoff)) > 2_000_000) throw new Error('Blockout update exceeds its metadata size limit');
-    await snapshot(root, { ...document, activeVariantId: explicitVariant });
-    await write(root, relative, json(handoff));
-    await write(root, latestPath, json(handoff));
+    const start = { ...document, activeVariantId: explicitVariant };
+    await writeAll(root, [[BLOCKOUT_START_PATH, json(start)], [BLOCKOUT_BRIEF_PATH, renderBlockoutBrief(start)], [relative, json(handoff)], [latestPath, json(handoff)]]);
     return { handoff, path: relative };
   });
 }
@@ -156,7 +187,13 @@ function alternativeBase(snapshot: object): string {
 }
 
 /** Generated results have no replacement-document surface; only new proposals are accepted. */
-export async function appendBlockoutAlternatives(root: string, documentId: string, input: unknown): Promise<BlockoutAppendAlternativesResponse> {
+/**
+ * Fits only the appended pages, e.g. out of an applied header/footer reserve. It runs after the
+ * result digest, so retrying the same result still replays instead of conflicting.
+ */
+export type BlockoutAlternativeFit = (appended: BlockoutDocument) => Promise<{ document: BlockoutDocument; reserveAdjustments: BlockoutReserveAdjustment[] }>;
+
+export async function appendBlockoutAlternatives(root: string, documentId: string, input: unknown, fit?: BlockoutAlternativeFit): Promise<BlockoutAppendAlternativesResponse> {
   blockoutWorkspacePath(documentId);
   const request = BlockoutAppendAlternativesRequestSchema.parse(input);
   return exclusive(root, async () => {
@@ -178,7 +215,7 @@ export async function appendBlockoutAlternatives(root: string, documentId: strin
     const retained = json({ version: 1, requestId: request.requestId, payloadDigest, candidates: request.candidates });
     if (Buffer.byteLength(retained) > 2_000_000) throw new Error('Alternative results exceed the metadata size limit');
     const idStem = `alternative-${createHash('sha256').update(request.requestId).digest('hex').slice(0, 16)}`;
-    const variants = request.candidates.map((candidate, index) => ({ id: `${idStem}-${index + 1}`, ...candidate }));
+    let variants = request.candidates.map((candidate, index) => ({ id: `${idStem}-${index + 1}`, ...candidate }));
     // Validate every page/block before preserving a rejected result or writing projections.
     BlockoutDocumentSchema.parse({ version: 1, documentId, title: current.document.title, activeVariantId: variants[0]!.id,
       variants, answers: [], needsReadaptation: false });
@@ -193,12 +230,20 @@ export async function appendBlockoutAlternatives(root: string, documentId: strin
       throw new BlockoutAlternativeConflict('BLOCKOUT_ALTERNATIVE_CAPACITY', 'Keep or remove existing proposals before adding these retained alternatives.', resultPath);
     }
     if (variants.some((variant) => current.document!.variants.some((saved) => saved.id === variant.id))) throw new BlockoutAlternativeConflict('BLOCKOUT_ALTERNATIVE_RESULT_CONFLICT', 'A generated proposal identity is already in use');
+    let reserveAdjustments: BlockoutReserveAdjustment[] = [];
+    if (fit) {
+      // Saved proposals are not part of the probe, so nothing the engineer placed moves.
+      const { selectedVariantId: _selected, approval: _approval, alternativeBatches: _batches, ...base } = current.document;
+      const fitted = await fit(BlockoutDocumentSchema.parse({ ...base, activeVariantId: variants[0]!.id, variants }));
+      variants = variants.map((variant) => ({ ...variant, pages: fitted.document.variants.find((item) => item.id === variant.id)?.pages ?? variant.pages }));
+      reserveAdjustments = fitted.reserveAdjustments;
+    }
     const batch = { requestId: request.requestId, payloadDigest, baseVariantId: handoff.snapshot.variant.id,
       variantIds: variants.map((variant) => variant.id), createdAt: new Date().toISOString() };
     const document = BlockoutDocumentSchema.parse({ ...current.document, variants: [...current.document.variants, ...variants],
       alternativeBatches: [...(current.document.alternativeBatches ?? []), batch] });
     if (Buffer.byteLength(json(document)) > 2_000_000) throw new Error('Blockout workspace exceeds its metadata size limit');
     await write(root, resultPath, retained);
-    return { ...await persistWorkspace(root, document), alternativeBatch: { ...batch, replayed: false } };
+    return { ...await persistWorkspace(root, document), alternativeBatch: { ...batch, replayed: false }, ...(reserveAdjustments.length ? { reserveAdjustments } : {}) };
   });
 }

@@ -1,9 +1,9 @@
-import { DocumentSetupSchema, type DocumentSetup, type DocumentSetupIntent, type DocumentSetupConfirmation, type WorkspaceCollabContext } from '@open-design/contracts';
+import { DocumentSetupSchema, type DocumentSetup, type DocumentSetupIntent, type DocumentSetupConfirmation, type DocumentSetupSavedBriefConfirmation, type WorkspaceCollabContext } from '@open-design/contracts';
 import { workspaceProjectHeaders } from '../collab/workspace-identity';
 
 export const DOCUMENT_PREPARATION_RESUME_EVENT = 'melillodesign:document-preparation-resume';
 
-export async function documentSetupRequest(projectId: string, context?: WorkspaceCollabContext | null, operation?: 'scan' | 'confirm' | 'intent', input?: Partial<DocumentSetupIntent> | DocumentSetupConfirmation, signal?: AbortSignal): Promise<DocumentSetup | null> {
+export async function documentSetupRequest(projectId: string, context?: WorkspaceCollabContext | null, operation?: 'scan' | 'confirm' | 'intent', input?: Partial<DocumentSetupIntent> | DocumentSetupConfirmation | DocumentSetupSavedBriefConfirmation, signal?: AbortSignal): Promise<DocumentSetup | null> {
   const suffix = operation === 'scan' ? '/context-scan' : operation === 'confirm' ? '/confirm' : '';
   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/document-setup${suffix}`, {
     method: operation === 'intent' ? 'PUT' : operation ? 'POST' : 'GET', signal, cache: 'no-store',

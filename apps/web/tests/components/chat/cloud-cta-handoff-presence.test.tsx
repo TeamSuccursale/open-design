@@ -154,18 +154,19 @@ describe('裸组件缺 Cloud 接线时不伪造恢复入口', () => {
     )).toHaveLength(0);
   });
 
-  it('不回退旧 CLI 重试，常驻动作保持次级', () => {
+  // MelilloDesign (UX-02): a host with no Cloud route retries the user's own CLI
+  // when the classification says a retry can recover; standing actions stay secondary.
+  it('offers the local Retry as the only primary action, standing actions stay secondary', () => {
     const { container } = renderFailure({
       code: 'AGENT_EXECUTION_FAILED', detail: 'process_crashed', host: UNWIRED_COMPONENT,
     });
 
-    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
-    expect(primaryActions(container)).toHaveLength(0);
+    expect(primaryActions(container).map((button) => button.dataset.testid)).toEqual(['chat-error-retry']);
     expect(screen.getByTestId('chat-error-contact-support').dataset.runErrorAction).toBe('secondary');
     expect(screen.getByTestId('chat-error-export-logs').dataset.runErrorAction).toBe('secondary');
   });
 
-  it('缺 Cloud 回调不会借常驻按钮调用本地重试', () => {
+  it('contact support opens its dialog without retrying; only Retry re-runs', () => {
     const { onRetry } = renderFailure({
       code: 'AGENT_EXECUTION_FAILED', detail: 'process_crashed', host: UNWIRED_COMPONENT,
     });
@@ -173,7 +174,7 @@ describe('裸组件缺 Cloud 接线时不伪造恢复入口', () => {
     fireEvent.click(screen.getByTestId('chat-error-contact-support'));
     expect(screen.getByTestId('chat-support-dialog')).toBeTruthy();
     expect(onRetry).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    expect(screen.getByTestId('chat-error-retry')).toBeTruthy();
   });
 
   it('旧第 4 档也不造 Cloud 按钮或将联系支持升格', () => {

@@ -1,6 +1,7 @@
 import { FAST_PROJECT_MODE_DIRECTIVE, isFastProject } from './fast-project.js';
 import { COMMENT_IDENTITY_EDIT_DIRECTIVE } from './comment-identity.js';
 import { OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS } from './od-next-production-marker.js';
+import { OD_NEXT_CONFIRMED_BRIEF_EXCEPTION } from './chat-turn-host-protocol.js';
 import {
   OD_NEXT_PROMPT_RECIPE_ID,
   OD_NEXT_STRATEGY_ID,
@@ -418,6 +419,7 @@ An authorized new design deliverable needs a separate planning turn. Write an ac
 then the current keyed production-ready marker, and stop. Open Design starts production
 in the same session after the planning turn succeeds. Do not create or dispatch deliverables
 in the planning turn. A bounded direct edit may finish within the current turn without a marker.
+${OD_NEXT_CONFIRMED_BRIEF_EXCEPTION}
 
 When the user asks only to list a plan, the plan is the final answer: stop without
 requesting production. Travel itineraries, study plans, and work plans do not

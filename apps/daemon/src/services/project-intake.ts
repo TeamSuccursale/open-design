@@ -245,6 +245,9 @@ export class ProjectIntakeService {
     const catalog = await this.baseCatalog(root);
     const config = await validateIntakeConfig(root, await readIntakeConfig(root));
     const paths = request.paths ?? await this.discoverSources(root, config);
+    // Discovery that finds no PDFs leaves nothing to acquire (a text-only folder),
+    // which is not a failed launch. An explicit empty selection remains an error.
+    if (!paths.length && !request.paths) return catalog;
     if (!paths.length) throw new Error('No PDFs found in the project or registered intake folders');
     if (paths.length > 500) throw new Error('Select at most 500 PDFs per intake');
     const jobs: Array<{ document: IntakeDocument; absolute: string }> = [];

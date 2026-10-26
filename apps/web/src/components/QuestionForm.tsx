@@ -143,6 +143,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   ref,
 ) {
   const uiT = useT();
+  const submittingText = form.submittingLabel ?? uiT('questions.submitting');
   const submissionBlocked = submitDisabled || submitting;
   const instanceId = useId();
   // Answer-content strings follow the form's declared language, falling back
@@ -626,11 +627,11 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       onClick={handleSubmit}
       disabled={submissionBlocked || !ready}
       title={submitting
-        ? uiT('questions.submitting')
+        ? submittingText
         : !ready ? uiT('qf.submitDisabledTitle')
           : !submitDisabled ? uiT('qf.submitTitle') : undefined}
     >
-      {submitting ? uiT('questions.submitting') : form.submitLabel ?? uiT(form.layout === 'grouped' ? 'qf.submitGrouped' : 'qf.submitDefault')}
+      {submitting ? submittingText : form.submitLabel ?? uiT(form.layout === 'grouped' ? 'qf.submitGrouped' : 'qf.submitDefault')}
     </Button>
   );
   /*
@@ -743,7 +744,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     && question.options.every((option) => !option.description && option.label.length <= 70));
   return (
     <>
-    {submitting ? <div role="status" aria-live="polite">{uiT('questions.submitting')}</div> : null}
+    {submitting ? <div role="status" aria-live="polite">{submittingText}</div> : null}
     <FormContainer
       className={`question-form${locked ? ' question-form-locked' : ''}${unansweredHistory ? ` ${styles.unanswered}` : ''}${groupedSettings ? ` ${styles.groupedSettings}` : ''}${compactChoices ? ` ${styles.compactChoices}` : ''}`}
       data-form-id={form.id}
@@ -1158,7 +1159,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                       submissionBlocked || (isLastQuestion ? !ready : !currentQuestionReady)
                     }
                     title={
-                      submitting ? uiT('questions.submitting')
+                      submitting ? submittingText
                         : activeQuestion?.required === true && !currentQuestionReady
                           ? uiT('qf.submitDisabledTitle')
                           : isLastQuestion && !submitDisabled && ready
@@ -1166,7 +1167,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                             : undefined
                     }
                   >
-                    {submitting ? uiT('questions.submitting') : isLastQuestion
+                    {submitting ? submittingText : isLastQuestion
                       ? form.submitLabel ?? uiT('qf.submitDefault')
                       : uiT('nextStep.title')}
                   </Button>

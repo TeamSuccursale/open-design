@@ -7,6 +7,7 @@ import { ProjectHistoryButton, ProjectHistoryController } from './history/Projec
 import { ProjectDocumentsPanel } from './project-documents/ProjectDocumentsPanel';
 import { HeaderFooterWorkspace, HeaderFooterLauncher } from './header-footer/HeaderFooterWorkspace';
 import { headerFooterEntryAvailable } from './header-footer/entry-availability';
+import { headerFooterReviewTarget } from './header-footer/review-target';
 import { useHeaderFooterPageContext } from './header-footer/useHeaderFooterPageContext';
 import { buildFastHeaderFooterContinuationPrompt, headerFooterContinuationKey } from '../runtime/header-footer-continuation';
 import { HEADER_FOOTER_REQUEST_EVENT, HEADER_FOOTER_UPDATED_EVENT, HEADER_FOOTER_QUESTION_EVENT, type HeaderFooterAgentRequest, type HeaderFooterQuestionEvent, type HeaderFooterQuestionRequest } from './header-footer/events';
@@ -23,7 +24,7 @@ import type { ProjectDocument } from '@open-design/contracts';
 import { Button } from '@open-design/components';
 import { openBlockoutEditor, OPEN_BLOCKOUT_PROPOSALS_EVENT, type BlockoutOpenRequest } from './blockout/events';
 import { useBlockoutNavigationAvailability } from './blockout/useBlockoutNavigationAvailability';
-import { buildDocumentSetupStartPrompt, buildDocumentSetupPreparationPrompt } from '@open-design/contracts';
+import { buildDocumentSetupStartPrompt, buildDocumentSetupPreparationPrompt, documentSetupConfirmationFromAnswers } from '@open-design/contracts';
 import { navigationTiming, useProjectNavigationReady, observeNavigation } from '../observability/navigation-timing';
 import { withLiveArtifactDeliveries } from '../runtime/live-artifact-delivery';
 import { markIntakeOwnedFiles, isIntakeOwnedFile } from '../intake-owned-files';
@@ -387,6 +388,8 @@ import {
   decideAutoOpenAfterWrite,
   isHeaderFooterSupportFile,
   isBlockoutBriefFile,
+  isRegisteredDocumentCopy,
+  registeredDocumentEntryNames,
   selectAutoOpenProducedArtifact,
   selectAutoOpenTurnArtifact,
   selectAutoOpenTurnArtifacts,
@@ -2390,12 +2393,13 @@ export function ProjectView({
   const [headerFooterTargetId, setHeaderFooterTargetId] = useState<string | null>(null);
   const [headerFooterStartAt, setHeaderFooterStartAt] = useState<'library' | 'editor' | 'assets'>('library');
   const [headerFooterQuestion, setHeaderFooterQuestion] = useState<HeaderFooterQuestionRequest | null>(null);
+  const [headerFooterReviewSetId, setHeaderFooterReviewSetId] = useState<string | null>(null);
   const headerFooterContinuationsRef = useRef(new Set<string>());
   const headerFooterPageContext = useHeaderFooterPageContext(collectionProjectId, headerFooterTargetId, documentLibrary.documents, project.metadata?.documentSetupIntent?.editorialSettings, projectRunWorkspaceContext, !projectReadsHeld);
   const headerFooterCurrentId = activeProjectDocumentId ?? documentLibrary.selectedDocumentId ?? documentLibrary.documents[0]?.id ?? null;
   const headerFooterCurrentDocument = documentLibrary.documents.find((document) => document.id === headerFooterCurrentId);
   const headerFooterEnabled = headerFooterCurrentDocument?.presentation?.header === true || headerFooterCurrentDocument?.presentation?.footer === true || Boolean(headerFooterCurrentDocument?.presentation?.headerFooter);
-  const openHeaderFooter = (id: string, startAt: 'library' | 'editor' | 'assets' = 'library') => { setHeaderFooterStartAt(startAt); setHeaderFooterTargetId(id); };
+  const openHeaderFooter = (id: string, startAt: 'library' | 'editor' | 'assets' = 'library') => { setHeaderFooterReviewSetId(null); setHeaderFooterStartAt(startAt); setHeaderFooterTargetId(id); };
   const projectResourceAuthority: ProjectResourceAuthority =
     projectWorkspaceScopeState.failure === 'forbidden'
     || projectWorkspaceScopeState.failure === 'unsupported'
@@ -2625,8 +2629,16 @@ export function ProjectView({
   // Website-clone turns reproduce a whole multi-page site; auto-open should
   // land on the site entry (index.html), not the last-written subpage. See
   // `SelectAutoOpenOptions.preferSiteEntry`.
+  const registeredDocumentEntries = useMemo(
+    () => registeredDocumentEntryNames(documentLibrary.documents, project.id),
+    [documentLibrary.documents, project.id],
+  );
+  const registeredDocumentEntriesRef = useRef(registeredDocumentEntries);
+  registeredDocumentEntriesRef.current = registeredDocumentEntries;
   const autoOpenArtifactOptions = {
     preferSiteEntry: currentProject.metadata?.intent === 'web-clone',
+    // Read when spread: stream handlers outlive the render that created them.
+    get registeredDocumentEntries() { return registeredDocumentEntriesRef.current; },
   };
   const designSystemBrandId = projectIsDesignSystemProject
     ? currentProject.metadata?.brandId?.trim() || null
@@ -3839,6 +3851,25 @@ export function ProjectView({
   const currentConversationBusy = currentConversationReadPending
     || currentConversationStreaming
     || currentConversationHasActiveRun;
+  // The agent proposes header/footer graphics; the engineer reviews them. When a
+  // turn ends having saved a proposal, open the editor on it instead of asking
+  // the engineer to go and find it.
+  const agentTurnActive = currentConversationStreaming || currentConversationHasActiveRun;
+  const headerFooterTurnStartedRef = useRef<number | null>(null);
+  const headerFooterTargetIdRef = useRef(headerFooterTargetId);
+  headerFooterTargetIdRef.current = headerFooterTargetId;
+  useEffect(() => {
+    if (agentTurnActive) { headerFooterTurnStartedRef.current ??= Date.now(); return; }
+    const startedAt = headerFooterTurnStartedRef.current; headerFooterTurnStartedRef.current = null;
+    if (startedAt === null || projectReadsHeld || projectMutationReadOnly) return;
+    const capturedProjectId = project.id;
+    void getHeaderFooterWorkspace(collectionProjectId, projectRunWorkspaceContextRef.current).then((state) => {
+      const target = headerFooterReviewTarget(state, startedAt - 2_000);
+      if (!target || projectIdRef.current !== capturedProjectId || headerFooterTargetIdRef.current) return;
+      setHeaderFooterQuestion(null); setHeaderFooterReviewSetId(target.setId);
+      setHeaderFooterStartAt(target.setId ? 'editor' : 'library'); setHeaderFooterTargetId(target.documentId);
+    }).catch(() => undefined);
+  }, [agentTurnActive, collectionProjectId, project.id, projectMutationReadOnly, projectReadsHeld]);
   const currentConversationAwaitingActiveRunAttach =
     currentConversationHasActiveRun
     && !currentConversationStreaming
@@ -8833,6 +8864,33 @@ export function ProjectView({
     }
   }, [commitPreviewComments, enqueueChatSend, project.id, projectRunWorkspaceContext]);
 
+  /**
+   * An accepted host-owned final brief form is recorded here instead of sent
+   * to the agent: the brief is confirmed exactly as the agent saved it, the
+   * answer row is stored under the form's own answer identity, and the setup
+   * panel rereads the setup and starts the next step. A refusal (the saved
+   * brief is incomplete) returns false, so the answer reaches the agent.
+   */
+  const confirmSavedBriefFromForm = useCallback(async (
+    text: string,
+    sourceAssistantMessageId: string | undefined,
+    formId: string | undefined,
+    answers: Readonly<Record<string, string | string[]>> | undefined,
+  ): Promise<boolean> => {
+    const savedBrief = documentSetupConfirmationFromAnswers(formId, answers);
+    const setupShown = !fastProject && Boolean(project.metadata?.documentSetupIntent) && (!activeProjectDocumentId || Boolean(project.metadata?.collectionDocumentId));
+    if (!savedBrief || !setupShown || !activeConversationId) return false;
+    try { await documentSetupRequest(project.id, projectRunWorkspaceContext, 'confirm', savedBrief); }
+    catch { return false; }
+    const identity = questionFormAnswerIdentity(sourceAssistantMessageId, formId);
+    const answer: ChatMessage = { id: identity.userMessageId ?? randomUUID(), role: 'user', content: text, createdAt: Date.now(), sessionMode: 'chat',
+      ...(identity.clientRequestId ? { clientRequestId: identity.clientRequestId } : {}) };
+    setMessages((current) => current.some((message) => message.id === answer.id) ? current : [...current, answer]);
+    void Promise.resolve(saveMessage(project.id, activeConversationId, answer, { createOnly: true, workspaceContext: projectRunWorkspaceContext })).catch(() => {});
+    window.dispatchEvent(new CustomEvent('melillodesign:document-context-updated', { detail: { projectId: project.id } }));
+    return true;
+  }, [activeConversationId, activeProjectDocumentId, fastProject, project.id, project.metadata?.collectionDocumentId, project.metadata?.documentSetupIntent, projectRunWorkspaceContext]);
+
   const handleSend = useCallback(
     async (
       prompt: string,
@@ -9768,7 +9826,11 @@ export function ProjectView({
               userTookOverPreview: userTookOverPreviewRef.current,
               moduleFileNames,
             });
-            if (decision.shouldOpen && decision.fileName) {
+            if (
+              decision.shouldOpen
+              && decision.fileName
+              && !isRegisteredDocumentCopy(decision.fileName, registeredDocumentEntriesRef.current)
+            ) {
               // agent 的明示优先于本轮后续的启发式排序:它比 rank/mtime 更知道
               // 哪个才是交付物。置位之后,尾随的配套文件写入不会再抢走焦点。
               completionSelectedAutoOpen = true;
@@ -9835,6 +9897,7 @@ export function ProjectView({
                 !completionSelectedAutoOpen
                 && immediateFileName
                 && immediateArtifact === immediateFileName
+                && !isRegisteredDocumentCopy(immediateFileName, registeredDocumentEntriesRef.current)
               ) {
                 requestOpenFile(immediateFileName);
               }
@@ -9885,6 +9948,7 @@ export function ProjectView({
                   && bestTouchedArtifact === decision.fileName
                   && decision.shouldOpen
                   && decision.fileName
+                  && !isRegisteredDocumentCopy(decision.fileName, registeredDocumentEntriesRef.current)
                 ) {
                   requestOpenFile(decision.fileName);
                 }
@@ -11744,7 +11808,7 @@ export function ProjectView({
       if (!detail || detail.projectId !== collectionProjectId || projectMutationReadOnly || currentConversationBusy) return;
       const document = documentLibrary.documents.find((item) => item.id === detail.documentId);
       if (!document) return;
-      setHeaderFooterTargetId(null);
+      setHeaderFooterTargetId(null); setHeaderFooterReviewSetId(null);
       void handleSend(`${detail.prompt}\n\nLavora su intestazione e piè di pagina del documento “${document.name}”. Usa il modello e il brief salvati nella libreria del progetto; conserva le altre pagine e non avviare la grafica del corpo.`, [], [], { sessionMode: 'design' });
     };
     const updated = (event: Event) => { if ((event as CustomEvent<{ projectId?: string }>).detail?.projectId === collectionProjectId) documentLibrary.refresh(); };
@@ -14281,10 +14345,12 @@ export function ProjectView({
   return (
     <CollabProvider value={collabValue}>
       {headerFooterTargetId && <HeaderFooterWorkspace projectId={collectionProjectId} documentId={headerFooterTargetId} projectName={collectionProjectName} totalPages={headerFooterPageContext.totalPages} initialFormat={headerFooterPageContext.initialFormat} startAt={headerFooterStartAt} workspaceContext={projectRunWorkspaceContext} readOnly={projectMutationReadOnly} busy={currentConversationBusy}
-        onDocumentChange={(id) => { setHeaderFooterQuestion(null); setHeaderFooterStartAt('library'); setHeaderFooterTargetId(id); }}
-        setId={headerFooterQuestion?.target.setId} highlight={headerFooterQuestion ? { region: headerFooterQuestion.target.region, blockId: headerFooterQuestion.target.blockId, question: headerFooterQuestion.props.form.title } : undefined}
+        onDocumentChange={(id) => { setHeaderFooterQuestion(null); setHeaderFooterReviewSetId(null); setHeaderFooterStartAt('library'); setHeaderFooterTargetId(id); }}
+        setId={headerFooterQuestion?.target.setId ?? headerFooterReviewSetId ?? undefined} highlight={headerFooterQuestion ? { region: headerFooterQuestion.target.region, blockId: headerFooterQuestion.target.blockId, question: headerFooterQuestion.props.form.title } : undefined}
         renderQuestion={headerFooterQuestion ? (flush) => <QuestionFormView {...headerFooterQuestion.props} autoContinueAfterTimeout={false} onSubmit={async (...args) => { try { await flush(); } catch { return false; } return headerFooterQuestion.props.onSubmit?.(...args); }} /> : undefined}
-        onClose={() => setHeaderFooterTargetId(null)} onApplied={async (state) => {
+        onClose={() => { setHeaderFooterTargetId(null); setHeaderFooterReviewSetId(null); }}
+        onEditInChat={() => { setHeaderFooterTargetId(null); setHeaderFooterReviewSetId(null); window.requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="chat-composer"] [role="combobox"], [data-testid="chat-composer"] textarea')?.focus()); }}
+        onApplied={async (state) => {
           const firstApplication = !documentLibrary.documents.find((item) => item.id === headerFooterTargetId)?.presentation?.headerFooter;
           documentLibrary.refresh(); refreshFilesAndDesignMd(); onProjectsRefresh();
           const setup = project.metadata?.documentSetupIntent ? await documentSetupRequest(project.id, projectRunWorkspaceContext) : null;
@@ -14430,15 +14496,18 @@ export function ProjectView({
                 hasActiveQuestion={hasActiveQuestionForm(messages, Boolean(projectDesignSystemId))}
                 onExit={onBack}
                 onPendingChange={(pending) => { setDocumentSetupPending(pending); if (pending) setWorkspaceFocused(false); }}
+                // Each setup request is sent exactly once under its saved id. One parked behind a run
+                // that is still settling is durably queued, so it counts as sent: the panel records it
+                // instead of reporting a failure and offering a second copy.
                 onPrepareChat={(setup) => handleSend(setup.intent.preparationConversation?.resumeRequestId ? buildDocumentPreparationResumePrompt(setup) : buildDocumentSetupPreparationPrompt(setup), [], [], {
-                  sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.resumeRequestId ?? setup.intent.preparationConversation?.requestId,
+                  sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.resumeRequestId ?? setup.intent.preparationConversation?.requestId, acceptDurableQueue: true,
                 })}
                 onStart={async (setup) => {
                   const required = (setup.intent.editorialSettings ?? setup.confirmed?.editorialSettings ?? []).filter((setting) => setting.presentation.header === true || setting.presentation.footer === true);
                   if (required.length) {
                     const library = await getHeaderFooterWorkspace(collectionProjectId, projectRunWorkspaceContext);
                     if (required.some((setting) => !library.bindings.some((binding) => binding.documentId === setting.documentId && binding.snapshot && binding.status === 'applied'))) {
-                      const sent = await handleSend(buildDocumentSetupStartPrompt(setup), [], [], { sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.headerFooterRequestId });
+                      const sent = await handleSend(buildDocumentSetupStartPrompt(setup), [], [], { sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.headerFooterRequestId, acceptDurableQueue: true });
                       return sent ? 'header-footer' : false;
                     }
                   }
@@ -14447,10 +14516,10 @@ export function ProjectView({
                     return true;
                   }
                   return handleSend(buildDocumentSetupStartPrompt(setup), [], [], {
-                    sessionMode: 'blockout', clientRequestId: setup.intent.preparationConversation?.blockoutRequestId,
+                    sessionMode: 'blockout', clientRequestId: setup.intent.preparationConversation?.blockoutRequestId, acceptDurableQueue: true,
                   });
                 }}
-              /> : null}{!documentSetupPending && !projectReadsHeld && headerFooterEntryAvailable({ applied: false, busy: currentConversationBusy, messages, suppressDirectionForms: Boolean(projectDesignSystemId) }) && <HeaderFooterDocumentEntry documents={activeProjectDocumentId ? documentLibrary.documents.filter((document) => document.id === activeProjectDocumentId) : documentLibrary.documents} onOpen={(id) => openHeaderFooter(id, 'assets')} />}</>}
+              /> : null}{!documentSetupPending && !projectReadsHeld && headerFooterEntryAvailable({ applied: false, busy: currentConversationBusy, messages, suppressDirectionForms: Boolean(projectDesignSystemId) }) && <HeaderFooterDocumentEntry documents={activeProjectDocumentId ? documentLibrary.documents.filter((document) => document.id === activeProjectDocumentId) : documentLibrary.documents} onOpen={(id) => openHeaderFooter(id)} />}</>}
               historyPortalTarget={historyPortalTarget}
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
@@ -14565,8 +14634,9 @@ export function ProjectView({
               initialDraft={chatInitialDraft}
               onboardingStarterPath={onboardingEntryRef.current?.productType ?? null}
               questionFormSubmitDisabled={currentConversationActionDisabled}
-              onSubmitQuestionForm={async (text, attachments = [], context, sourceAssistantMessageId, formId) => {
+              onSubmitQuestionForm={async (text, attachments = [], context, sourceAssistantMessageId, formId, answers) => {
                 if (currentConversationActionDisabled) return false;
+                if (await confirmSavedBriefFromForm(text, sourceAssistantMessageId, formId, answers)) return true;
                 let sourceAssistant = sourceAssistantMessageId
                   ? messages.find((message) => message.id === sourceAssistantMessageId)
                   : undefined;
@@ -14665,8 +14735,8 @@ export function ProjectView({
                 setError(null);
                 onModeChange('daemon');
               }}
-              onOpenAmrSettings={onOpenAmrSettings}
-              onSwitchToAmrAndRetry={handleSwitchToAmrAndRetry}
+              // MelilloDesign uses the user's own CLI; a failed run retries it
+              // rather than promoting a hosted agent the app does not offer.
               onLaunchAntigravityOauth={handleLaunchAntigravityOauth}
               onOpenMcpSettings={onOpenMcpSettings}
               onBrowsePlugins={onBrowsePlugins}

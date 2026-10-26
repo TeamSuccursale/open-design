@@ -1,6 +1,7 @@
-import { constrainBlockoutBox, resizeBlockoutBox, type BlockoutBox, type BlockoutPage } from './blockout.js';
+import { constrainBlockoutBox, resizeBlockoutBox, type BlockoutBlock, type BlockoutBox, type BlockoutPage } from './blockout.js';
 
 type Bounds = { left: number; top: number; right: number; bottom: number };
+type Band = { top: number; bottom: number };
 export type BlockoutGuide = { axis: 'x' | 'y'; position: number };
 
 /** Percent bounds of the physically rotated rectangle, including non-square paper. */
@@ -24,6 +25,49 @@ export function blockoutOutsideSafeArea(box: BlockoutBox, page: Pick<BlockoutPag
   const bounds = blockoutBounds(box, page.widthMm / page.heightMm), safe = blockoutSafeArea(page);
   // Stored coordinates have two decimal places; rounding at a guide is not overflow.
   return bounds.left < safe.left - 0.015 || bounds.top < safe.top - 0.015 || bounds.right > safe.right + 0.015 || bounds.bottom > safe.bottom + 0.015;
+}
+
+/** What a run-authored save moved so a page's body stays out of the applied header/footer reserve. Bands are % of page height. */
+export interface BlockoutReserveAdjustment { variantId: string; pageId: string; blockIds: string[]; from: Band; to: Band }
+/** A body that would have to shrink further is recomposed by its author, not squeezed by the host. */
+export const BLOCKOUT_RESERVE_MIN_SCALE = 0.75;
+export type BlockoutReserveFit =
+  | { status: 'clear' }
+  | { status: 'fitted'; blocks: BlockoutBlock[]; blockIds: string[]; from: Band; to: Band }
+  | { status: 'refused'; free: Band };
+
+/**
+ * Pull a page's body out of the band its reserved header and footer occupy.
+ * The edge that crosses moves to the free band, the opposite edge stays where
+ * it is, and every non-background block between them scales vertically with
+ * it, so order, gaps and proportions hold. Backgrounds may sit under the
+ * reserve. A body that needs more than a modest squeeze, or a rotated block
+ * whose corner still crosses, is refused: that page needs recomposing.
+ */
+export function fitBlockoutPageToReserve(page: BlockoutPage): BlockoutReserveFit {
+  const aspect = page.widthMm / page.heightMm, safe = blockoutSafeArea(page), free = { top: safe.top, bottom: safe.bottom };
+  const header = (page.reservedHeaderMm ?? 0) > 0, footer = (page.reservedFooterMm ?? 0) > 0;
+  const entersReserve = (block: BlockoutBlock) => {
+    if (block.designRole === 'background') return false;
+    const bounds = blockoutBounds(block.box, aspect);
+    return (header && bounds.top < safe.top - 0.015) || (footer && bounds.bottom > safe.bottom + 0.015);
+  };
+  if (!page.blocks.some(entersReserve)) return { status: 'clear' };
+  const body = page.blocks.filter((block) => block.designRole !== 'background').map((block) => blockoutBounds(block.box, aspect));
+  const from = { top: Math.min(...body.map((bounds) => bounds.top)), bottom: Math.max(...body.map((bounds) => bounds.bottom)) };
+  const to = { top: header ? Math.max(from.top, safe.top) : from.top, bottom: footer ? Math.min(from.bottom, safe.bottom) : from.bottom };
+  const scale = (to.bottom - to.top) / (from.bottom - from.top);
+  if (!(scale >= BLOCKOUT_RESERVE_MIN_SCALE)) return { status: 'refused', free };
+  // Stored coordinates keep two decimals: round each edge inward so rounding never re-enters the reserve.
+  const at = (value: number) => to.top + (value - from.top) * scale;
+  const inward = (value: number, up: boolean) => (up ? Math.ceil(value * 100 - 1e-6) : Math.floor(value * 100 + 1e-6)) / 100;
+  const blocks = page.blocks.map((block) => {
+    if (block.designRole === 'background') return block;
+    const top = inward(at(block.box.y), true), bottom = inward(at(block.box.y + block.box.height), false);
+    return { ...block, box: { ...block.box, y: top, height: Math.max(1, Math.round((bottom - top) * 100) / 100) } };
+  });
+  if (blocks.some(entersReserve)) return { status: 'refused', free };
+  return { status: 'fitted', blocks, blockIds: page.blocks.filter((block) => block.designRole !== 'background').map((block) => block.id), from, to };
 }
 
 function nearest(anchors: number[], targets: number[], threshold: number) {

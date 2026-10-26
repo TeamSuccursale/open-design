@@ -806,13 +806,15 @@ describe('AssistantMessage question forms', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     // The trailing arguments carry the answer's occupancy: the form id (and,
     // from ChatPane, the asking message's id) is what gives the answer a
-    // stable identity instead of a fresh one per send.
+    // stable identity instead of a fresh one per send. An explicit submit
+    // also hands over the values by question id, for host-owned forms.
     expect(onSubmitQuestionForm).toHaveBeenCalledWith(
       expect.stringContaining('- Who is this for?: Product evaluators'),
       undefined,
       undefined,
       undefined,
       'discovery',
+      expect.objectContaining({ audience: 'Product evaluators' }),
     );
     expect(screen.queryByText('Quick brief — 30 seconds')).toBeNull();
     expect(screen.queryByText('What are we making?')).toBeNull();
@@ -998,6 +1000,7 @@ describe('AssistantMessage question forms', () => {
         },
         undefined,
         'references',
+        expect.any(Object),
       );
     });
   });
@@ -1178,6 +1181,7 @@ describe('AssistantMessage question forms', () => {
         expect.any(Object),
         undefined,
         'references',
+        expect.any(Object),
       );
     });
     expect(deleteProjectFileMock).toHaveBeenCalledTimes(1);

@@ -17,7 +17,7 @@
 //      step with zero suffix matches → declined).
 
 import { filterIntakeOwnedFiles, isIntakeOwnedFile } from '../intake-owned-files';
-import { BLOCKOUT_BRIEF_PATH } from '@open-design/contracts';
+import { BLOCKOUT_BRIEF_PATH, isBlockoutComparisonFile, type ProjectDocument } from '@open-design/contracts';
 
 interface CandidateFile {
   readonly name: string;
@@ -55,6 +55,62 @@ export function isBlockoutBriefFile(file: Pick<CandidateFile, 'name' | 'path'>):
 
 function basenameOf(p: string): string {
   return p.split('/').pop() ?? p;
+}
+
+function normalizedFilePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * The designed file of each registered document, named as this project's file
+ * list names it. A document owned by a child workspace appears in its parent
+ * collection under its managed `documents/<id>/` folder. Comparison pages are
+ * excluded: before design a document's registered entry is its proposal
+ * comparison, and its first design must still open as new work.
+ */
+export function registeredDocumentEntryNames(
+  documents: ReadonlyArray<Pick<ProjectDocument, 'id' | 'projectId' | 'workspaceProjectId' | 'entryFile' | 'archivedAt'>>,
+  currentProjectId: string,
+): Set<string> {
+  const entries = new Set<string>();
+  for (const document of documents) {
+    if (document.archivedAt || !document.entryFile) continue;
+    const entry = normalizedFilePath(document.entryFile);
+    if (isBlockoutComparisonFile(entry) || !/\.html?$/i.test(entry)) continue;
+    if (document.workspaceProjectId === currentProjectId) entries.add(entry);
+    else if (document.projectId === currentProjectId) entries.add(`documents/${document.id}/${entry}`);
+  }
+  return entries;
+}
+
+function isRegisteredDocumentEntry(
+  file: Pick<CandidateFile, 'name' | 'path'>,
+  entries: ReadonlySet<string> | null | undefined,
+): boolean {
+  return Boolean(entries?.size) && [file.name, file.path].some((value) => value && entries!.has(normalizedFilePath(value)));
+}
+
+/**
+ * A page the agent wrote beside a registered document's designed file and named
+ * after it (`report-v2.html`, `report_draft.html`) is scratch output of a
+ * document update, not a second document. It stays reachable from Files and the
+ * produced-files chips, but it must not take the preview away from the document.
+ */
+export function isRegisteredDocumentCopy(
+  name: string,
+  entries: ReadonlySet<string> | null | undefined,
+): boolean {
+  if (!entries?.size) return false;
+  const path = normalizedFilePath(name);
+  if (!/\.html?$/i.test(path) || entries.has(path) || isBlockoutComparisonFile(path)) return false;
+  const folder = path.slice(0, path.lastIndexOf('/') + 1);
+  const base = basenameOf(path).toLowerCase();
+  for (const entry of entries) {
+    if (entry.slice(0, entry.lastIndexOf('/') + 1) !== folder) continue;
+    const stem = basenameOf(entry).replace(/\.html?$/i, '').toLowerCase();
+    if (base.length > stem.length && base.startsWith(stem) && /[-_. (]/.test(base[stem.length]!)) return true;
+  }
+  return false;
 }
 
 export function decideAutoOpenAfterWrite(
@@ -222,6 +278,12 @@ export interface SelectAutoOpenOptions {
   // Callers recovering legacy turns may not have this snapshot; omitting it
   // preserves the historical newest-mtime tie-break.
   readonly preTurnFileNames?: ReadonlySet<string> | null;
+  // Designed files of the project's registered documents (see
+  // `registeredDocumentEntryNames`). A turn that rewrites one is updating that
+  // document, so its entry outranks every other page the turn wrote — including
+  // a `-v2` copy it created, which the created-this-turn tie-break would favor —
+  // and such copies are not opened beside it.
+  readonly registeredDocumentEntries?: ReadonlySet<string> | null;
 }
 
 export interface SelectAutoOpenTurnOptions extends SelectAutoOpenOptions {
@@ -496,11 +558,14 @@ export function selectAutoOpenProducedArtifacts(
   const best = selectBestRankedFile(producedFiles, options);
   if (!best) return NOTHING_TO_OPEN;
   const primaryRank = autoOpenPreviewRank(best);
+  const entries = options.registeredDocumentEntries;
+  const documentUpdate = isRegisteredDocumentEntry(best, entries);
   const open: string[] = [];
   const seen = new Set<string>();
   for (const file of producedFiles) {
     if (!file.name || seen.has(file.name)) continue;
     if (autoOpenPreviewRank(file) !== primaryRank) continue;
+    if (documentUpdate && isRegisteredDocumentCopy(file.name, entries)) continue;
     seen.add(file.name);
     open.push(file.name);
   }
@@ -546,6 +611,12 @@ function selectBestRankedFile(
   producedFiles: ReadonlyArray<CandidateFile>,
   options: SelectAutoOpenOptions,
 ): CandidateFile | null {
+  let entry: CandidateFile | null = null;
+  for (const file of producedFiles) {
+    if (autoOpenPreviewRank(file) === 0 || !isRegisteredDocumentEntry(file, options.registeredDocumentEntries)) continue;
+    if (!entry || mtimeOf(file) >= mtimeOf(entry)) entry = file;
+  }
+  if (entry) return entry;
   let selected: CandidateFile | null = null;
   let selectedRank = 0;
   for (const file of producedFiles) {

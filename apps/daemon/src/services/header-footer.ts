@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { headerFooterTextOverflow } from './header-footer-fit.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 import {
   ApplyHeaderFooterRequestSchema, CreateHeaderFooterSetRequestSchema, HeaderFooterIdSchema,
   HeaderFooterSearchRequestSchema, PublishHeaderFooterRequestSchema, RestoreHeaderFooterRequestSchema, SaveHeaderFooterDraftRequestSchema, ValidateHeaderFooterRequestSchema,
@@ -78,7 +79,7 @@ export class HeaderFooterStore {
     if (previous?.isSymbolicLink()) throw new HeaderFooterError('Cannot overwrite a linked registry file');
     const output = await open(temporary, 'wx', 0o600);
     try { await output.writeFile(payload); await output.sync(); } finally { await output.close(); }
-    try { await rename(temporary, file); } finally { await unlink(temporary).catch(() => undefined); }
+    try { await replaceFileAtomically(temporary, file); } finally { await unlink(temporary).catch(() => undefined); }
   }
   private async write(state: Library, event?: Omit<HeaderFooterHistoryEntry, 'id' | 'createdAt'>): Promise<void> {
     if (event) {

@@ -46,11 +46,11 @@ export async function runBlockoutCli(args: string[]): Promise<void> {
   const [action, ...rest] = args;
   if (!action || ['help', '--help', '-h'].includes(action) || rest.includes('--help')) {
     console.log(`od blockout <${actions.join('|')}> --project <id> [--document <id>] [--prompt-file <path|->] [--json] [--daemon-url URL]
-save accepts {document,baseRaw,startingPoint?}; brief accepts {document,baseRaw?,action?:"request-proposals"|"develop-design"|"update-design"} and returns a versioned Blockout update path with the old applied composition, current structure and changes, without image uploads; catalog-set accepts {version:1,documents}.
+save accepts {document,baseRaw,startingPoint?}; baseRaw is the raw string od blockout show --json returns, or null for a new document. Saving also gives the pages the applied header/footer reserve, so od header-footer apply is not needed after it. From an agent run (OD_RUN_ID set), save keeps non-background blocks out of the applied header/footer reserve: it scales a page's body into the free band and lists what moved in reserveAdjustments, or fails with BLOCKOUT_RESERVE_OVERLAP naming each page's free band when the page needs recomposing. brief accepts {document,baseRaw?,action?:"request-proposals"|"develop-design"|"update-design"} and returns a versioned Blockout update path with the old applied composition, current structure and changes, without image uploads; catalog-set accepts {version:1,documents}.
 design reports the applied design and any pending registrations. design-page --page <page-id> reads its saved preview HTML and dimensions.
 design-record --prompt-file accepts {handoffId,runId?,entryFile,pages:[{pageId,filePath,widthPx,heightPx,blocks:[{blockId,box}]}],files?:[path]}. runId defaults to OD_RUN_ID. Add data-blockout-page-id to each designed page. Bounds describe conceptual content; backgrounds, watermarks, decoration and overlaps remain free. Registration becomes applied only when this project's run succeeds with a valid deliverable; it never approves a layout or starts a run.
 request-alternatives [--variant <id>] [--count 1|2|3] [--request-id <stable-id>] freezes the latest saved chosen proposal (or explicit variant); --prompt-file supplies instructions as plain text or {instruction,count?,variantId?,requestId?}. It prepares metadata only, not a model run.
-append-alternatives --prompt-file accepts {requestId,candidates:[{label,pages}]}; it appends results without replacing saved proposals, selection or approval. Retrying the same result returns the same proposal IDs.
+append-alternatives --prompt-file accepts {requestId,candidates:[{label,pages}]}; it appends results without replacing saved proposals, selection or approval. Retrying the same result returns the same proposal IDs. From an agent run, appended pages are fitted to the header/footer reserve like save, and reserveAdjustments names them by their saved proposal ID.
 inventory [--refresh] [--wait] reports exact source material and coverage; --wait polls only this inventory for at most 120 seconds and never starts image extraction.
 assess --document <id> reads the saved proposal assessment; --prompt-file <path|-> POSTs a complete unsaved document or {document} to the same assessment endpoint (use - for stdin).
 overview [--variant <id>] reports every page, its blocks and the source limit/planning target.
@@ -81,8 +81,10 @@ Editing commands read the current revision and save through the same HTTP endpoi
     if ((action === 'budget' || action === 'request-alternatives') && !text.trimStart().startsWith('{')) input = { [action === 'budget' ? 'note' : 'instruction']: text };
     else input = JSON.parse(text);
   }
-  const base = await resolveDaemonUrl({ flagUrl: flags.get('--daemon-url') ?? null });
   const document = flags.get('--document') ?? 'document-1';
+  // The revision guards edits made since the document was read; an agent cannot guess it, so name where it comes from.
+  if (action === 'save' && !(input && typeof input === 'object' && 'baseRaw' in input)) throw new Error(`save needs baseRaw: run od blockout show --project ${project} --document ${document} --json and send its raw string unchanged as baseRaw (null only for a document that does not exist yet).`);
+  const base = await resolveDaemonUrl({ flagUrl: flags.get('--daemon-url') ?? null });
   if (action === 'design-record') { const value = objectInput(input); input = { ...value, runId: value.runId ?? process.env.OD_RUN_ID }; }
   const projectUrl = `${base.replace(/\/$/, '')}/api/projects/${encodeURIComponent(project)}`;
   const url = action === 'inventory' ? `${projectUrl}/blockout-materials` : `${projectUrl}/blockout-documents${action === 'list' || action === 'catalog-set' ? '' : `/${encodeURIComponent(document)}`}${action === 'brief' ? '/starting-point' : action === 'assess' ? '/assessment' : action === 'append-alternatives' ? '/alternatives' : action.startsWith('design') ? `/design${action === 'design-page' ? `/pages/${encodeURIComponent(requiredString(flags.get('--page'), '--page'))}` : ''}` : ''}`;
@@ -94,7 +96,7 @@ Editing commands read the current revision and save through the same HTTP endpoi
       if (Boolean(workspaceId) !== Boolean(memberId)) throw new Error('The run workspace identity is incomplete');
       const response = await fetch(target, { method, dispatcher,
         ...(inventoryDeadline === undefined ? {} : { signal: AbortSignal.timeout(Math.max(1, Math.min(30_000, inventoryDeadline - Date.now()))) }),
-        headers: { ...(workspaceId && memberId ? { 'x-od-workspace-id': workspaceId, 'x-od-workspace-member-id': memberId } : {}), ...(action === 'design-record' && process.env.OD_RUN_ID ? { 'x-od-run-id': process.env.OD_RUN_ID } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { ...(workspaceId && memberId ? { 'x-od-workspace-id': workspaceId, 'x-od-workspace-member-id': memberId } : {}), ...((action === 'design-record' || action === 'save' || action === 'append-alternatives') && process.env.OD_RUN_ID ? { 'x-od-run-id': process.env.OD_RUN_ID } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       const result = await response.json() as { error?: { code?: string; message?: string; details?: { resultPath?: string } } };
       if (!response.ok) throw new Error([result.error?.code, result.error?.message ?? `Blockout returned HTTP ${response.status}`, result.error?.details?.resultPath].filter(Boolean).join(': '));

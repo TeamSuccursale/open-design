@@ -3,11 +3,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectDocument } from '@open-design/contracts';
+import type { DocumentSetup, ProjectDocument } from '@open-design/contracts';
 
 import { navigationTiming } from '../../src/observability/navigation-timing';
 import { reportSafetyEvent } from '../../src/analytics/error-tracking';
 import { ProjectView } from '../../src/components/ProjectView';
+import type { QuestionFormSubmitHandler } from '../../src/components/AssistantMessage';
 import { navigate, registerNavigationGuard, useRoute } from '../../src/router';
 import type {
   AgentInfo,
@@ -23,6 +24,7 @@ import {
   listConversations,
   listMessages,
   loadTabs,
+  saveMessage,
 } from '../../src/state/projects';
 import { fetchPreviewComments, fetchProjectFiles } from '../../src/providers/registry';
 
@@ -138,22 +140,29 @@ vi.mock('../../src/components/Loading', () => ({
   CenteredLoader: () => <div data-testid="loader" />,
 }));
 
+const chatPane = vi.hoisted(() => ({ onSubmitQuestionForm: null as null | QuestionFormSubmitHandler, submitDisabled: true }));
 vi.mock('../../src/components/ChatPane', () => ({
-  ChatPane: ({ onSelectConversation, messages, documentSetupContent, onRetryConversationRead }: { onSelectConversation: (id: string) => void; messages: Array<{ content: string }>; documentSetupContent?: ReactNode; onRetryConversationRead?: () => void }) => (
-    <div data-testid="chat-pane">
+  ChatPane: ({ onSelectConversation, messages, documentSetupContent, onRetryConversationRead, onSubmitQuestionForm, questionFormSubmitDisabled }: { onSelectConversation: (id: string) => void; messages: Array<{ content: string }>; documentSetupContent?: ReactNode; onRetryConversationRead?: () => void; onSubmitQuestionForm?: QuestionFormSubmitHandler; questionFormSubmitDisabled?: boolean }) => {
+    chatPane.onSubmitQuestionForm = onSubmitQuestionForm ?? null;
+    chatPane.submitDisabled = questionFormSubmitDisabled ?? false;
+    return <div data-testid="chat-pane">
       {documentSetupContent}
       <output data-testid="visible-transcript">{messages.map((message) => message.content).join('\n')}</output>
       <button onClick={() => onSelectConversation('conv-2')}>Switch conversation</button>
       {onRetryConversationRead && <button onClick={onRetryConversationRead}>Retry conversation read</button>}
-    </div>
-  ),
+    </div>;
+  },
 }));
 const documentLibrary = vi.hoisted(() => ({ documents: [] as ProjectDocument[] }));
 vi.mock('../../src/components/project-documents/useProjectDocuments', () => ({ useProjectDocuments: () => ({
   documents: documentLibrary.documents, selectedDocumentId: null, loading: false, error: false, refresh: vi.fn(),
 }) }));
+const setupPanel = vi.hoisted(() => ({ onStart: null as null | ((setup: DocumentSetup) => Promise<unknown>) }));
 vi.mock('../../src/components/document-setup/DocumentSetupReview', () => ({
-  DocumentSetupReview: ({ enabled }: { enabled: boolean }) => enabled ? <div data-testid="global-preparation-controls" /> : null,
+  DocumentSetupReview: ({ enabled, onStart }: { enabled: boolean; onStart: (setup: DocumentSetup) => Promise<unknown> }) => {
+    setupPanel.onStart = onStart;
+    return enabled ? <div data-testid="global-preparation-controls" /> : null;
+  },
 }));
 vi.mock('../../src/components/project-documents/ProjectDocumentsPanel', () => ({
   ProjectDocumentsPanel: ({ onOpen }: { onOpen: (document: unknown) => Promise<void> }) => <button onClick={() => void onOpen({
@@ -199,6 +208,7 @@ const conversation: Conversation = {
 };
 
 function renderProjectView(props?: {
+  config?: AppConfig;
   project?: Project;
   designSystems?: DesignSystemSummary[];
   routeFileName?: string | null;
@@ -215,7 +225,7 @@ function renderProjectView(props?: {
       initialWorkspaceScope={{ kind: 'unbound', projectId: (props?.project ?? project).id, workspaceId: null, context: null }}
       routeFileName={props?.routeFileName ?? null}
       routeConversationId={props?.routeConversationId ?? (route.kind === 'project' ? route.conversationId : null)}
-      config={config}
+      config={props?.config ?? config}
       agents={[] as AgentInfo[]}
       skills={[] as SkillSummary[]}
       designTemplates={[] as SkillSummary[]}
@@ -251,6 +261,8 @@ function results() {
 }
 
 beforeEach(() => {
+  setupPanel.onStart = null;
+  chatPane.onSubmitQuestionForm = null; chatPane.submitDisabled = true;
   navigationTiming.cancel('page_exit');
   vi.clearAllMocks();
   documentLibrary.documents = [];
@@ -392,6 +404,79 @@ describe('ProjectView business Ready wiring', () => {
     expect(mockedListMessages.mock.calls[0]?.slice(0, 2)).toEqual([project.id, conversation.id]);
     expect(mockedCreateConversation).not.toHaveBeenCalled();
   });
+  it('counts a setup request parked behind a finishing run as sent, so the panel neither reports a failure nor offers a second copy', async () => {
+    // The previous turn's stream has ended but its run has not settled yet: the conversation still queues new sends.
+    mockedListMessages.mockResolvedValue([{ id: 'confirming', role: 'assistant', content: 'Brief confermato.', createdAt: 1, runId: 'run-confirm', runStatus: 'running' }]);
+    const daemon = await import('../../src/providers/daemon');
+    vi.mocked(daemon.fetchChatRunStatus).mockReturnValue(new Promise(() => undefined));
+    try {
+      renderProjectView({ config: { ...config, mode: 'daemon', agentId: 'codex' }, project: { ...project, metadata: { kind: 'other', documentSetupIntent: { kind: 'report', subtype: 'Two outputs', purpose: 'Two documents', contextRoots: [], imageIntakeConsent: false } } } });
+      await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toBe('Brief confermato.'));
+      await waitFor(() => expect(setupPanel.onStart).not.toBeNull());
+      const setup = { status: 'confirmed', intent: { editorialSettings: [], preparationConversation: { requestId: 'prep', dispatched: true, blockoutRequestId: 'blockout-once', headerFooterRequestId: 'hf-once' } }, confirmed: { editorialSettings: [] } } as unknown as DocumentSetup;
+      let accepted: unknown;
+      await act(async () => { accepted = await setupPanel.onStart!(setup); });
+      expect(accepted).toBe(true);
+      expect(daemon.streamViaDaemon).not.toHaveBeenCalled();
+    } finally { vi.mocked(daemon.fetchChatRunStatus).mockReset(); }
+  });
+
+  describe('final brief confirmation', () => {
+    // The queued send parked by the previous test persists per project in localStorage and would keep this conversation busy.
+    beforeEach(() => window.localStorage.clear());
+    const setupProject = { ...project, metadata: { kind: 'other' as const, documentSetupIntent: { kind: 'report' as const, subtype: 'Two outputs', purpose: 'Two documents', contextRoots: [], imageIntakeConsent: false } } };
+    const summary = { id: 'brief-summary', role: 'assistant' as const, content: 'Riepilogo del brief.', createdAt: 1, runId: 'run-summary', runStatus: 'succeeded' as const };
+    const answer = '[form answers — document-setup-confirmation]\n- Confermi il brief riepilogato?: Sì, confermo [value: yes]\n- Come vuoi impostare i blocchi?: Tre strutture complete per ogni documento [value: agent]';
+    const confirmCalls = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/projects/project-1/document-setup/confirm'));
+    async function submit(formId: string, answers: Record<string, string>) {
+      // A real form keeps its submit button disabled until the conversation accepts actions.
+      await waitFor(() => { expect(chatPane.onSubmitQuestionForm).not.toBeNull(); expect(chatPane.submitDisabled).toBe(false); });
+      let accepted: unknown;
+      await act(async () => { accepted = await chatPane.onSubmitQuestionForm!(answer, [], undefined, summary.id, formId, answers); });
+      return accepted;
+    }
+
+    it('records an accepted confirmation itself and lets the setup panel start the Blockout, with no agent turn for the answer', async () => {
+      mockedListMessages.mockResolvedValue([summary]);
+      const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ setup: null }) }));
+      vi.stubGlobal('fetch', fetchMock);
+      const reread = vi.fn();
+      window.addEventListener('melillodesign:document-context-updated', reread);
+      const daemon = await import('../../src/providers/daemon');
+      try {
+        renderProjectView({ config: { ...config, mode: 'daemon', agentId: 'codex' }, project: setupProject });
+        await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toBe('Riepilogo del brief.'));
+        expect(await submit('document-setup-confirmation', { 'confirm-brief': 'yes', 'blockout-approach': 'agent' })).toBe(true);
+        expect(confirmCalls(fetchMock)).toHaveLength(1);
+        expect(JSON.parse(String((confirmCalls(fetchMock)[0] as unknown as [string, RequestInit])[1].body))).toEqual({ source: 'saved-brief', blockoutApproach: 'agent' });
+        expect(daemon.streamViaDaemon).not.toHaveBeenCalled();
+        expect(vi.mocked(saveMessage)).toHaveBeenCalledWith(project.id, conversation.id,
+          expect.objectContaining({ role: 'user', content: answer, id: expect.stringMatching(/^qf-answer-.+-user$/) }), expect.objectContaining({ createOnly: true }));
+        await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toContain(answer));
+        expect(reread).toHaveBeenCalledOnce();
+      } finally { window.removeEventListener('melillodesign:document-context-updated', reread); }
+    });
+
+    for (const [name, answers, confirmations] of [
+      ['the engineer asks to change the brief', { 'confirm-brief': 'no' }, 0],
+      ['the saved brief cannot be confirmed as it stands', { 'confirm-brief': 'yes', 'blockout-approach': 'agent' }, 1],
+    ] as const) {
+      it(`sends the answer to the agent as before when ${name}`, async () => {
+        mockedListMessages.mockResolvedValue([summary]);
+        const fetchMock = vi.fn(async (url: string) => String(url).endsWith('/document-setup/confirm')
+          ? { ok: false, json: async () => ({ error: { message: 'Save each output’s constraints before confirming the saved brief' } }) }
+          : { ok: true, json: async () => ({}) });
+        vi.stubGlobal('fetch', fetchMock);
+        const daemon = await import('../../src/providers/daemon');
+        renderProjectView({ config: { ...config, mode: 'daemon', agentId: 'codex' }, project: setupProject });
+        await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toBe('Riepilogo del brief.'));
+        await submit('document-setup-confirmation', answers);
+        expect(confirmCalls(fetchMock)).toHaveLength(confirmations);
+        await waitFor(() => expect(daemon.streamViaDaemon).toHaveBeenCalledOnce());
+      });
+    }
+  });
+
   it('does not mount guided document setup in a Fast child with a saved document intent', async () => {
     documentLibrary.documents = [{ id: 'report', projectId: 'collection', workspaceProjectId: project.id, name: 'Fast report', kind: 'document', conversationIds: [conversation.id], workingDirectory: 'C:/fast', folderMode: 'managed', availability: 'available', createdAt: 'now', updatedAt: 'now', archivedAt: null }];
     renderProjectView({ project: { ...project, metadata: { kind: 'other', projectMode: 'fast', collectionProjectId: 'collection', collectionDocumentId: 'report', documentSetupIntent: { kind: 'report', subtype: 'Technical report', purpose: 'Prepare a technical report', contextRoots: [], imageIntakeConsent: false } } } });

@@ -15,7 +15,11 @@ For an authorized new design deliverable, output a readable plan and the host-su
 production-ready marker, then stop. Execute production only in the next turn
 started by Open Design. "Just do it", "直接完成", and "不用问我" authorize
 production without a confirmation question; they do not skip the planning-turn
-boundary for a new deliverable. Honor plan-only and no-write requests by omitting the
+boundary for a new deliverable. Exception: when this turn's host protocol is
+headed Confirmed-brief production, the engineer has already accepted the brief
+and its approach in a host form. That acceptance takes the place of the planning
+turn: produce in this turn and emit no production-ready marker.
+Honor plan-only and no-write requests by omitting the
 marker. Use actual native tools and subagents where useful and available.
 
 You are not a standalone resident agent outside the Coding Agent. Do not claim

@@ -4,8 +4,13 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { ProjectHistoryError } from './project-history-files.js';
 
-/** Every command has an explicit private Git directory and ignores inherited Git configuration. */
+/**
+ * Every command has an explicit private Git directory and ignores inherited Git configuration.
+ * Inherited configuration is also where Windows users enable long paths, so it is set here: a
+ * data root deep enough for objects/xx/<62 hex> to pass 260 characters must still record history.
+ */
 export class ProjectHistoryGit {
   readonly directory: string;
   private readonly environment: NodeJS.ProcessEnv;
@@ -22,7 +27,7 @@ export class ProjectHistoryGit {
   }
 
   private async command(args: string[], options: { input?: Readable | Uint8Array; output?: Writable; limit?: number; prefix?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<Buffer> {
-    const child = spawn('git', ['--no-pager', `--git-dir=${this.directory}`, '-c', `core.hooksPath=${path.join(this.root, 'empty')}`, '-c', 'core.fsmonitor=false', '-c', 'commit.gpgSign=false', '-c', 'gc.auto=0', '-c', 'core.fsync=all', ...args], { cwd: this.root, env: { ...this.environment, ...options.env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('git', ['--no-pager', `--git-dir=${this.directory}`, '-c', `core.hooksPath=${path.join(this.root, 'empty')}`, '-c', 'core.fsmonitor=false', '-c', 'core.longpaths=true', '-c', 'commit.gpgSign=false', '-c', 'gc.auto=0', '-c', 'core.fsync=all', ...args], { cwd: this.root, env: { ...this.environment, ...options.env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let errorText = '', outputBytes = 0, exceeded = false, ioError: unknown;
     const chunks: Buffer[] = [], limit = options.limit ?? 16_000_000;
     const completed = new Promise<{ code: number | null; error?: Error }>((resolve) => {
@@ -48,6 +53,10 @@ export class ProjectHistoryGit {
     if (result.error) throw new Error(`Private history Git unavailable: ${result.error.message}`);
     if (ioError) throw ioError;
     if (exceeded && !options.prefix) throw new Error('Private history metadata exceeds its size limit');
+    if (result.code !== 0 && /'\$GIT_DIR' too big|Filename too long/i.test(errorText)) {
+      // Past Git's own limit (about 221 characters for the Git directory on Windows) only a shorter data root helps.
+      throw Object.assign(new ProjectHistoryError(`La cronologia del progetto non può essere salvata: il percorso della cartella dati del daemon è troppo lungo per Git su Windows (${this.directory.length} caratteri fino alla cronologia). Sposta la cartella dati in un percorso più breve.`, 503), { code: 'HISTORY_PATH_TOO_LONG' });
+    }
     if (result.code !== 0 && !(exceeded && options.prefix)) throw new Error(`Private history Git failed: ${errorText.trim() || `exit ${result.code}`}`);
     return Buffer.concat(chunks, outputBytes);
   }
@@ -56,6 +65,15 @@ export class ProjectHistoryGit {
     return (await this.command(args, input === undefined ? {} : { input })).toString('utf8');
   }
   async blob(input: Readable | Uint8Array): Promise<string> { return (await this.run(['hash-object', '-w', '--stdin', '--no-filters'], input)).trim(); }
+  private readonly trees = new Map<string, string>();
+  /** Trees are content-addressed, so a directory whose entries are unchanged reuses the tree this repository already wrote. */
+  async tree(entries: string): Promise<string> {
+    const key = createHash('sha256').update(entries).digest('hex'), known = this.trees.get(key);
+    if (known) return known;
+    const hash = (await this.run(['mktree', '-z'], Buffer.from(entries))).trim();
+    if (this.trees.size >= 50_000) this.trees.clear();
+    this.trees.set(key, hash); return hash;
+  }
   async json(hash: string): Promise<unknown> { this.assertHash(hash); return JSON.parse(await this.run(['cat-file', 'blob', hash])); }
   async prefix(hash: string, limit: number): Promise<Buffer> { this.assertHash(hash); return this.command(['cat-file', 'blob', hash], { prefix: true, limit }); }
   async reference(name: string): Promise<string | null> {

@@ -22,6 +22,12 @@ describe('project-local intake boundary', () => {
     await expect(service.start(root, { paths: ['valid.pdf', 'unexpected.txt'] })).rejects.toThrow('PDF documents');
     expect((await service.catalog(root)).documents).toEqual([]);
   });
+  it('treats a folder without PDFs as nothing to acquire, while an explicit empty selection still fails', async () => {
+    await writeFile(path.join(root, 'notes.txt'), 'text-only demonstration material');
+    const service = new ProjectIntakeService();
+    await expect(service.start(root, {})).resolves.toMatchObject({ documents: [], assets: [] });
+    await expect(service.start(root, { paths: [] })).rejects.toThrow('No PDFs found');
+  });
   it('shares one catalog for simultaneous reads and exposes interrupted jobs for retry', async () => {
     await mkdir(path.join(root, 'intake-assets'));
     await writeFile(path.join(root, 'intake-assets/catalog.json'), JSON.stringify({ version: 1, documents: [{ id: 'doc', status: 'processing', indexedPages: [2] }], assets: [] }));

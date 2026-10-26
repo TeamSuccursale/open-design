@@ -1,7 +1,9 @@
 import type { CustodianIndexingStatus, DocumentResearchRun, ProjectCustodianLedger, ProjectIntakeCatalog } from '@open-design/contracts';
 import { projectIntakeProgress } from './project-intake-progress';
 
-export type PreparationState = 'waiting' | 'working' | 'ready' | 'attention';
+export type PreparationState = 'waiting' | 'working' | 'ready' | 'attention' | 'none';
+/** Image intake reads PDFs only; other sources (plain text, Word) have no pages to rasterize. */
+export const isImageIntakeSource = (path: string) => /\.pdf$/i.test(path);
 export interface IntakeStatusSnapshot { catalog: ProjectIntakeCatalog; loaded: boolean; error: boolean; launchError: boolean }
 export interface ResearchStatusSnapshot { run: DocumentResearchRun | null; busy: 'read' | 'start' | 'retry' | null; error: boolean; unavailable: boolean; pending: boolean }
 export interface CustodianStatusSnapshot { ledger: ProjectCustodianLedger | null; indexing: CustodianIndexingStatus | null; error: boolean }
@@ -34,5 +36,7 @@ export function projectPreparationStatus(intake: IntakeStatusSnapshot | null, re
   else if (ledger?.imageConsent !== false && (imagesActive || progress?.active || (!intake?.loaded && ledger?.imagesStatus === 'indexing'))) images = 'working';
   else if (stale) images = 'attention';
   else if (intake?.loaded && intake.catalog.documents.length > 0 && progress && !progress.unknownTotals && progress.totalPages > 0 && progress.completedPages >= progress.totalPages && progress.ready === intake.catalog.documents.length) images = 'ready';
+  // Nothing to acquire is a settled outcome, not a wait: every known source is text-only.
+  else if (intake?.loaded && !intake.catalog.documents.length && !intake.catalog.assets.length && ledger?.sources.length && !ledger.sources.some((source) => isImageIntakeSource(source.path))) images = 'none';
   return { text, images };
 }

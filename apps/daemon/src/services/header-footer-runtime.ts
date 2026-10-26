@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
-import { AppliedHeaderFooterSchema, assessBlockoutStructure, blockoutOutsideSafeArea, documentPresentationPageState, headerFooterReservations, headerFooterVariantForFormat, renderAppliedHeaderFooterSvg,
-  type AppliedHeaderFooter, type BlockoutDocument, type HeaderFooterBinding, type HeaderFooterRevision, type HeaderFooterPageContext, type ProjectDocument } from '@open-design/contracts';
+import { AppliedHeaderFooterSchema, assessBlockoutStructure, blockoutOutsideSafeArea, documentPresentationPageState, fitBlockoutPageToReserve, headerFooterReservations, headerFooterVariantForFormat, renderAppliedHeaderFooterSvg,
+  type AppliedHeaderFooter, type BlockoutDocument, type BlockoutReserveAdjustment, type HeaderFooterBinding, type HeaderFooterRevision, type HeaderFooterPageContext, type ProjectDocument } from '@open-design/contracts';
 import { getProject, type openDatabase } from '../db.js';
 import { resolveProjectDir } from '../projects.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 import type { ProjectDocumentsRuntime } from './project-documents-runtime.js';
 import { HeaderFooterError, HeaderFooterStore } from './header-footer.js';
 import { headerFooterTextOverflow } from './header-footer-fit.js';
@@ -119,7 +120,10 @@ export class HeaderFooterRuntime {
     const parent = path.posix.dirname(relative);
     if (parent !== '.') await containedIntakePath(root, parent, true);
     const destination = await containedIntakePath(root, relative), temporary = `${destination}.${randomUUID()}.tmp`;
-    await withProjectHistoryMutation({ root, paths: [relative] }, async () => { await writeFile(temporary, bytes, { flag: 'wx' }); await rename(temporary, destination); });
+    await withProjectHistoryMutation({ root, paths: [relative] }, async () => {
+      try { await writeFile(temporary, bytes, { flag: 'wx' }); await replaceFileAtomically(temporary, destination); }
+      finally { await rm(temporary, { force: true }); }
+    });
   }
   async materialize(document: ProjectDocument, binding: HeaderFooterBinding, revision: HeaderFooterRevision | null): Promise<{ needsReview: boolean }> {
     const { project, root } = this.workspace(document.workspaceProjectId), parent = this.workspace(document.projectId);
@@ -145,7 +149,7 @@ export class HeaderFooterRuntime {
       for (const page of previous.document?.variants.flatMap((variant) => variant.pages) ?? []) {
         if (!headerFooterVariantForFormat(revision.variants, page.widthMm, page.heightMm)) throw new HeaderFooterError(`Add a header/footer variant for ${page.widthMm} × ${page.heightMm} mm`, 409);
       }
-      this.validateLocalFields(applied, document.name, previous.document?.variants[0]?.pages.length ?? 1);
+      await this.validateLocalFields(applied, document, previous.document?.variants[0]?.pages.length ?? 1);
     }
     await this.write(root, manifest, `${JSON.stringify({ version: 1, documentId: document.id, applied: applied ?? null }, null, 2)}\n`);
     const presentation = document.presentation ? { ...document.presentation, header: binding.header, footer: binding.footer, headerFooter: applied } : undefined;
@@ -175,9 +179,11 @@ export class HeaderFooterRuntime {
     if (presentation) await this.options.documents.onDocumentUpdated({ ...document, presentation }, document);
     return { needsReview };
   }
-  private validateLocalFields(applied: AppliedHeaderFooter, documentName: string, totalPages: number): void {
-    const values = { projectName: applied.projectName, documentName, pageNumber: String(totalPages), totalPages: String(totalPages), date: applied.appliedAt.slice(0, 10), revision: String(applied.revision) };
-    const overflow = headerFooterTextOverflow(applied.design.variants, values, applied);
+  /** A document's own name and numbers render only in the variants its pages use; another document's format cannot reject them. */
+  private async validateLocalFields(applied: AppliedHeaderFooter, document: ProjectDocument, totalPages: number): Promise<void> {
+    const values = { projectName: applied.projectName, documentName: document.name, pageNumber: String(totalPages), totalPages: String(totalPages), date: applied.appliedAt.slice(0, 10), revision: String(applied.revision) };
+    const used = new Set((await this.documentFormats(document)).flatMap((format) => headerFooterVariantForFormat(applied.design.variants, format.widthMm, format.heightMm) ?? []));
+    const overflow = headerFooterTextOverflow(used.size ? [...used] : applied.design.variants, values, applied);
     if (overflow) throw new HeaderFooterError(`Il testo “${overflow.value.slice(0, 70)}” non entra nella fascia ${overflow.variantName}. Allarga il blocco o riduci il carattere prima di applicare.`, 409, 'HEADER_FOOTER_TEXT_OVERFLOW');
   }
   private async validateForDocument(document: ProjectDocument, binding: HeaderFooterBinding, revision: HeaderFooterRevision): Promise<void> {
@@ -186,7 +192,7 @@ export class HeaderFooterRuntime {
     const applied = AppliedHeaderFooterSchema.parse({ version: 1, projectId: workspace.project.id, documentId: document.id, setId: binding.followUpdates ? binding.setId : null,
       revision: revision.id, projectName: parent.project.name, header: binding.header, footer: binding.footer, showOnCover: binding.showOnCover, appliedAt: revision.createdAt,
       design: { version: 1, name: revision.name, guidance: revision.guidance, stage: 'graphic', variants: revision.variants }, assets: [] });
-    this.validateLocalFields(applied, document.name, previous.document?.variants[0]?.pages.length ?? 1);
+    await this.validateLocalFields(applied, document, previous.document?.variants[0]?.pages.length ?? 1);
   }
   withReservations(document: BlockoutDocument): BlockoutDocument {
     const applied = document.presentation?.headerFooter;
@@ -203,10 +209,30 @@ export class HeaderFooterRuntime {
       return page.blocks.some((block) => block.designRole !== 'background' && blockoutOutsideSafeArea(block.box, page) && !blockoutOutsideSafeArea(block.box, old));
     }));
   }
+  /** Pull run-authored bodies out of the reserve; a page that would need recomposing refuses the whole save. */
+  private fitReserve(document: BlockoutDocument): BlockoutReserveAdjustment[] {
+    const adjustments: BlockoutReserveAdjustment[] = [], refused: string[] = [];
+    const percent = (value: number) => `${value.toFixed(1).replace('.', ',')}%`;
+    for (const variant of document.variants) for (const page of variant.pages) {
+      const fit = fitBlockoutPageToReserve(page);
+      if (fit.status === 'fitted') { page.blocks = fit.blocks; adjustments.push({ variantId: variant.id, pageId: page.id, blockIds: fit.blockIds, from: fit.from, to: fit.to }); }
+      else if (fit.status === 'refused') refused.push(`${variant.label || variant.id}, ${page.label || page.id}: la fascia libera va da ${percent(fit.free.top)} a ${percent(fit.free.bottom)} dell’altezza`);
+    }
+    if (refused.length) throw new HeaderFooterError(`I blocchi entrano nella fascia riservata a intestazione e piè di pagina e non si adattano senza ricomporre la pagina. ${refused.join('; ')}. Ricomponi questi blocchi dentro la fascia libera e salva di nuovo.`, 422, 'BLOCKOUT_RESERVE_OVERLAP');
+    return adjustments;
+  }
   async normalizeBlockout(projectId: string, document: BlockoutDocument): Promise<BlockoutDocument> {
+    return (await this.normalizeBlockoutSave(projectId, document)).document;
+  }
+  /**
+   * A save authored by an agent run keeps its body out of the applied header
+   * and footer: blocks are fitted into the free band, or the save is refused.
+   * The engineer's own placement is never moved; it stays a reviewable warning.
+   */
+  async normalizeBlockoutSave(projectId: string, document: BlockoutDocument, options: { authoredByRun?: boolean } = {}): Promise<{ document: BlockoutDocument; reserveAdjustments: BlockoutReserveAdjustment[] }> {
     const store = await this.store(projectId), state = await store.list();
     const registered = state.documents.find((item) => item.workspaceProjectId === projectId && (item.id === document.documentId || item.blockoutDocumentId === document.documentId));
-    if (!registered) return document;
+    if (!registered) return { document, reserveAdjustments: [] };
     const binding = state.bindings.find((item) => item.documentId === registered.id);
     if (binding?.status === 'pending') throw new HeaderFooterError('L’applicazione di intestazione e piè di pagina richiede attenzione. Riprova prima di modificare le pagine.', 409, 'HEADER_FOOTER_REQUIRED');
     const hasBody = document.variants.some((variant) => variant.pages.some((page) => page.blocks.length));
@@ -221,8 +247,9 @@ export class HeaderFooterRuntime {
       for (const region of ['header', 'footer'] as const) if (applied[region] && !variant.blocks.some((block) => block.region === region)) throw new HeaderFooterError(`Completa la ${region === 'header' ? 'intestazione' : 'fascia del piè di pagina'} nella variante ${variant.name} prima di preparare queste pagine.`, 409, 'HEADER_FOOTER_REGION_EMPTY');
     }
     const normalized = this.withReservations(effective);
+    const reserveAdjustments = options.authoredByRun ? this.fitReserve(normalized) : [];
     if (this.newReservedOverlap(document, normalized)) { normalized.needsReadaptation = true; delete normalized.approval; }
-    return normalized;
+    return { document: normalized, reserveAdjustments };
   }
   async context(projectId: string, documentId?: string): Promise<string> {
     const store = await this.store(projectId), state = await store.list();

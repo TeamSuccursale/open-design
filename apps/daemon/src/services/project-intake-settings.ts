@@ -1,12 +1,12 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { setTimeout as delay } from 'node:timers/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import type { ProjectIntakeConfig, ProjectIntakeSettings } from '@open-design/contracts';
 import { isBlocked } from '../linked-dirs.js';
 import { sandboxImportedProjectRootUnavailableReason } from '../sandbox-mode.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 
 export const INTAKE_CONFIG_FILE = 'intake.config.json';
 export const INTAKE_CATALOG_DIR = 'intake-assets';
@@ -96,16 +96,7 @@ export async function writeIntakeConfig(root: string, value: unknown): Promise<P
     const temporary = await containedIntakePath(canonical, `${INTAKE_CONFIG_FILE}.${randomUUID()}.tmp`);
     await withProjectHistoryMutation({ root: canonical, paths: [INTAKE_CONFIG_FILE] }, async () => { try {
       await writeFile(temporary, JSON.stringify(config, null, 2), { flag: 'wx' });
-      const backoff = [25, 50, 100, 200, 400];
-      for (let attempt = 0; ; attempt += 1) {
-        try { await rename(temporary, target); break; }
-        catch (error) {
-          // Windows readers and antivirus may briefly lock the destination.
-          // Preserve the previous valid file throughout the atomic replacement.
-          if (!['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '') || attempt >= backoff.length) throw error;
-          await delay(backoff[attempt]);
-        }
-      }
+      await replaceFileAtomically(temporary, target);
     } finally { await rm(temporary, { force: true }); }
     });
     return intakeSettings(canonical);

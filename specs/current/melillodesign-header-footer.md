@@ -50,9 +50,15 @@ The sequence is:
 2. Choose an existing header/footer design, or collect logos and guidance for
    a new one. An existing compatible design can be previewed and reused without
    repeating its original asset interview.
-3. For a new design, propose its structural arrangement, let the user choose and
-   edit it, then develop and approve the **actual header/footer graphics**.
-4. Publish/apply that design and its measured page reservations.
+3. For a new design, the agent composes the **actual header/footer graphics**
+   in the same turn the answers arrive: one shared design with a populated
+   format variant for every waiting document, validated for each of them.
+   When the turn ends the host opens the dedicated editor on that proposal.
+   The engineer reviews it there, edits it by hand or asks for changes in chat;
+   there is no numbered wizard and no separate structural round unless the
+   brief genuinely calls for alternatives.
+4. One approval publishes/applies that design and its measured page
+   reservations to every waiting document whose format it provides.
 5. Prepare the document's page Blockout, or continue to page graphic design if
    the user explicitly skipped Blockout.
 
@@ -138,8 +144,21 @@ warnings; and the saved guidance for the selected region/block. Questions from
 the agent highlight the relevant region/block and retain the page preview.
 The user can upload/replace a logo or change the guidance without restarting.
 
-Structural proposals explain their hierarchy and space requirements. There is
-no mandatory A/B/C count: present useful alternatives when the brief benefits
+The review names the document and what is being applied (for example
+**Applica il piè di pagina a Relazione B, Fascicolo grafico B · senza
+intestazione**); the document picker switches to another document in that
+scope and its own format, keeping the same draft open in the editor. The apply
+action names only the enabled regions (**Applica il piè di pagina**). The date
+field prints the revision's local day as dd/mm/yyyy, and the editor shows and
+announces the same value. **Chiedi una modifica in chat** saves the draft and returns to
+the chat. The engineer can ask for header/footer changes in chat at any point
+in the project, including after the page Blockout exists; the agent edits the
+design the document uses, validates it and the editor reopens for review.
+A change requested in chat is not an approval.
+
+Alternatives are separate named designs and appear only when their hierarchy is
+genuinely different. They explain their hierarchy and space requirements. There
+is no mandatory A/B/C count: present useful alternatives when the brief benefits
 from a choice, without inventing differences. Clicking a preview opens its
 modal at that page/format. Selection, editing and final approval are distinct.
 The actual graphic preview follows the structural choice and is approved
@@ -285,7 +304,7 @@ live sharing. Imported existing graphics are previewed before publication.
 | ID | Required behaviour | Concrete validation |
 | --- | --- | --- |
 | HF-01 | Normal and Fast ask the same relevant editorial questions in chat. | Start fresh technical documents through both entries with the real Codex CLI. Verify explicit separate header/footer choices, cover and numbering, saved document identities, no extra wizard, and no repeated answered questions. An unrelated Fast prototype is not forced into this workflow. |
-| HF-02 | The first enabled header/footer is finished before page Blockout. | With a quick text read complete and image intake still running, collect guidance, choose/edit a structural draft, approve its real graphic preview and apply. Verify no page proposals start before that point and measured reservations reach the page Blockout. Neither enabled skips this stage. |
+| HF-02 | The first enabled header/footer is finished before page Blockout. | With a quick text read complete and image intake still running, answer the grouped content/logo question in chat, review the agent's graphic proposal in the editor that opens at the end of its turn, approve it and apply it to every waiting document. Verify no page proposals start before that point and measured reservations reach the page Blockout. Neither enabled skips this stage. |
 | HF-03 | Existing files, ZIP and online requests share one resumable asset brief. | Upload individual SVG/PNG files and a ZIP, remove a pending item, add a search target in chat, close/reopen/reload and retry one failed upload. Verify received files/previews/provenance, preserved guidance and rejected unsafe/unsupported ZIP entries without executing contents. |
 | HF-04 | Online acquisition uses one light Sol session per target. | Request two actual logos. Record two distinct bounded gpt-6.1-sol/low worker identities, saved files and source URLs; exercise one ambiguous match and one failed download. Inspect available browser/extension acquisition when needed; unavailable capabilities produce an honest recoverable state. No unrelated gallery batch is sent. |
 | HF-05 | A dedicated editor and preview remain usable. | Edit logo size/position and text, toggle snap, cross a safe border and inspect the warning. Ask a region/block question and verify highlighting without covering the page. Save draft, close/Escape/reopen and distinguish draft from applied output. Verify keyboard/focus behaviour at desktop and narrow widths. |

@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { changeRecurringBlockSize, fitRecurringPageWidth, recurringBlockOutsideSafeArea, snapRecurringGeometry } from '../../src/components/header-footer/geometry';
+import { changeRecurringBlockSize, equivalentRecurringGeometry, fitRecurringPageWidth, freeRecurringPlacement, recurringBlockOutsideSafeArea, snapRecurringGeometry } from '../../src/components/header-footer/geometry';
+const a4Footer = { widthMm: 210, heightMm: 20 }, a3Footer = { widthMm: 420, heightMm: 20 };
+describe('recurring elements across page formats', () => {
+  it('keeps a block spanning most of the strip at its share of the page', () => {
+    expect(equivalentRecurringGeometry({ x: .1, y: .2, width: .8, height: .025 }, a4Footer, a3Footer)).toEqual({ x: .1, y: .2, width: .8, height: .025 });
+  });
+  it('keeps a centred block centred at its printed width', () => {
+    expect(equivalentRecurringGeometry({ x: .4, y: .2, width: .2, height: .5 }, a4Footer, a3Footer)).toEqual({ x: .45, y: .2, width: .1, height: .5 });
+  });
+  it('keeps a block near the left end at its distance from that end', () => {
+    expect(equivalentRecurringGeometry({ x: .05, y: .2, width: .2, height: .5 }, a4Footer, a3Footer)).toEqual({ x: .025, y: .2, width: .1, height: .5 });
+  });
+  it('shrinks a locked logo as a whole when the target strip is shorter', () => {
+    const copy = equivalentRecurringGeometry({ x: .05, y: .1, width: .2, height: .8, lockedRatio: true }, { widthMm: 210, heightMm: 30 }, a4Footer);
+    expect(copy.height).toBe(1); expect(copy.width).toBeCloseTo(.2 * 20 / 24); expect(recurringBlockOutsideSafeArea(copy)).toBe(false);
+  });
+});
+describe('a new block in a crowded strip', () => {
+  it('ignores a separator above the band it is placed in', () => {
+    expect(freeRecurringPlacement([{ x: .1, y: .05, width: .8, height: .025 }], { y: .2, height: .5 }, .55)).toEqual({ x: .02, width: .55 });
+  });
+  it('reports a strip with no room left', () => {
+    expect(freeRecurringPlacement([{ x: 0, y: .2, width: .6, height: .5 }, { x: .59, y: .2, width: .41, height: .5 }], { y: .2, height: .5 }, .55)).toBeNull();
+  });
+});
 describe('recurring strip transforms', () => {
   it('fits the entire portrait page, including its footer, inside a short viewport', () => {
     const availableHeight = 216 - 56;

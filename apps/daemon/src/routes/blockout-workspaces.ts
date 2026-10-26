@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import { createHash } from 'node:crypto';
-import { assessBlockoutStructure, BlockoutDocumentSchema, type BlockoutDocument, type BlockoutWorkspaceResponse, type BlockoutAppendAlternativesResponse } from '@open-design/contracts';
+import { assessBlockoutStructure, BlockoutDocumentSchema, type BlockoutDocument, type BlockoutReserveAdjustment, type BlockoutWorkspaceResponse, type BlockoutAppendAlternativesResponse } from '@open-design/contracts';
+import { HeaderFooterError } from '../services/header-footer.js';
 import type { ProjectDocumentsRuntime } from '../services/project-documents-runtime.js';
 import { ProjectDocumentScopeConflict } from '../services/project-document-folders.js';
 import type { RouteDeps } from '../server-context.js';
@@ -19,7 +20,8 @@ export interface RegisterBlockoutWorkspaceRoutesDeps extends RouteDeps<'db' | 'h
   history?: { store(projectId: string, root: string): Promise<unknown> };
   documentRegistry?: Pick<ProjectDocumentsRuntime, 'setupUpdated' | 'blockoutUpdated'>;
   beforeBlockoutWrite?: ProjectDocumentsRuntime['beforeBlockoutWrite'];
-  normalizeBlockout?(projectId: string, document: BlockoutDocument): Promise<BlockoutDocument>;
+  /** `authoredByRun` marks a save or appended alternatives from an agent run (the CLI forwards OD_RUN_ID); only those are fitted to the reserve. */
+  normalizeBlockout?(projectId: string, document: BlockoutDocument, options?: { authoredByRun?: boolean }): Promise<{ document: BlockoutDocument; reserveAdjustments: BlockoutReserveAdjustment[] }>;
   getDesignRun?: BlockoutDesignRunLookup;
 }
 
@@ -45,9 +47,13 @@ export function registerBlockoutWorkspaceRoutes(app: Express, ctx: RegisterBlock
         else if (operation === 'catalog') res.json(await saveBlockoutCatalog(root, req.body));
         else if (operation === 'read') res.json(await readBlockoutWorkspace(root, documentId));
         else if (operation === 'save' || operation === 'append') {
-          const input = operation === 'save' && ctx.normalizeBlockout ? { ...req.body, document: await ctx.normalizeBlockout(id, BlockoutDocumentSchema.parse(req.body?.document)) } : req.body;
+          const normalize = ctx.normalizeBlockout, authoredByRun = Boolean(req.get('x-od-run-id'));
+          const normalized = operation === 'save' && normalize ? await normalize(id, BlockoutDocumentSchema.parse(req.body?.document), { authoredByRun }) : null;
+          const input = normalized ? { ...req.body, document: normalized.document } : req.body;
           let saved: BlockoutWorkspaceResponse & { alternativeBatch?: BlockoutAppendAlternativesResponse['alternativeBatch'] } = operation === 'append'
-            ? await appendBlockoutAlternatives(root, documentId, input) : await saveBlockoutWorkspace(root, documentId, input);
+            ? await appendBlockoutAlternatives(root, documentId, input, normalize ? (appended) => normalize(id, appended, { authoredByRun }) : undefined)
+            : { ...await saveBlockoutWorkspace(root, documentId, input), ...(normalized?.reserveAdjustments.length ? { reserveAdjustments: normalized.reserveAdjustments } : {}) };
+          const fitted = saved.reserveAdjustments ? { reserveAdjustments: saved.reserveAdjustments } : {};
           if (saved.document && ctx.documentRegistry) {
             try { await ctx.documentRegistry.blockoutUpdated(id, saved.document); }
             catch (error) {
@@ -58,7 +64,7 @@ export function registerBlockoutWorkspaceRoutes(app: Express, ctx: RegisterBlock
             }
             // Registry reconciliation may normalize the output name and its
             // presentation together. Publish and return that actual revision.
-            saved = { ...await readBlockoutWorkspace(root, documentId), ...(saved.alternativeBatch ? { alternativeBatch: saved.alternativeBatch } : {}) };
+            saved = { ...await readBlockoutWorkspace(root, documentId), ...(saved.alternativeBatch ? { alternativeBatch: saved.alternativeBatch } : {}), ...fitted };
           }
           if (saved.document && saved.document.planningStage !== 'composition' && saved.raw) {
             const assessment = assessBlockoutStructure(saved.document, { documentRevision: createHash('sha256').update(JSON.stringify(saved.document)).digest('hex'), assessedAt: new Date().toISOString() });
@@ -86,6 +92,8 @@ export function registerBlockoutWorkspaceRoutes(app: Express, ctx: RegisterBlock
       } catch (error) {
         if (error instanceof ProjectDocumentScopeConflict) { ctx.http.sendApiError(res, 409, 'DOCUMENT_WORKSPACE_REQUIRED', error.message, { details: { documentId: error.documentId, workspaceProjectId: error.workspaceProjectId } }); return; }
         if (error instanceof BlockoutAlternativeConflict) { ctx.http.sendApiError(res, 409, error.code, error.message, { details: error.resultPath ? { resultPath: error.resultPath } : {} }); return; }
+        // Not 409: the editor reads 409 as a stale revision. Only run-authored saves can be refused here.
+        if (error instanceof HeaderFooterError && error.code === 'BLOCKOUT_RESERVE_OVERLAP') { ctx.http.sendApiError(res, error.statusCode, error.code, error.message); return; }
         ctx.http.sendApiError(res, error instanceof BlockoutWorkspaceConflict ? 409 : 400, error instanceof BlockoutWorkspaceConflict ? 'BLOCKOUT_CONFLICT' : 'BLOCKOUT_FAILED', error instanceof Error ? error.message : String(error));
       }
     });

@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BlockoutDocumentSchema, blockoutComparisonFilePath, blockoutReferenceTiles, documentPresentationPageState, renderAppliedHeaderFooterSvg, type BlockoutBlock, type BlockoutDocument, type BlockoutFitAssessment, type BlockoutMaterialInventory } from '@open-design/contracts';
 import { containedIntakePath } from './project-intake-settings.js';
 import { readBlockoutWorkspace } from './blockout-workspaces.js';
 import { BLOCKOUT_COMPARISON_SCRIPT, BLOCKOUT_COMPARISON_STYLES } from './blockout-comparison-presentation.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 
 const MARKER = 'data-melillodesign-blockout-comparison="1"';
 const escape = (value: unknown) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -142,7 +143,7 @@ async function publishBlockoutComparison(root: string, document: BlockoutDocumen
       await writeFile(temporary, html, { flag: 'wx' });
       const current = await readBlockoutWorkspace(root, document.documentId);
       if (current.raw !== raw) return null;
-      await rename(temporary, target); return relative;
+      await replaceFileAtomically(temporary, target); return relative;
     } finally { await unlink(temporary).catch(() => undefined); }
   });
 }

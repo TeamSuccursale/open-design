@@ -104,7 +104,10 @@
 .paperStrip[data-editable] { background: #e4eee738; outline: 1px dashed #21625866; outline-offset: -1px; }
 .paperStrip[data-editable][data-graphic] { background: transparent; }
 .paperStrip[data-highlight] { outline: 3px solid #b46d20; outline-offset: -3px; background: #fff0cb; }
-.stripLabel { position: absolute; right: 8px; bottom: 1px; color: #43645c; font-size: 1.55cqw; pointer-events: none; opacity: .9; }
+.stripLabel { position: absolute; right: 8px; color: #43645c; font-size: 1.55cqw; line-height: 1.4; pointer-events: none; opacity: .9; }
+/* The tag sits just outside its strip, in the body margin, so it never covers the blocks under review. */
+.paperStrip[data-region=header] .stripLabel { top: 100%; }
+.paperStrip[data-region=footer] .stripLabel { bottom: 100%; }
 .safeArea { position: absolute; inset: 0; border: 1px dashed #21625845; pointer-events: none; }
 .block { position: absolute; min-width: 0; display: flex; align-items: center; overflow: visible; color: #243d39; line-height: 1.2; box-sizing: border-box; white-space: pre-wrap; overflow-wrap: anywhere; }
 .block > span { max-width: 100%; }
@@ -129,6 +132,10 @@
 .inspector textarea { resize: vertical; min-height: 70px; }
 .inspector .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .inspector small { color: var(--studio-muted); }
+/* Which other page formats show the selected element, with the copy to those that lack it. */
+.formatCopy { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin: 0 0 13px; padding: 10px 12px; border-radius: 9px; background: var(--studio-tint); font-size: 12px; }
+.formatCopy p { margin: 0; }
+.formatCopy[data-complete] { padding: 0; background: transparent; color: var(--studio-muted); }
 .help { color: var(--studio-muted); font-size: 12px; margin: 8px 0 16px; }
 .warning { margin: 12px 0; padding: 10px; font-size: 12px; background: #fff0e2; color: #904620; border-radius: 7px; }
 .question { margin: 0; padding: 11px 20px; color: #74511b; background: #fff0cb; font-size: 12px; flex: none; }

@@ -4,9 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, type AppliedPluginSnapshot, type SkillSummary } from '@open-design/contracts';
+import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, type AppliedPluginSnapshot, type DocumentSetup, type SkillSummary } from '@open-design/contracts';
 import { ChatPane, buildRunErrorDiagnosticText, retryableAssistantMessage } from '../../src/components/ChatPane';
 import { DESIGN_SYSTEM_WORKSPACE_PROMPT_PREFIX } from '../../src/design-system-auto-prompt';
+import { buildDocumentPreparationResumePrompt } from '../../src/runtime/document-preparation-continuation';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 import type { ChatMessage, Conversation, ProjectMetadata } from '../../src/types';
 
@@ -1179,6 +1180,14 @@ describe('ChatPane streaming state', () => {
     expect(screen.queryByText(DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'documentChat.agentRequestDetails' }));
     expect(screen.getByText(DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT)).toBeTruthy();
+  });
+
+  it('summarizes the automatic preparation resume instead of showing its instructions as the engineer’s words', () => {
+    const content = buildDocumentPreparationResumePrompt({ intent: { editorialSettings: [{ presentation: { name: 'Relazione B' } }, { presentation: { name: 'Fascicolo grafico B' } }] } } as unknown as DocumentSetup);
+    render(<ChatPane messages={[{ id: 'preparation-resume', role: 'user', content, createdAt: 1 }]} streaming={false} error={null} projectId="project-1" projectFiles={[]} onEnsureProject={async () => 'project-1'} onSend={vi.fn()} onStop={vi.fn()} conversations={conversations} activeConversationId="conv-1" onSelectConversation={vi.fn()} onDeleteConversation={vi.fn()} projectMetadata={projectMetadata} />);
+    expect(screen.queryByText(content)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'documentChat.agentRequestDetails' }));
+    expect(screen.getByText(content)).toBeTruthy();
   });
 
   it('summarizes auto-sent design-system workspace prompts', () => {

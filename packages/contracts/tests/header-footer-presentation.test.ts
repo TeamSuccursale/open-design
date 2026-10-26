@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppliedHeaderFooterSchema, headerFooterReservations, renderAppliedHeaderFooterSvg } from '../src/api/header-footer-presentation.js';
+import { AppliedHeaderFooterSchema, headerFooterDateText, headerFooterReservations, renderAppliedHeaderFooterSvg } from '../src/api/header-footer-presentation.js';
 import { blockoutOutsideSafeArea, blockoutSafeArea } from '../src/api/blockout-geometry.js';
 import { createBlockoutPage } from '../src/api/blockout.js';
 
@@ -27,6 +27,13 @@ describe('applied recurring graphics', () => {
     const page = { widthMm: 210, heightMm: 297, documentName: 'Report', index: 0, totalPages: null, visibleNumber: 1 };
     expect(renderAppliedHeaderFooterSvg(design, page)).toContain('>—</tspan>');
     expect(renderAppliedHeaderFooterSvg(design, { ...page, totalPages: 2 })).toContain('>2</tspan>');
+  });
+  it('prints the revision date as day/month/year, the form the engineer reviews in the editor', () => {
+    const design = structuredClone(applied); design.appliedAt = '2026-10-24T12:00:00.000Z';
+    design.design.variants[0]!.blocks.push({ id: 'date', region: 'footer', kind: 'field', field: 'date', x: .4, y: .3, width: .2, height: .4 });
+    const svg = renderAppliedHeaderFooterSvg(design, { widthMm: 210, heightMm: 297, documentName: 'Report', index: 0, totalPages: 8, visibleNumber: 1 });
+    expect(svg).toContain('>24/10/2026</tspan>'); expect(svg).not.toContain('2026-10-24');
+    expect(headerFooterDateText('2026-10-24T12:00:00.000Z')).toBe('24/10/2026');
   });
   it('never stretches an A4 design into an unsupported A3 format', () => {
     expect(renderAppliedHeaderFooterSvg(applied, { widthMm: 420, heightMm: 297, documentName: 'Booklet', index: 0, totalPages: 4 })).toBe('');

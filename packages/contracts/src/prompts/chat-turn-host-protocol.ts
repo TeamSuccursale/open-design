@@ -8,9 +8,25 @@ import {
   promptLanguageName,
 } from './ui-locale.js';
 
+/**
+ * `od_next_confirmed_request` is the request turn of a run the host itself
+ * dispatched after the engineer accepted a saved brief in a host form. That
+ * acceptance is the plan approval, so the request turn produces directly and
+ * carries the production protocols; no planning turn or marker precedes it.
+ */
+/**
+ * The planning rules sit in the cached prompt head, which cannot know whether a
+ * turn is a confirmed-brief dispatch. Every rule that requires a planning turn
+ * carries this sentence verbatim, so the per-turn gate below does not contradict
+ * it: the OD Next recipe imports it, and tests hold the core and orchestration
+ * assets to the same words.
+ */
+export const OD_NEXT_CONFIRMED_BRIEF_EXCEPTION = "Exception: when this turn's host protocol is headed Confirmed-brief production, the engineer has already accepted the brief and its approach in a host form. That acceptance takes the place of the planning turn: produce in this turn and emit no production-ready marker.";
+
 export type ChatTurnHostProtocolPolicy =
   | 'ordinary'
   | 'od_next_request'
+  | 'od_next_confirmed_request'
   | 'od_next_production';
 
 export interface ChatTurnHostProtocolInstructions {
@@ -26,6 +42,16 @@ function odNextStageGate(policy: ChatTurnHostProtocolPolicy): string {
       'OD Next host handoff gate:',
       'Use the three keyed host protocols below only when this request-stage response declares route=direct_edit, inputStage=request, and outcome=completed.',
       'For full_plan, plan_ready, clarification_required, blocked, failed, or canceled responses, omit all three protocols.',
+    ].join('\n');
+  }
+  if (policy === 'od_next_confirmed_request') {
+    return [
+      'Confirmed-brief production:',
+      'The engineer accepted the saved brief and its Blockout approach in the host confirmation form, and the host dispatched this request itself. That acceptance authorizes production: this request turn is the production turn.',
+      'Do not write a separate planning response, do not ask to confirm the plan, and do not end with an od-production-ready line; no further production turn follows this one.',
+      'Produce the requested deliverables now with the loaded Skills and documented tools, then describe the files actually produced and any remaining gaps in prose. If an essential answer is missing, ask it through a question-form.',
+      'Use the three keyed host protocols below when the requested work is done and the actual deliverables have been written.',
+      'If work is blocked, failed, canceled, or awaiting an essential answer, omit all three protocols.',
     ].join('\n');
   }
   if (policy === 'od_next_production') {

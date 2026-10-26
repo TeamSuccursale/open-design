@@ -190,6 +190,8 @@ export interface QuestionForm {
   title: string;
   questions: FormQuestion[];
   submitLabel?: string;
+  /** Replaces the generic "submitting" text when the host does more than send the answers. */
+  submittingLabel?: string;
   /** Related questions can share one answer/confirmation; omitted keeps the existing stepped flow. */
   layout?: 'grouped' | 'stepped';
   blockoutTarget?: BlockoutTarget;
@@ -550,6 +552,7 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
   const title =
     attrs.title ?? (typeof obj.title === 'string' ? obj.title : 'A few quick questions');
   const submitLabel = typeof obj.submitLabel === 'string' ? obj.submitLabel : undefined;
+  const submittingLabel = typeof obj.submittingLabel === 'string' && obj.submittingLabel.trim() ? obj.submittingLabel.trim().slice(0, 120) : undefined;
   const layout = obj.layout === 'grouped' || obj.layout === 'stepped' ? obj.layout : undefined;
   const lang = typeof obj.lang === 'string' && obj.lang.trim().length > 0 ? obj.lang.trim() : undefined;
   const blockoutTarget = BlockoutTargetSchema.safeParse(obj.blockoutTarget ?? {
@@ -565,6 +568,7 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
       title,
       questions,
       ...(submitLabel ? { submitLabel } : {}),
+      ...(submittingLabel ? { submittingLabel } : {}),
       ...(layout ? { layout } : {}),
       ...(lang ? { lang } : {}),
       ...(blockoutTarget.success ? { blockoutTarget: blockoutTarget.data } : {}),

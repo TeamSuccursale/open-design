@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, open, readFile, realpath, rename, stat, symlink, unlink } from 'node:fs/promises';
+import { lstat, open, readFile, realpath, stat, symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { CreateProjectDocumentRequestSchema, ProjectDocumentIdSchema, ProjectDocumentSchema, UpdateProjectDocumentRequestSchema, blockoutComparisonFilePath, blockoutWorkspacePath, createDocumentPresentation, type CreateProjectDocumentRequest, type ProjectDocument, type ProjectDocumentContextResponse, type ProjectDocumentMutationResponse, type ProjectDocumentsResponse, type ProjectDocumentWorkspaceBootstrap, type ProjectDocumentWorkspaceResult, type UpdateProjectDocumentRequest } from '@open-design/contracts';
 import { listBlockoutWorkspaces, readBlockoutWorkspace } from './blockout-workspaces.js';
 import { createDocumentDirectory, documentContextFiles, documentFolderInside, documentRelativePath, ProjectDocumentError, safeDocumentPath, sameDocumentFolder, validateDocumentDirectory } from './project-document-folders.js';
+import { replaceFileAtomically } from '../storage/atomic-file.js';
 
 export { ProjectDocumentError } from './project-document-folders.js';
 interface CreationRequest { requestId: string; documentId: string; fingerprint: string; input: CreateProjectDocumentRequest; startedAt: string; completed?: boolean }
@@ -88,7 +89,7 @@ export class ProjectDocumentsStore {
     const content = `${JSON.stringify(registry, null, 2)}\n`; if (Buffer.byteLength(content) > 4_000_000) throw new ProjectDocumentError('Document registry exceeds its size limit', 413);
     const file = await open(temporary, 'wx', 0o600);
     try { await file.writeFile(content); await file.sync(); } finally { await file.close(); }
-    try { await rename(temporary, target); } finally { await unlink(temporary).catch(() => undefined); }
+    try { await replaceFileAtomically(temporary, target); } finally { await unlink(temporary).catch(() => undefined); }
   }
   private async folder(input: CreateProjectDocumentRequest['location'], documentId: string): Promise<{ workingDirectory: string; folderMode: ProjectDocument['folderMode'] }> {
     if (input?.mode === 'link-existing') return { workingDirectory: await validateDocumentDirectory(input.path, this.dataRoot, this.root), folderMode: 'linked' };

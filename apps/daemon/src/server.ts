@@ -10415,7 +10415,7 @@ export async function startServer({
     history: projectHistory,
     documentRegistry: projectDocuments,
     beforeBlockoutWrite: projectDocuments.beforeBlockoutWrite,
-    normalizeBlockout: (id, document) => headerFooterRuntime.normalizeBlockout(id, document),
+    normalizeBlockout: (id, document, options) => headerFooterRuntime.normalizeBlockoutSave(id, document, options),
     getDesignRun: async (id) => {
       const run = design.runs.get(id);
       if (run?.status === 'succeeded') {

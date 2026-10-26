@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { load } from 'cheerio';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createBlockoutDocument, createBlockoutPage, createDocumentPresentation, documentPresentationPageState, renderAppliedHeaderFooterSvg, type BlockoutDocument, type HeaderFooterDraft, type ProjectDocument } from '@open-design/contracts';
+import { blockoutOutsideSafeArea, blockoutSafeArea, createBlockoutDocument, createBlockoutPage, createDocumentPresentation, documentPresentationPageState, renderAppliedHeaderFooterSvg, type BlockoutBlock, type BlockoutDocument, type HeaderFooterDraft, type ProjectDocument } from '@open-design/contracts';
 import { closeDatabase, getProject, insertProject, openDatabase } from '../../src/db.js';
 import { HeaderFooterRuntime } from '../../src/services/header-footer-runtime.js';
 import { ProjectDocumentsRuntime } from '../../src/services/project-documents-runtime.js';
@@ -36,12 +36,16 @@ function design(assetId: string, headerHeightMm = 20): HeaderFooterDraft {
   return { version: 1, name: 'Studio Antro', guidance: 'Logo, nome del documento e numero locale.', stage: 'graphic', variants: [210, 420].map((width) => ({ id: `format-${width}`, name: width === 210 ? 'A4 verticale' : 'A3 orizzontale', pageWidthMm: width, pageHeightMm: 297, headerHeightMm, footerHeightMm: 15,
     blocks: [{ id: 'logo', region: 'header' as const, kind: 'logo' as const, assetId, x: .05, y: .15, width: .2, height: .65 }, { id: 'name', region: 'header' as const, kind: 'field' as const, field: 'documentName' as const, x: .3, y: .2, width: .65, height: .5, fontSize: 10 }, { id: 'page', region: 'footer' as const, kind: 'field' as const, field: 'pageNumber' as const, x: .85, y: .2, width: .1, height: .5, fontSize: 10 }] })) };
 }
-async function publish(f: Awaited<ReturnType<typeof fixture>>, document: ProjectDocument) {
+async function publish(f: Awaited<ReturnType<typeof fixture>>, document: ProjectDocument, headerHeightMm = 20) {
   const store = await f.runtime.store('parent'), asset = await store.addAsset({ name: 'Studio', filename: 'studio.svg', mimeType: 'image/svg+xml', source: 'upload', width: 80, height: 20 }, Buffer.from(svg));
-  const created = await store.create({ name: 'Studio Antro' }); await store.saveDraft(created.set.id, { expectedDraftVersion: 1, draft: design(asset.id) });
+  const created = await store.create({ name: 'Studio Antro' }); await store.saveDraft(created.set.id, { expectedDraftVersion: 1, draft: design(asset.id, headerHeightMm) });
   const state = await store.publish(created.set.id, { expectedDraftVersion: 2, expectedRevision: 0, stage: 'graphic-approved', originDocumentId: document.id, binding: { documentId: document.id, followUpdates: true, header: true, footer: true, showOnCover: false } });
   expect(state.bindings[0]?.error).toBeUndefined();
   return { store, asset, set: state.sets[0]!, state };
+}
+
+function bodyBlock(id: string, designRole: NonNullable<BlockoutBlock['designRole']>, y: number, height: number): BlockoutBlock {
+  return { id, kind: 'text', label: id, designRole, box: { x: 12, y, width: 76, height, rotation: 0 }, lockRatio: false, images: [], expectation: id, feedback: '', flexibility: 'guided', references: [] };
 }
 
 describe('applied header/footer runtime', () => {
@@ -94,6 +98,16 @@ describe('applied header/footer runtime', () => {
     expect((await store.list()).history).toEqual(saved.history); expect(before.sets[0]?.revision).toBe(0);
     expect((await store.publish(created.set.id, request(4))).bindings[0]?.status).toBe('applied');
   });
+  it('fits a document’s own name only in the format variants its pages use', async () => {
+    const f = await fixture(), booklet = await f.make('Fascicolo grafico B con un nome lungo', 4, true);
+    const store = await f.runtime.store('parent'), asset = await store.addAsset({ name: 'Studio', filename: 'studio.svg', mimeType: 'image/svg+xml', source: 'upload' }, Buffer.from(svg)), created = await store.create({ name: 'Studio' });
+    const shared = design(asset.id); shared.variants[0]!.blocks[1]!.width = .1; // Sized for a short A4 report name; the A3 booklet never renders here.
+    await store.saveDraft(created.set.id, { expectedDraftVersion: 1, draft: shared });
+    expect(await store.validate(created.set.id, { documentId: booklet.id, expectedDraftVersion: 2 })).toMatchObject({ valid: true, documentIds: [booklet.id] });
+    shared.variants[1]!.blocks[1]!.width = .05;
+    await store.saveDraft(created.set.id, { expectedDraftVersion: 2, draft: shared });
+    await expect(store.validate(created.set.id, { documentId: booklet.id })).rejects.toMatchObject({ code: 'HEADER_FOOTER_TEXT_OVERFLOW', message: expect.stringContaining('A3 orizzontale') });
+  });
   it('validates a document’s confirmed intended A3 format and enabled regions before any page Blockout exists', async () => {
     const f = await fixture(), presentation = { ...createDocumentPresentation('Tavole B'), status: 'confirmed' as const, header: true, footer: true, cover: false, pageNumbers: false };
     const document = (await f.documentsStore.create({ name: 'Tavole B', kind: 'document', presentation }, f.documentsRuntime.bootstrapWorkspace)).document;
@@ -142,6 +156,46 @@ describe('applied header/footer runtime', () => {
     expect((await f.runtime.normalizeBlockout(report.workspaceProjectId, document)).approval?.acceptedAt).toBe('approved');
     page.blocks[0]!.box.y = 5;
     const overlap = await f.runtime.normalizeBlockout(report.workspaceProjectId, document); expect(overlap.approval).toBeUndefined(); expect(overlap.needsReadaptation).toBe(true);
+  });
+  it('fits an agent-saved proposal’s body into the band the applied header and footer leave free, keeping its order and proportions', async () => {
+    const f = await fixture(), report = await f.make('Relazione B', 2); await publish(f, report);
+    const document = (await readBlockoutWorkspace(report.workingDirectory, report.id)).document!;
+    const page = document.variants[0]!.pages[1]!;
+    // The agent composes without the reservation, as the live run did: the caption runs into the footer.
+    delete page.reservedHeaderMm; delete page.reservedFooterMm;
+    page.blocks = [bodyBlock('title', 'heading', 12, 8), bodyBlock('figure', 'figure', 22, 60), bodyBlock('caption', 'caption', 84, 10),
+      { ...bodyBlock('watermark', 'background', 0, 100), box: { x: 0, y: 0, width: 100, height: 100, rotation: 0 } }];
+    const { document: saved, reserveAdjustments } = await f.runtime.normalizeBlockoutSave(report.workspaceProjectId, document, { authoredByRun: true });
+    const fitted = saved.variants[0]!.pages[1]!, safe = blockoutSafeArea(fitted);
+    expect(fitted.reservedFooterMm).toBe(15);
+    for (const block of fitted.blocks.filter((item) => item.designRole !== 'background')) expect(blockoutOutsideSafeArea(block.box, fitted)).toBe(false);
+    const [title, figure, caption, watermark] = fitted.blocks;
+    expect(title!.box.y).toBe(12);
+    expect(figure!.box.y + figure!.box.height).toBeLessThanOrEqual(caption!.box.y);
+    expect(caption!.box.y + caption!.box.height).toBeCloseTo(safe.bottom, 1);
+    expect(figure!.box.height / caption!.box.height).toBeCloseTo(6, 1);
+    expect(watermark!.box).toEqual({ x: 0, y: 0, width: 100, height: 100, rotation: 0 });
+    expect(saved.needsReadaptation).toBe(false);
+    expect(reserveAdjustments).toEqual([expect.objectContaining({ variantId: 'structure', pageId: 'page-2', blockIds: ['title', 'figure', 'caption'] })]);
+  });
+  it('refuses an agent-saved page it cannot fit without recomposing it, naming the page and the free band', async () => {
+    const f = await fixture(), report = await f.make('Relazione B', 2); await publish(f, report, 60);
+    const document = (await readBlockoutWorkspace(report.workingDirectory, report.id)).document!;
+    document.variants[0]!.pages[0]!.blocks = [bodyBlock('figure', 'figure', 1, 98)];
+    await expect(f.runtime.normalizeBlockoutSave(report.workspaceProjectId, document, { authoredByRun: true }))
+      .rejects.toMatchObject({ code: 'BLOCKOUT_RESERVE_OVERLAP', message: expect.stringMatching(/Pagina 1[\s\S]*23,6%[\s\S]*91,6%/) });
+    const rotated = (await readBlockoutWorkspace(report.workingDirectory, report.id)).document!;
+    // A small crossing, but a rotated box keeps part of its corner in the footer after a vertical fit.
+    rotated.variants[0]!.pages[0]!.blocks = [{ ...bodyBlock('note', 'body', 80, 12), box: { x: 30, y: 80, width: 40, height: 12, rotation: 10 } }];
+    await expect(f.runtime.normalizeBlockoutSave(report.workspaceProjectId, rotated, { authoredByRun: true })).rejects.toMatchObject({ code: 'BLOCKOUT_RESERVE_OVERLAP' });
+  });
+  it('keeps the engineer’s own placement in the reserve as a reviewable warning instead of moving it', async () => {
+    const f = await fixture(), report = await f.make('Relazione B', 2); await publish(f, report);
+    const document = (await readBlockoutWorkspace(report.workingDirectory, report.id)).document!;
+    document.variants[0]!.pages[0]!.blocks = [bodyBlock('caption', 'caption', 84, 10)];
+    const { document: saved, reserveAdjustments } = await f.runtime.normalizeBlockoutSave(report.workspaceProjectId, document, { authoredByRun: false });
+    expect(saved.variants[0]!.pages[0]!.blocks[0]!.box).toEqual({ x: 12, y: 84, width: 76, height: 10, rotation: 0 });
+    expect(reserveAdjustments).toEqual([]);
   });
   it('gates real page Blockout until enabled regions are applied and keeps a single canonical parent library', async () => {
     const f = await fixture(), report = await f.make('Relazione B', 8, false, true), blockout = (await readBlockoutWorkspace(report.workingDirectory, report.id)).document!;

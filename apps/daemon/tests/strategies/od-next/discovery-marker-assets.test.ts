@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { assertOdNextPlanningBuildOnlyV2, DELIVERABLE_SKILLS, OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS, resolveOdNextDeckFrameworkMode } from '@open-design/contracts';
+import { assertOdNextPlanningBuildOnlyV2, DELIVERABLE_SKILLS, OD_NEXT_CONFIRMED_BRIEF_EXCEPTION, OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS, resolveOdNextDeckFrameworkMode } from '@open-design/contracts';
 import { resolvePluginFolder } from '../../../src/plugins/registry.js';
 import { createBundledStrategyBindingV2, loadBundledStrategyPromptAssetsV2 } from '../../../src/plugins/strategy-package.js';
 import { loadOdNextTaskResourcesForSnapshot, materializeOdNextDeviceFrames } from '../../../src/strategies/od-next/device-frames.js';
@@ -84,6 +84,15 @@ it('keeps output selection independent of shared HTML implementation and exposes
   expect(video).toContain('A failed render leaves the video undelivered');
   expect(video).toContain('Do not substitute an ad-hoc shell or ffmpeg animation');
   expect(video).toContain('A decodable container or successful encoder exit does not establish that the requested subject or motion is present');
+});
+
+// The host's confirmed-brief gate is per turn; the planning rules in the cached head must defer to it in the same words.
+it('lets a host-confirmed brief replace the planning turn wherever the assets require one', async () => {
+  for (const name of ['core-system-prompt.md', 'general-orchestration.md']) {
+    const body = (await readFile(path.join(folder, 'assets', name), 'utf8')).replace(/\s*\n\s*/g, ' ');
+    expect(body, name).toMatch(/separate planning turn|planning-turn boundary/);
+    expect(body, name).toContain(OD_NEXT_CONFIRMED_BRIEF_EXCEPTION);
+  }
 });
 
 it('keeps Motion export checks out of the planning protocol and exposes unsupported local refresh limits', async () => {

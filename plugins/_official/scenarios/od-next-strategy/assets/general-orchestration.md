@@ -62,6 +62,10 @@ Creating a deliverable from scratch, a full redesign, changes to the main
 narrative or information architecture, multiple interdependent deliverables,
 or unbounded change scope requires a separate planning turn before production.
 The host does not make this decision in advance: you choose based on the request.
+Exception: when this turn's host protocol is headed Confirmed-brief production,
+the engineer has already accepted the brief and its approach in a host form.
+That acceptance takes the place of the planning turn: produce in this turn and
+emit no production-ready marker.
 
 Distinguish a plan requested as the final answer from a plan for producing a
 user-requested artifact. "List a seven-day travel plan" asks for the itinerary

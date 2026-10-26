@@ -59,6 +59,37 @@ Real native tests covered file writes, a question and answer, stopping a running
 
 The follow-up documentation commit records the [state](checkpoints/2026-10-26.md) and [test queue](../specs/current/melillodesign-ui-ux-testing-roadmap.md). The next pass should first close automatic-preview and loading/duplicate risks, then rerun the two-document case and use genuinely fresh blind readers in Normal and Fast modes. More explanatory copy alone does not count as resolving an interaction problem.
 
+## 26 October — agent-guided header/footer and the two-document run (uncommitted)
+
+Header and footer no longer use a numbered wizard. The chat collects the inputs. The agent composes one design with a variant for every waiting document, and the editor opens on that proposal; one approval applies it to every document in scope. The operator-driven live run then went through the page Blockout and two agent edits. It took 20 min 35 s from confirming the brief to both comparisons, 15 min of it in production; Blockout speed is the next problem.
+
+Defects found live and fixed with red-first tests:
+
+- A3 validation was checked against the A4 strip.
+- A queued Blockout request was reported as not sent.
+- A Windows `EPERM` on the Blockout catalogue rename, now retried.
+
+Defects found by fresh blind readers and fixed:
+
+- J1: the absent header read as an incomplete proposal (failed at step 3; not retested blind).
+- J2: the date was printed in ISO form; the document switch left the editor; the apply label named the header while it was off; the notice suggested a separate page update.
+
+J3, a Blockout change through the agent, passed with one facilitator confound recorded. J2, the date in both documents' footer, passed unaided.
+
+Checks: guard, typecheck, focused contracts, web and daemon tests. Full suites were not run. Pages applied before the date fix keep the ISO date until the footer is re-applied. See the [verification report](verification/header-footer-agent-guided-2026-10-26.md).
+
+## 26 October — Blockout follow-ups after the rerun (uncommitted)
+
+Accepting the brief confirmation now shows the Blockout request about 3 s after the click, down from 24 s. The confirm had been writing each Blockout file as its own project-history entry, and Git ran for every one. A save and a seed are now one entry each, and unchanged history trees are reused. While it works, the form says "Registro il brief e preparo le pagine…".
+
+- The OD Next planning rules now give way to the confirmed-brief gate, in the same words on every path.
+- Appended alternatives are fitted to the footer area like saves.
+- A save without its base revision says where to get it.
+- The prompt and help say a save already takes the footer reserve.
+- Project history works on deep Windows data folders, and explains the case Git cannot handle.
+
+Checks: guard, typecheck, focused contracts, web and daemon tests, all new tests red first. The remaining failures match the base. The timing was checked live in the browser, operator-driven. See "Follow-ups fixed the same evening" in the [verification report](verification/header-footer-agent-guided-2026-10-26.md).
+
 ## Updating this diary
 
 For each subsequent meaningful commit, append its date and SHA, the user-visible change, the focused checks actually run, and any remaining failure or untested boundary. Link its detailed report instead of repeating raw logs. Record whether a walkthrough was operator-driven, blind, or synthetic, and identify any rescue action. Keep historical failures intact; link the later repair and fresh proof that supersede them.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
-import { renderAppliedHeaderFooterSvg, type HeaderFooterAsset, type HeaderFooterBlock, type HeaderFooterVariant } from '@open-design/contracts';
+import { headerFooterDateText, renderAppliedHeaderFooterSvg, type HeaderFooterAsset, type HeaderFooterBlock, type HeaderFooterVariant } from '@open-design/contracts';
 import { changeRecurringBlockSize, fitRecurringPageWidth, recurringBlockOutsideSafeArea, snapRecurringGeometry } from './geometry';
 import styles from './HeaderFooterWorkspace.module.css';
 
@@ -12,6 +12,8 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
   totalPages?: number | null; pageIndex?: number; visibleNumber?: number | null; revision?: number; appliedAt?: string; isCover?: boolean;
 }) {
   const paperRef = useRef<HTMLDivElement>(null); const [fitWidth, setFitWidth] = useState<number | undefined>();
+  // A draft not yet applied previews today's date: the day its revision will carry once approved.
+  const stamp = appliedAt ?? new Date().toISOString();
   useEffect(() => {
     const container = paperRef.current?.parentElement; if (!fit || !container) return;
     const measure = () => { const bounds = container.getBoundingClientRect(); const computed = getComputedStyle(container); const width = bounds.width - parseFloat(computed.paddingLeft || '0') - parseFloat(computed.paddingRight || '0'), height = bounds.height - parseFloat(computed.paddingTop || '0') - parseFloat(computed.paddingBottom || '0'); if (width > 0 && height > 0) setFitWidth(fitRecurringPageWidth(width, height, variant.pageWidthMm, variant.pageHeightMm, zoom)); };
@@ -21,7 +23,7 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
   const gesture = useRef<{ id: string; pointerId: number; mode: 'move' | 'resize'; block: HeaderFooterBlock; x: number; y: number; strip: DOMRect } | null>(null);
   const edit = Boolean(onTransform);
   const previewAssets = new Map(assets.map((asset) => [`preview-assets/${asset.id}`, asset.url]));
-  const graphic = structural ? '' : renderAppliedHeaderFooterSvg({ version: 1, projectId: 'preview', documentId: 'preview', setId: null, revision, projectName: projectName ?? (italian ? 'Nome progetto' : 'Project name'), header, footer, showOnCover: true, appliedAt: appliedAt ?? new Date().toISOString(), design: { version: 1, name: 'Anteprima', guidance: '', stage: 'graphic', variants: [variant] }, assets: assets.map((asset) => ({ id: asset.id, mimeType: asset.mimeType, path: `preview-assets/${asset.id}` })) }, { widthMm: variant.pageWidthMm, heightMm: variant.pageHeightMm, documentName: documentName ?? (italian ? 'Nome documento' : 'Document name'), index: pageIndex, totalPages, visibleNumber, isCover, assetUrl: (safePath) => previewAssets.get(safePath) ?? '' });
+  const graphic = structural ? '' : renderAppliedHeaderFooterSvg({ version: 1, projectId: 'preview', documentId: 'preview', setId: null, revision, projectName: projectName ?? (italian ? 'Nome progetto' : 'Project name'), header, footer, showOnCover: true, appliedAt: stamp, design: { version: 1, name: 'Anteprima', guidance: '', stage: 'graphic', variants: [variant] }, assets: assets.map((asset) => ({ id: asset.id, mimeType: asset.mimeType, path: `preview-assets/${asset.id}` })) }, { widthMm: variant.pageWidthMm, heightMm: variant.pageHeightMm, documentName: documentName ?? (italian ? 'Nome documento' : 'Document name'), index: pageIndex, totalPages, visibleNumber, isCover, assetUrl: (safePath) => previewAssets.get(safePath) ?? '' });
   function begin(event: PointerEvent<HTMLDivElement>, block: HeaderFooterBlock) {
     if (!edit || event.button !== 0) return;
     event.preventDefault(); event.stopPropagation(); onSelect?.(block.id); event.currentTarget.focus();
@@ -44,7 +46,7 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
   function fieldText(block: HeaderFooterBlock) {
     if (block.field === 'projectName') return projectName ?? (italian ? 'Nome progetto' : 'Project name');
     if (block.field === 'documentName') return documentName ?? (italian ? 'Nome documento' : 'Document name');
-    if (block.field === 'date') return new Intl.DateTimeFormat(italian ? 'it-IT' : 'en-GB').format(new Date());
+    if (block.field === 'date') return headerFooterDateText(stamp);
     if (block.field === 'totalPages') return totalPages === null ? '—' : String(totalPages);
     if (block.field === 'pageNumber') return visibleNumber === null ? '' : String(visibleNumber);
     if (block.field === 'revision') return String(revision);
@@ -61,7 +63,7 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
       {edit && <><div className={styles.safeArea} aria-hidden="true" /><span className={styles.stripLabel}>{region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}</span></>}
       {variant.blocks.filter((block) => block.region === region).map((block) => {
         const asset = assets.find((item) => item.id === block.assetId);
-        return <div key={block.id} className={styles.block} role={edit ? 'button' : undefined} tabIndex={edit ? 0 : undefined} aria-label={`${region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}: ${block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.text || block.kind}`}
+        return <div key={block.id} className={styles.block} role={edit ? 'button' : undefined} tabIndex={edit ? 0 : undefined} aria-label={`${region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}: ${block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.kind === 'rule' ? italian ? 'Separatore' : 'Separator' : block.text || (italian ? 'Testo' : 'Text')}`}
             data-editable={edit || undefined} data-selected={selectedId === block.id || undefined} data-highlight={highlight?.blockId === block.id || undefined} data-unsafe={edit && recurringBlockOutsideSafeArea(block) || undefined} data-structural={structural || undefined} data-graphic-overlay={!structural || undefined} data-testid={`header-footer-block-${block.id}`}
           style={{ left: `${block.x * 100}%`, top: `${block.y * 100}%`, width: `${block.width * 100}%`, height: `${block.height * 100}%`, fontSize: `${(block.fontSize ?? 10) * .3528 / variant.pageWidthMm * 100}cqw`, color: block.color ?? '#243d39', justifyContent: block.align === 'right' ? 'flex-end' : block.align === 'center' ? 'center' : 'flex-start', textAlign: block.align ?? 'left' }}
           onClick={(event) => { if (edit) { event.stopPropagation(); onSelect?.(block.id); } }} onPointerDown={(event) => begin(event, block)} onPointerMove={move} onPointerUp={end} onPointerCancel={end}

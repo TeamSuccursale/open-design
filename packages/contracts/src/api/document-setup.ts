@@ -72,6 +72,37 @@ export const DocumentSetupConfirmationSchema = z.object({
   pageTarget: z.number().int().positive().max(10_000).optional(),
 });
 export type DocumentSetupConfirmation = z.infer<typeof DocumentSetupConfirmationSchema>;
+/** The host confirms the brief the agent already saved, exactly as saved; only the engineer's choice of approach is new. */
+export const DocumentSetupSavedBriefConfirmationSchema = z.object({ source: z.literal('saved-brief'), blockoutApproach: z.enum(['manual', 'agent']) });
+export type DocumentSetupSavedBriefConfirmation = z.infer<typeof DocumentSetupSavedBriefConfirmationSchema>;
+
+/**
+ * The final brief confirmation is a host-owned question form: fixed ids and
+ * option values, so the host can record an accepted answer itself and start
+ * the next step without an agent turn that only copies the saved brief.
+ */
+export const DOCUMENT_SETUP_CONFIRMATION_FORM = {
+  id: 'document-setup-confirmation', confirmQuestionId: 'confirm-brief', approachQuestionId: 'blockout-approach',
+  confirm: { yes: 'yes', no: 'no' }, approach: { agent: 'agent', manual: 'manual' },
+} as const;
+export function renderDocumentSetupConfirmationForm(): string {
+  const form = DOCUMENT_SETUP_CONFIRMATION_FORM;
+  // Accepting it saves the brief and seeds every document's pages before the Blockout request starts.
+  const body = { lang: 'it', layout: 'grouped', submittingLabel: 'Registro il brief e preparo le pagine…', questions: [
+    { id: form.confirmQuestionId, label: 'Confermi il brief così riepilogato?', type: 'radio', required: true, options: [
+      { label: 'Sì, confermo il brief', value: form.confirm.yes }, { label: 'No, voglio cambiare qualcosa', value: form.confirm.no }] },
+    { id: form.approachQuestionId, label: 'Come impostiamo le pagine?', type: 'radio', required: true, showWhen: { questionId: form.confirmQuestionId, equals: form.confirm.yes }, options: [
+      { label: 'Tre strutture complete per ogni documento', value: form.approach.agent }, { label: 'Disegno io i primi blocchi', value: form.approach.manual }] },
+  ] };
+  return `<question-form id="${form.id}" title="Conferma del brief">\n${JSON.stringify(body)}\n</question-form>`;
+}
+/** The saved-brief confirmation an answered host form asks for, or null when the agent must handle the answer. */
+export function documentSetupConfirmationFromAnswers(formId: string | undefined, answers: Readonly<Record<string, unknown>> | undefined): DocumentSetupSavedBriefConfirmation | null {
+  const form = DOCUMENT_SETUP_CONFIRMATION_FORM;
+  if (formId !== form.id || answers?.[form.confirmQuestionId] !== form.confirm.yes) return null;
+  const approach = answers[form.approachQuestionId];
+  return approach === form.approach.agent || approach === form.approach.manual ? { source: 'saved-brief', blockoutApproach: approach } : null;
+}
 export const DocumentContextScanSchema = z.object({ status: z.enum(['not-run', 'complete']), sources: z.array(DocumentContextSourceSchema).max(100),
   constraints: z.array(DocumentLayoutConstraintSchema).max(80), warnings: z.array(z.string().max(2000)).max(100),
   scannedAt: z.string().optional(), coverage: z.string().max(2000).optional(), textDocuments: z.array(DocumentTextContextSchema).max(12).optional() });
@@ -113,7 +144,7 @@ export const DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT = 'Il contesto è confermato. Pr
 export function buildDocumentSetupStartPrompt(setup: DocumentSetup): string {
   if (setup.status !== 'confirmed' || !setup.confirmed) throw new Error('Confirm the document context first');
   const recurring = (setup.intent?.editorialSettings ?? setup.confirmed.editorialSettings)?.filter((setting) => (setting.presentation.header === true || setting.presentation.footer === true) && !setting.presentation.headerFooter) ?? [];
-  if (recurring.length) return `Il contesto è confermato. Prima del Blockout delle pagine prepariamo intestazione e piè di pagina per: ${recurring.map((setting) => setting.presentation.name).join('; ')}. Chiedimi quali loghi e informazioni includere, proponi di caricare i file o cercare online quelli mancanti e verifica se esiste già un modello riutilizzabile nel progetto. Usa il flusso dedicato Intestazione e piè di pagina: prima struttura modificabile, poi grafica reale da approvare e applicare. Le proposte delle pagine partiranno dopo; conserva il brief e le scelte già confermate.`;
+  if (recurring.length) return `Il contesto è confermato. Prima del Blockout delle pagine prepariamo intestazione e piè di pagina per: ${recurring.map((setting) => setting.presentation.name).join('; ')}. Se non ti ho ancora detto cosa devono contenere o se servono loghi, chiedimelo in un solo modulo raggruppato; altrimenti proponi subito la grafica reale per tutti questi documenti, validala e fermati: la rivedo e la approvo nell’editor dedicato, che si apre sulla tua proposta. Le proposte delle pagine partiranno dopo l’applicazione; conserva il brief e le scelte già confermate.`;
   return setup.confirmed.blockoutApproach === 'manual'
     ? 'Il contesto del documento è confermato. Imposterò la struttura nell’editor Blockout; attendi le mie modifiche prima di proporre la grafica.'
     : DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT;
