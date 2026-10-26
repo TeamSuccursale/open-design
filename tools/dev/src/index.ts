@@ -73,6 +73,7 @@ import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 import { resolveDevVelaEnv } from "./vela-runtime.js";
+import { resolveWebRuntimeNodeEnv, WEB_MAX_OLD_SPACE_SIZE_ENV } from "./web-node-options.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -457,14 +458,19 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
   const logHandle = await openAppLog(config, APP_KEYS.WEB);
 
   try {
+    const webNodeEnv = resolveWebRuntimeNodeEnv(process.env);
     await ensureWebDevNodeModules(config);
     await writeWebDevTsconfig(config);
     await logHandle.write(`\n[tools-dev] launching web at ${new Date().toISOString()}\n`);
     await logHandle.write(`[tools-dev] proxying web API requests to daemon port ${daemonPort}\n`);
+    if (webNodeEnv.NODE_OPTIONS) {
+      await logHandle.write(`[tools-dev] web V8 old-space ceiling ${Number(process.env[WEB_MAX_OLD_SPACE_SIZE_ENV])} MiB\n`);
+    }
     return await spawnSidecarRuntime({
       appName: APP_KEYS.WEB,
       config,
       env: {
+        ...webNodeEnv,
         NODE_PATH: prependNodePath([
           path.join(config.workspaceRoot, "apps/web/node_modules"),
           path.join(config.workspaceRoot, "node_modules"),

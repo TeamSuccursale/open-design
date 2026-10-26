@@ -1,7 +1,17 @@
+import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, type ProjectDocument } from '@open-design/contracts';
+import { blockoutHandoffAttachmentDocument } from './blockout/handoff-attachment';
+import { openBlockoutProposals } from './blockout/events';
+import { allowQuestionTimeout } from '../runtime/chat/question-timeout-policy';
 import { reportExperienceEvent } from '../observability/experience-diagnostics';
 import { conversationMetaLabel } from '../runtime/chat/conversation-time';
+import { headerFooterRequestDisplay } from '../runtime/chat/header-footer-request-display';
 export { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { QuoteBar } from './chat/QuoteBar';
+import { UserSendFailure } from './chat/UserSendFailure';
+import { ProjectPreparationStatus } from './chat/ProjectPreparationStatus';
+import { ProjectIntakeProgress } from './chat/ProjectIntakeProgress';
+import { ProjectIntakeCard } from './chat/ProjectIntakeCard';
+import type { IntakeStatusSnapshot } from '../runtime/chat/project-preparation-status';
 import { chatLogSelfResizeObserveDisabled } from '../runtime/chat-scroll-experiments';
 import { releaseChatScrollTakeover } from '../runtime/chat-scroll-takeover';
 import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
@@ -97,7 +107,6 @@ import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { fetchProjectMediaTasks, projectRawUrl } from '../providers/registry';
-import { appendResourceQuery } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
 import {
@@ -179,9 +188,8 @@ import {
 import { attachmentLocalPreviewUrl } from '../runtime/chat/creation-handoff';
 import type { PendingUpload } from '../runtime/chat/staged-attachment';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
-import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
-import { Icon, type IconName } from './Icon';
+import { Icon } from './Icon';
 import { ChatFileIcon, QueueTrashIcon } from './chat/primitives/icons';
 import {
   RunErrorCard,
@@ -194,7 +202,6 @@ import { supportChannels } from './chat/support-channels';
 import { ExportLogsAction } from './chat/ExportLogsAction';
 import type { RecoveryActionBlockReason } from '../runtime/chat/recovery-gating';
 import { repoConnectCopy } from './design-system-github-evidence';
-import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import type { SettingsSection } from './SettingsDialog';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -254,8 +261,6 @@ const DEFAULT_STARTER_KEYS: Array<{
   },
 ];
 
-const IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT = 5;
-const IMPORTED_ARTIFACTS_REVEAL_COUNT = 5;
 const CHAT_RAIL_MIN_USER_MESSAGES = 1;
 // Above this the rail becomes a compact rolling wheel with faded extremes;
 // at or below it the full column shows with no mask occlusion.
@@ -418,197 +423,11 @@ function pickStarters(
   }));
 }
 
-function sortArtifactsByModified(files: ProjectFile[]): ProjectFile[] {
-  return [...files].sort(
-    (a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name),
-  );
-}
-
-function ImportedFolderArtifacts({
-  projectId,
-  files,
-  onOpenFile,
-  t,
-}: {
-  projectId: string | null;
-  files: ProjectFile[];
-  onOpenFile?: (name: string) => void;
-  t: TranslateFn;
-}) {
-  const [visibleCount, setVisibleCount] = useState(IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT);
-
-  useEffect(() => {
-    setVisibleCount(IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT);
-  }, [files]);
-
-  if (files.length === 0) {
-    return (
-      <div className="chat-design-artifacts-empty" data-testid="chat-design-artifacts-empty">
-        {t('designFiles.empty')}
-      </div>
-    );
-  }
-
-  const visibleFiles = files.slice(0, visibleCount);
-  const hiddenCount = Math.max(0, files.length - visibleFiles.length);
-  const revealCount = Math.min(IMPORTED_ARTIFACTS_REVEAL_COUNT, hiddenCount);
-  const revealLabel = t('chat.designArtifactsShowMore', { count: revealCount });
-
-  return (
-    <div className="chat-design-artifacts" data-testid="chat-design-artifacts">
-      {visibleFiles.map((file, index) => {
-        const openable = Boolean(onOpenFile);
-        const openLabel = `${t('designFiles.previewOpen')} ${file.name}`;
-        const openFile = () => {
-          onOpenFile?.(file.name);
-        };
-        return (
-          <div
-            key={file.name}
-            className="chat-design-artifact"
-            data-kind={file.kind}
-            data-file-name={file.name}
-            data-testid={`chat-design-artifact-${index}`}
-            role={openable ? 'button' : 'listitem'}
-            tabIndex={openable ? 0 : undefined}
-            title={openLabel}
-            aria-label={openLabel}
-            onDoubleClick={openable ? openFile : undefined}
-            onKeyDown={
-              openable
-                ? (event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    openFile();
-                  }
-                : undefined
-            }
-          >
-            <div className="chat-design-artifact-preview" aria-hidden>
-              <ChatArtifactPreview projectId={projectId} file={file} />
-            </div>
-            <div className="chat-design-artifact-meta">
-              <span className="chat-design-artifact-name" title={file.name}>
-                {file.name}
-              </span>
-              <span className="chat-design-artifact-kind">
-                {chatArtifactKindLabel(file.kind, t)}
-              </span>
-            </div>
-          </div>
-        );
-      })}
-      {hiddenCount > 0 ? (
-        <button
-          type="button"
-          className="chat-design-artifact chat-design-artifact-more"
-          data-testid="chat-design-artifacts-more"
-          aria-label={revealLabel}
-          title={revealLabel}
-          onClick={() => {
-            setVisibleCount((current) =>
-              Math.min(files.length, current + IMPORTED_ARTIFACTS_REVEAL_COUNT),
-            );
-          }}
-        >
-          <span className="chat-design-artifact-more-icon" aria-hidden>
-            +
-          </span>
-          <span className="chat-design-artifact-more-count">
-            {revealLabel}
-          </span>
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function ChatArtifactPreview({
-  projectId,
-  file,
-}: {
-  projectId: string | null;
-  file: ProjectFile;
-}) {
-  const { workspaceContext } = useProjectCollabContext();
-  if (!projectId) {
-    return <ChatArtifactFallback kind={file.kind} />;
-  }
-
-  const url = appendResourceQuery(
-    projectRawUrl(projectId, file.name, workspaceContext),
-    `v=${Math.round(file.mtime)}`,
-  );
-  if (isRenderableSketchJson(file)) {
-    return (
-      <SketchPreview
-        projectId={projectId}
-        file={file}
-        workspaceContext={workspaceContext}
-      />
-    );
-  }
-  if (file.kind === 'image' || file.kind === 'sketch') {
-    return <img src={url} alt="" loading="lazy" />;
-  }
-  if (file.kind === 'html') {
-    return (
-      <iframe
-        title={file.name}
-        src={url}
-        sandbox="allow-scripts allow-downloads"
-        loading="lazy"
-      />
-    );
-  }
-  if (file.kind === 'video') {
-    return <video src={url} muted playsInline preload="metadata" />;
-  }
-  return <ChatArtifactFallback kind={file.kind} />;
-}
-
-function ChatArtifactFallback({ kind }: { kind: ProjectFile['kind'] }) {
-  return (
-    <span className="chat-design-artifact-fallback">
-      <Icon name={chatArtifactIcon(kind)} size={28} />
-      <span>{chatArtifactShortKind(kind)}</span>
-    </span>
-  );
-}
-
-function chatArtifactIcon(kind: ProjectFile['kind']): IconName {
-  if (kind === 'html' || kind === 'code') return 'file-code';
-  if (kind === 'image' || kind === 'sketch') return 'image';
-  if (kind === 'video' || kind === 'audio') return 'play';
-  if (kind === 'presentation') return 'present';
-  return 'file';
-}
-
-function chatArtifactShortKind(kind: ProjectFile['kind']): string {
-  if (kind === 'html') return 'HTML';
-  if (kind === 'image') return 'IMG';
-  if (kind === 'sketch') return 'SKETCH';
-  if (kind === 'video') return 'VIDEO';
-  if (kind === 'pdf') return 'PDF';
-  if (kind === 'presentation') return 'PPT';
-  if (kind === 'document') return 'DOC';
-  return 'FILE';
-}
-
-function chatArtifactKindLabel(kind: ProjectFile['kind'], t: TranslateFn): string {
-  if (kind === 'html') return t('designFiles.kindHtml');
-  if (kind === 'image') return t('designFiles.kindImage');
-  if (kind === 'sketch') return t('designFiles.kindSketch');
-  if (kind === 'video') return 'Video';
-  if (kind === 'audio') return 'Audio';
-  if (kind === 'pdf') return t('designFiles.kindPdf');
-  if (kind === 'document') return t('designFiles.kindDocument');
-  if (kind === 'presentation') return t('designFiles.kindPresentation');
-  if (kind === 'spreadsheet') return t('designFiles.kindSpreadsheet');
-  return t('designFiles.kindBinary');
-}
-
 interface Props {
+  onBlockoutRequest?: (request:import('./blockout/events').BlockoutAgentRequest)=>Promise<boolean>;
+  documentSetupContent?: ReactNode;
+  documentPreparationPending?: boolean;
+  blockoutNavigationAvailable?: boolean;
   messages: ChatMessage[];
   streaming: boolean;
   loading?: boolean;
@@ -617,6 +436,8 @@ interface Props {
   // pane distinguish a stale run error from a later failure with identical
   // canonical text; non-run errors leave the source undefined.
   errorSourceAssistantId?: string | null;
+  /** Re-read the same conversation; never starts another run or document. */
+  onRetryConversationRead?: () => void;
   projectId: string | null;
   sessionMode?: ChatSessionMode;
   onSessionModeChange?: (mode: ChatSessionMode) => void;
@@ -626,6 +447,8 @@ interface Props {
   // without project context.
   projectKindForTracking?: TrackingProjectKind | null;
   projectFiles: ProjectFile[];
+  projectDocuments?: ProjectDocument[];
+  activeProjectDocumentId?: string | null;
   activeProjectFileName?: string | null;
   hasActiveDesignSystem?: boolean;
   activeDesignSystem?: DesignSystemSummary | null;
@@ -1320,6 +1143,9 @@ function NewSessionGlyph(): ReactElement {
 }
 
 export function ChatPane({
+  documentSetupContent,
+  documentPreparationPending = false,
+  blockoutNavigationAvailable = false,
   messages,
   streaming,
   loading = false,
@@ -1328,11 +1154,14 @@ export function ChatPane({
   queuedItems = [],
   error,
   errorSourceAssistantId,
+  onRetryConversationRead,
   projectId,
   sessionMode = 'design',
   onSessionModeChange,
   projectKindForTracking = null,
   projectFiles,
+  projectDocuments,
+  activeProjectDocumentId = null,
   activeProjectFileName = null,
   hasActiveDesignSystem = false,
   activeDesignSystem = null,
@@ -1345,6 +1174,7 @@ export function ChatPane({
   onDetachComment,
   onDeleteComment,
   onSend,
+  onBlockoutRequest,
   onRetry,
   recoveryActionsBlockedReason = null,
   accessError = null,
@@ -1470,6 +1300,8 @@ export function ChatPane({
     ),
     [messages, projectMetadata],
   );
+  const preparingEmptyDocument = useRef(false);
+  preparingEmptyDocument.current = documentPreparationPending && displayMessages.length === 0;
   /**
    * 转录**画得出来**的那一份 —— 正文、右侧导轨、钉顶三处共用这一个数组。
    *
@@ -1974,6 +1806,7 @@ export function ChatPane({
     }));
   }, [nextStepVariant, t]);
   const composerPlaceholderScenarios = useMemo<PlaceholderScenario[]>(() => {
+    if (sessionMode === 'blockout' || projectMetadata?.intent === 'document' || projectMetadata?.documentSetupIntent) return [];
     if (loading || initialDraft?.trim()) return [];
     if (displayMessages.length === 0 && queuedItems.length === 0) return blankProjectComposerScenarios;
     if (displayMessages.length > 0) return followUpComposerScenarios;
@@ -1985,8 +1818,14 @@ export function ChatPane({
     initialDraft,
     loading,
     queuedItems.length,
+    sessionMode,
+    projectMetadata?.intent,
+    projectMetadata?.documentSetupIntent,
   ]);
   const [tab, setTab] = useState<Tab>('chat');
+  const [intakeCardSnapshot, setIntakeCardSnapshot] = useState<{ projectId: string; value: IntakeStatusSnapshot } | null>(null);
+  const receiveIntakeCardSnapshot = useCallback((value: IntakeStatusSnapshot) => { if (projectId) setIntakeCardSnapshot({ projectId, value }); }, [projectId]);
+  const intakeCardSources = projectFiles.filter((file) => /\.pdf$/i.test(file.path || file.name)).map((file) => (file.path || file.name).split(/[\\/]/).pop()!);
   const [showConvList, setShowConvList] = useState(false);
   const [conversationSearch, setConversationSearch] = useState('');
   const deferredConversationSearch = useDeferredValue(conversationSearch);
@@ -2641,16 +2480,6 @@ export function ChatPane({
     retryAssistant,
     runFailureUi?.messageKey,
   ]);
-  const importedFolderArtifacts = useMemo(
-    () =>
-      projectMetadata?.importedFrom === 'folder'
-        ? sortArtifactsByModified(
-            listDesignArtifactCandidates(projectFiles, projectMetadata.entryFile),
-          )
-        : [],
-    [projectFiles, projectMetadata?.entryFile, projectMetadata?.importedFrom],
-  );
-  const showImportedFolderArtifacts = projectMetadata?.importedFrom === 'folder';
   const composerDraftStorageKey = projectId && activeConversationId
     ? `od:chat-composer:draft:${projectId}:${activeConversationId}`
     : undefined;
@@ -3683,6 +3512,7 @@ export function ChatPane({
   /** 此刻是不是真的在跟着最新输出跑。anchor-to-top 期间不是:那时用户消息钉在顶端,回复在下面长。 */
   function isFollowingTail(): boolean {
     return (
+      !preparingEmptyDocument.current &&
       followIntentRef.current.following &&
       !anchorActiveRef.current &&
       !selectionFollowPausedRef.current
@@ -4083,6 +3913,7 @@ export function ChatPane({
       {/* 插件 / 设计百宝箱 live inside the composer's "+" menu (below 工作目录,
           hover to expand); they no longer sit as quick pills above the input. */}
     <ChatComposer
+      onBlockoutRequest={onBlockoutRequest}
       ref={composerRef}
       quotes={quotes}
       onClearQuotes={clearQuotes}
@@ -4090,8 +3921,14 @@ export function ChatPane({
       designSystemPicker={designSystemPicker}
       projectId={projectId}
       projectFiles={projectFiles}
+      projectDocuments={projectDocuments}
+      activeProjectDocumentId={activeProjectDocumentId}
       activeProjectFileName={activeProjectFileName}
+      documentPreparationPending={documentPreparationPending}
+      blockoutNavigationAvailable={blockoutNavigationAvailable}
       sessionMode={sessionMode}
+      conversationId={activeConversationId}
+      onSessionModeChange={onSessionModeChange}
       skills={skills}
       streaming={streaming}
       sendDisabled={sendDisabled}
@@ -4099,7 +3936,7 @@ export function ChatPane({
       initialDraft={initialDraft}
       externalPendingUploads={homeAttachmentUploads}
       onRemoveExternalPendingUpload={onDismissHomeAttachmentUpload}
-      composerPlaceholder={composerPlaceholder}
+      composerPlaceholder={composerPlaceholder ?? (sessionMode === 'blockout' || projectMetadata?.intent === 'document' || projectMetadata?.documentSetupIntent ? t('blockout.chatPlaceholder') : undefined)}
       placeholderScenarios={composerPlaceholderScenarios}
       draftStorageKey={composerDraftStorageKey}
       onEnsureProject={onEnsureProject}
@@ -4339,6 +4176,7 @@ export function ChatPane({
         )}
         {tab === 'chat' ? (
           <>
+            {projectId && projectMetadata?.projectMode !== 'fast' ? <ProjectPreparationStatus key={projectId} projectId={projectId} workspaceContext={workspaceContext} onIntakeSnapshot={receiveIntakeCardSnapshot} /> : projectId && intakeCardSources.length ? <div hidden><ProjectIntakeProgress key={projectId} projectId={projectId} workspaceContext={workspaceContext} onSnapshot={receiveIntakeCardSnapshot} /></div> : null}
             <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
               <div className="chat-log-viewport">
                 <ChatScrollEdge scrollRef={logRef} />
@@ -4419,17 +4257,9 @@ export function ChatPane({
                 }}
               >
                 {loading ? <ChatConversationLoading t={t} /> : null}
-                {displayMessages.length === 0 && !loading ? (
+                {projectId && !loading && (projectMetadata?.projectMode === 'fast' || (intakeCardSnapshot?.projectId === projectId && intakeCardSnapshot.value.catalog.documents.length > 0)) ? <ProjectIntakeCard key={`intake-card:${projectId}`} projectId={projectId} workspaceContext={workspaceContext} snapshot={intakeCardSnapshot?.projectId === projectId ? intakeCardSnapshot.value : null} sourceNames={intakeCardSources} /> : null}
+                {displayMessages.length === 0 && !loading && !documentSetupContent ? (
                   <div className="chat-empty-wrap">
-                    {showImportedFolderArtifacts ? (
-                      <ImportedFolderArtifacts
-                        projectId={projectId}
-                        files={importedFolderArtifacts}
-                        onOpenFile={onRequestOpenFile}
-                        t={t}
-                      />
-                    ) : (
-                      <>
                         {/* #5517 leaves the empty conversation pane clean — no
                             "start a conversation" title or starter template
                             cards; only the connect-repo note below survives. */}
@@ -4457,10 +4287,9 @@ export function ChatPane({
                             </button>
                           </div>
                         ) : null}
-                      </>
-                    )}
                   </div>
                 ) : null}
+                {documentSetupContent}
                 <ChatRows
                   items={chatRenderItems}
                   messages={displayMessages}
@@ -4525,6 +4354,7 @@ export function ChatPane({
                   t={t}
                   onSubmitQuestionForm={onSubmitQuestionForm}
                   questionFormSubmitDisabled={questionFormSubmitDisabled}
+                  questionFormAutoContinueAfterTimeout={allowQuestionTimeout({ documentPreparationPending, projectMetadata, activeProjectDocumentId, sessionMode })}
                   scrollContainerRef={logRef}
                   onVirtualScrollTopWrite={(element, top) => {
                     writeLogScrollTop(element, top);
@@ -4561,6 +4391,10 @@ export function ChatPane({
                           {t('chat.runError.contactSupportCta')}
                         </RunErrorCardAction>
                         <ExportLogsAction />
+                        {accessError === 'messages-unavailable' && onRetryConversationRead ? <RunErrorCardAction
+                          type="button" variant="primary" data-testid="chat-conversation-read-retry"
+                          disabled={loading} onClick={onRetryConversationRead}
+                        ><Icon name="refresh" size={11} />{t('promptTemplates.retry')}</RunErrorCardAction> : null}
                         {showCloudRetry && retryAssistant && onRetry ? (
                           <RunErrorCardAction
                             type="button"
@@ -5285,6 +5119,7 @@ function ChatRows({
   t,
   onSubmitQuestionForm,
   questionFormSubmitDisabled,
+  questionFormAutoContinueAfterTimeout,
   scrollContainerRef,
   onVirtualScrollTopWrite,
   highlightedUserMessageId,
@@ -5379,6 +5214,7 @@ function ChatRows({
   t: TranslateFn;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled: boolean;
+  questionFormAutoContinueAfterTimeout: boolean;
   scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
   onVirtualScrollTopWrite: (element: HTMLDivElement, top: number) => void;
   highlightedUserMessageId?: string | null;
@@ -5498,6 +5334,7 @@ function ChatRows({
             : undefined
         }
         questionFormSubmitDisabled={questionFormSubmitDisabled}
+        questionFormAutoContinueAfterTimeout={questionFormAutoContinueAfterTimeout}
         onBrandBrowserAssistConfirm={
           onBrandBrowserAssistConfirm
             ? (card) => assistantCallbacksRef.current.onBrandBrowserAssistConfirm?.(card)
@@ -6580,7 +6417,7 @@ export function buildRunErrorDiagnosticText(input: RunErrorDiagnosticInput): str
   }
 
   lines.push(
-    'OpenDesign run error diagnostics',
+    'MelilloDesign run error diagnostics',
     `trace_id: ${input.traceId ?? 'n/a'}`,
     `run_id: ${input.traceId ?? 'n/a'}`,
     `error_code: ${input.errorCode ?? 'n/a'}`,
@@ -6698,9 +6535,13 @@ const UserMessage = memo(UserMessageImpl);
      交付成功的那些)。这一条要留给用户看的是他自己填的答案,不是顶上那行
      `[form answers — <id>]` 路由头 —— #5496 说的就是别把机器载荷摆到用户脸上。
      重发走的是 `message.content`(`handleResendUserMessage`),头一行原样保留。 */
+  const headerFooterRequest = headerFooterRequestDisplay(message.content);
+  const blockoutSetupRequest = message.content === DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT;
   const displayContent = isDesignSystemWorkspaceRequest
     ? t('chat.designSystemStatus.title')
-    : formAnswersDisplayBody(message.content);
+    : headerFooterRequest
+      ? t(headerFooterRequest.action === 'propose' ? 'documentChat.headerFooterPropose' : 'documentChat.headerFooterRefine', { name: headerFooterRequest.name })
+      : blockoutSetupRequest ? t('documentChat.blockoutStart') : formAnswersDisplayBody(message.content);
 
   useEffect(() => {
     return () => {
@@ -6767,7 +6608,7 @@ const UserMessage = memo(UserMessageImpl);
                 description={t('chat.designSystemStatus.description')}
               />
             ) : (
-              <UserBubble content={displayContent} t={t} />
+              <UserBubble content={displayContent} detailsContent={headerFooterRequest || blockoutSetupRequest ? message.content : undefined} t={t} />
             )}
             <div className="user-actions">
               {/* 稿子**渲染出来**是「时间 → 复制 → 重试」(它的说明文字写的是「时间在最右」,
@@ -6801,6 +6642,7 @@ const UserMessage = memo(UserMessageImpl);
                 </button>
               ) : null}
             </div>
+            {message.sendFailed && message.sendFailure?.message ? <UserSendFailure message={message.sendFailure.message} /> : null}
           </div>
         ) : null}
       </div>
@@ -6817,15 +6659,16 @@ const UserMessage = memo(UserMessageImpl);
    * 浮出箭头 —— 稿子的说明文字那一句已经过时(盘点 §5 第 2 条)。
    * #47 相对 #46 在样式表里没有任何匹配规则,所以两格当同一态做。
    */
-  function UserBubble({ content, t }: { content: string; t: TranslateFn }) {
+  function UserBubble({ content, detailsContent, t }: { content: string; detailsContent?: string; t: TranslateFn }) {
   const txtRef = useRef<HTMLSpanElement>(null);
   const [expanded, setExpanded] = useState(false);
-  const cut = useIsTextClamped(txtRef, content, expanded);
+  const visibleContent = expanded && detailsContent ? detailsContent : content;
+  const cut = useIsTextClamped(txtRef, visibleContent, expanded);
 
   return (
     <div className={`user-text user-bubble${expanded ? ' is-expanded' : ''}${cut ? ' is-cut' : ''}`}>
       <span className="user-text-clip">
-        <span className="user-text-txt" ref={txtRef}>{content}</span>
+        <span className="user-text-txt" ref={txtRef}>{visibleContent}</span>
         {cut && !expanded ? (
           <button
             type="button"
@@ -6838,7 +6681,7 @@ const UserMessage = memo(UserMessageImpl);
           </button>
         ) : null}
       </span>
-      {cut ? (
+      {cut || detailsContent ? (
         <div className="msg-more">
           <button
             type="button"
@@ -6846,7 +6689,7 @@ const UserMessage = memo(UserMessageImpl);
             aria-expanded={expanded}
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? t('chat.input.collapse') : t('chat.input.viewAll')}
+            {expanded ? t('chat.input.collapse') : detailsContent ? t('documentChat.agentRequestDetails') : t('chat.input.viewAll')}
             <Icon name="chevron-down" size={12} />
           </button>
         </div>
@@ -6934,6 +6777,8 @@ const UserMessage = memo(UserMessageImpl);
       <div className="user-attachments msg-att" data-testid="user-attachment-row" ref={rowRef}>
         {attachments.map((a) => {
           const baseName = a.path.split('/').pop() || a.path;
+          const blockoutDocument = blockoutHandoffAttachmentDocument(a.path);
+          const displayName = blockoutDocument && (!a.name || /\.blockout-update\.json$/i.test(a.name)) ? t('blockout.file') : a.name;
           const openName = projectFileNames
             ? [a.path, a.name, baseName].find(
                 (candidate): candidate is string =>
@@ -6944,9 +6789,9 @@ const UserMessage = memo(UserMessageImpl);
           // message is persisted. The project file list can still be one
           // refresh behind, especially during the Home -> Project handoff, so
           // it is not a valid reason to disable the user's explicit open.
-          const openable = !!onRequestOpenFile;
-          const handleOpen = openable ? () => onRequestOpenFile?.(openName) : undefined;
-          const label = openable ? t('chat.openFile', { name: baseName }) : a.path;
+          const openable = Boolean((blockoutDocument && projectId) || onRequestOpenFile);
+          const handleOpen = blockoutDocument && projectId ? () => openBlockoutProposals({projectId,documentId:blockoutDocument}) : openable ? () => onRequestOpenFile?.(openName) : undefined;
+          const label = openable ? t('chat.openFile', { name: blockoutDocument ? displayName : baseName }) : a.path;
           // A staged file that is not in the project yet previews itself.
           const localPreviewUrl = attachmentLocalPreviewUrl(a);
           return a.kind === 'image' && (projectId || localPreviewUrl) ? (
@@ -6979,7 +6824,7 @@ const UserMessage = memo(UserMessageImpl);
           ) : (
             <UserAttachmentDocCard
               key={a.path}
-              attachment={a}
+              attachment={blockoutDocument ? {...a,name:displayName} : a}
               label={label}
               openable={openable}
               onOpen={handleOpen}

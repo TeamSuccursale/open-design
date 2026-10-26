@@ -1,4 +1,9 @@
 import { validateCommentSaveTarget } from '../comments/validate-save-target';
+import { isBlockoutFile } from '@open-design/contracts';
+import { BlockoutComparisonPreview, BlockoutFilePreview } from './blockout/BlockoutFilePreview';
+import { blockoutComparisonDocumentFromHtml, isBlockoutComparisonFile } from '@open-design/contracts';
+import { useBlockoutPreviewBridge } from './blockout/useBlockoutPreviewBridge';
+import { BlockoutCompositionAction } from './blockout/BlockoutCompositionAction';
 import { previewStorageKey, readPreviewStorage, savePreviewStorageMessage } from '../runtime/preview-storage';
 import { commentSelectorsMatch, commentUsesIdentity, ownerCommentNeedsLocation, resolveOwnerCommentAnchor } from '../comments/owner-anchor';
 import { indexCommentTargets } from '../comments/target-index';
@@ -1979,6 +1984,8 @@ export const FileViewer = memo(function FileViewer({
     return <FileViewerLoadingSkeleton />;
   }
 
+  if (isBlockoutFile(file.path ?? file.name)) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} generating={motionPreviewMuted} />;
+  if (isBlockoutComparisonFile(file.path ?? file.name)) return <BlockoutComparisonPreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} onOpenComparison={onOpenFileReplacing ? (path) => onOpenFileReplacing(path, file.name) : undefined} generating={motionPreviewMuted} />;
   if (rendererMatch?.renderer.id === 'html' || rendererMatch?.renderer.id === 'deck-html') {
     return (
       <HtmlViewer
@@ -8620,6 +8627,7 @@ function HtmlViewer({
   // Until that first load event lands, keep a loader over the transport stack.
   const urlPreviewLoadedKeysRef = useRef<Set<string>>(new Set());
   const [urlPreviewFirstLoadPending, setUrlPreviewFirstLoadPending] = useState(false);
+  const [urlPreviewFallbackKey, setUrlPreviewFallbackKey] = useState<string | null>(null);
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
   const [commentReadState, setCommentReadState] = useState<ProjectCommentReadState | null>(null);
@@ -8831,6 +8839,7 @@ function HtmlViewer({
   const isActivePreviewIframeSource = useCallback((source: MessageEventSource | null) => {
     return workspaceActive && !!source && source === iframeRef.current?.contentWindow;
   }, [workspaceActive]);
+  useBlockoutPreviewBridge(projectId, file.path || file.name, isActivePreviewIframeSource);
   const isOurPreviewIframeSource = useCallback((source: MessageEventSource | null) => {
     if (!workspaceActive || !source) return false;
     return (
@@ -10630,6 +10639,7 @@ function HtmlViewer({
     return query.join('&');
   }, [needsFocusGuard, needsPowered, needsRedirectGuard, needsSandboxShim]);
   const [urlSelectionBridgeReady, setUrlSelectionBridgeReady] = useState(false);
+  const urlPreviewDocumentKey = `${projectId}\0${file.name}\0${file.mtime}\0${file.size}\0${reloadKey}`;
   const urlLoadDecision: UrlLoadDecision = {
     mode,
     isDeck: effectiveDeck,
@@ -10640,7 +10650,7 @@ function HtmlViewer({
     urlModeBridge,
     inspectMode,
     drawMode: drawOverlayOpen,
-    forceInline: (forceInline || needsPersistentStorage) && !needsPowered,
+    forceInline: (forceInline || needsPersistentStorage || urlPreviewFallbackKey === urlPreviewDocumentKey) && !needsPowered,
     needsSandboxShim: needsSandboxShim && !needsPowered,
     needsLocalInteractionBridge: needsLocalInteractionBridge && !needsPowered,
     // Daemon guards wrap the settled on-disk response. Streaming/in-memory
@@ -12235,6 +12245,21 @@ function HtmlViewer({
     }
     setUrlPreviewFirstLoadPending(!urlPreviewLoadedKeysRef.current.has(urlPreviewKeepAliveKey));
   }, [useUrlLoadPreview, urlFrameSrc, urlPreviewKeepAliveKey]);
+  useEffect(() => {
+    if (!workspaceActive || !useUrlLoadPreview || needsPowered || urlFrameSrc === 'about:blank') return;
+    // Every URL revision needs its own commit witness. A file having painted
+    // once only suppresses the first-load cover; it does not prove that a
+    // later agent rewrite or Reload navigation committed. Chromium may leave
+    // the old document painted when that navigation is aborted/queued.
+    // Reuse the already fetched fresh source through the established srcDoc
+    // transport after a bounded wait. Successfully loaded revisions and
+    // powered previews retain their original URL runtime.
+    const timeout = window.setTimeout(() => {
+      if (urlPreviewIframeRef.current?.dataset.odLoadedSrc === urlFrameSrc) return;
+      setUrlPreviewFallbackKey(urlPreviewDocumentKey);
+    }, 5_000);
+    return () => window.clearTimeout(timeout);
+  }, [workspaceActive, useUrlLoadPreview, needsPowered, urlFrameSrc, urlPreviewDocumentKey]);
   const activateSrcDocTransport = useCallback((target: HTMLIFrameElement | null = srcDocPreviewIframeRef.current) => {
     const activationInputs = {
       srcDoc: srcDocActivationContent,
@@ -17183,10 +17208,13 @@ function HtmlViewer({
     </section>
   ) : null;
 
+  const blockoutComparisonDocumentId = routingSourceIdentity === currentSourceIdentity ? blockoutComparisonDocumentFromHtml(routingSource) : null;
+  if (blockoutComparisonDocumentId) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} documentId={blockoutComparisonDocumentId} revision={file.mtime} generating={motionPreviewMuted} />;
   return (
     <div ref={viewerRootRef} className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
       <div className="viewer-toolbar" style={workspaceActive ? undefined : { visibility: 'hidden' }}>
         <div className="viewer-toolbar-left">
+          <BlockoutCompositionAction projectId={projectId} filePath={file.path ?? file.name} html={routingSourceIdentity === currentSourceIdentity ? routingSource ?? '' : ''} workspaceContext={workspaceContext} getFrame={() => iframeRef.current} generating={motionPreviewMuted} />
           {showDeckThumbnailRail ? (
             <button
               type="button"

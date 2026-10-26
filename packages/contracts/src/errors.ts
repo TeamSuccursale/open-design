@@ -2,6 +2,11 @@ import type { ApiFailureDetail } from './api/failure-detail.js';
 import type { JsonValue } from './common.js';
 
 export const API_ERROR_CODES = [
+  'DOCUMENT_SETUP_CONFIRMATION_REQUIRED',
+  'BLOCKOUT_ALTERNATIVE_REQUEST_CONFLICT',
+  'BLOCKOUT_ALTERNATIVE_RESULT_CONFLICT',
+  'BLOCKOUT_ALTERNATIVE_BASE_CHANGED',
+  'BLOCKOUT_ALTERNATIVE_CAPACITY',
   // Generic HTTP/API failures.
   'BAD_REQUEST',
   'UNAUTHORIZED',

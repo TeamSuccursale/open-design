@@ -146,15 +146,16 @@ const clickSummary = (el: HTMLDetailsElement): void => {
 };
 
 describe('AMR 形态(rawTitle)在跑的时候:是折叠块、展开着、输出真的在 DOM 里', () => {
-  it('执行中 → 折叠块带 open', () => {
+  it('执行中 → 折叠块默认收起(D53)', () => {
     render(<ToolRow running row={rawRunning()} />);
-    expect(fold().open, '执行中该展开(与有标题那支同一条规矩)').toBe(true);
+    expect(fold().open).toBe(false);
   });
 
   it('在途输出的每一行都真的在 DOM 里 —— 这条才是 bug 的判据', () => {
     // 生产默认 deferBody=true:收起的折叠块连 body 都不挂载。
     // 修之前这一支根本是 <div>,一个输出节点都没有。
     const { container } = render(<ToolRow running row={rawRunning()} deferBody />);
+    clickSummary(fold());
     for (const line of LIVE_OUT.split('\n')) {
       expect(screen.getByText(line), `在途输出缺了这一行:${line}`).toBeTruthy();
     }
@@ -163,7 +164,7 @@ describe('AMR 形态(rawTitle)在跑的时候:是折叠块、展开着、输出�
 
   it('还没有任何输出时也照样展开 —— 至少看得见「它在跑什么命令」', () => {
     const { container } = render(<ToolRow running row={rawRunning({ terminal: null })} />);
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false);
     expect(container.textContent).toContain('npm install');
   });
 
@@ -184,6 +185,7 @@ describe('AMR 形态(rawTitle)在跑的时候:是折叠块、展开着、输出�
     const LONG = 'find . -name "*.tsx" -not -path "*/node_modules/*" -exec grep -l "useThinkingFollow" {} +';
     const { container } = render(<ToolRow running row={rawRunning({ command: LONG, title: LONG })} />);
 
+    clickSummary(fold());
     const body = container.querySelector('div[class*="_code_"]');
     expect(body, '展开后要有 div.code 正文').not.toBeNull();
 
@@ -204,8 +206,8 @@ describe('AMR 形态(rawTitle)在跑的时候:是折叠块、展开着、输出�
 describe('跑完自动收起 —— 与有标题那支完全一致', () => {
   it('同一行从 pending 翻成成功,折叠块自己收起来', () => {
     const { rerender } = render(<ToolRow running row={rawRunning()} />);
-    expect(fold().open).toBe(true);
-    echoToggle(fold()); // 摊开那一帧的回声,不算用户点过
+    expect(fold().open).toBe(false);
+    echoToggle(fold());
 
     rerender(<ToolRow row={rawSettled()} />);
     expect(fold().open, '跑完该收起来').toBe(false);
@@ -229,7 +231,7 @@ describe('反向对照:用户自己动过的,生命周期不许拨回去', () =>
   it('用户在跑的时候手动收起了,跑完不许替他打开', () => {
     const { rerender } = render(<ToolRow running row={rawRunning()} />);
     echoToggle(fold());
-
+    clickSummary(fold());
     clickSummary(fold());
     expect(fold().open, '用户点了收起').toBe(false);
 
@@ -272,7 +274,7 @@ describe('反向对照:失败那一档行为不变', () => {
 describe('反向对照:有人话标题那一支一个字都没改坏', () => {
   it('执行中展开、输出在、summary 是人话不是命令', () => {
     const { container } = render(<ToolRow running row={titled({ pending: true, terminal: LIVE_OUT, elapsedMs: 4100 })} />);
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false); clickSummary(fold());
     expect(fold().querySelector('summary')?.textContent).toContain('装依赖,准备跑构建');
     expect(container.textContent).toContain('Packages: +37');
   });
@@ -287,7 +289,7 @@ describe('反向对照:有人话标题那一支一个字都没改坏', () => {
     const { container } = render(
       <ToolRow row={titled({ failed: true, terminal: 'ELIFECYCLE  Command failed.', elapsedMs: 2100 })} />,
     );
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false); clickSummary(fold());
     expect(container.textContent).toContain('ELIFECYCLE  Command failed.');
   });
 });
@@ -349,7 +351,8 @@ describe('在途输出整条链(不手搓 row.terminal,从事件流验起)', () 
     if (!row) throw new Error('fixture 坏了:事件流没产出命令行');
 
     const { container } = render(<ToolRow row={row} deferBody running />);
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false);
+    clickSummary(fold());
     for (const line of LIVE_OUT.split('\n')) {
       expect(container.textContent, `在途输出缺了这一行:${line}`).toContain(line);
     }

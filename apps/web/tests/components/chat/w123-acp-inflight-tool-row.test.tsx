@@ -20,6 +20,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, cleanup, render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 
+import { openExecutionDetails } from '../../helpers/open-execution-details';
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
 import { I18nProvider } from '../../../src/i18n';
 import { reattachDaemonRun } from '../../../src/providers/daemon';
@@ -92,7 +93,9 @@ function streamResponse(reader: { read: () => Promise<ReadResult>; cancel: () =>
   } as unknown as Response;
 }
 
-const renderTurn = (ui: ReactElement) => render(<I18nProvider initial="zh-CN">{ui}</I18nProvider>);
+const renderTurn = (ui: ReactElement) => {
+  const view = render(<I18nProvider initial="zh-CN">{ui}</I18nProvider>); openExecutionDetails(view.container); return view;
+};
 
 function turn(events: AgentEvent[]): ChatMessage {
   return {

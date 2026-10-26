@@ -10,6 +10,7 @@ import type {
 } from './comments';
 import type { ResearchOptions } from './research';
 import type { RunContextSelection } from './context.js';
+import type { SvgExecutionPolicy } from './svg-execution.js';
 import type { MediaExecutionPolicy, RunMediaTaskFailure } from './media.js';
 import type { AppliedPluginSnapshot } from '../plugins/apply.js';
 import type { McpAuthMode, McpServerConfig, McpTransport } from './mcp';
@@ -79,7 +80,7 @@ export interface RunTerminalLifecycleStatus {
 }
 
 export type ChatRole = 'user' | 'assistant';
-export type ChatSessionMode = 'design' | 'chat' | 'plan';
+export type ChatSessionMode = 'design' | 'chat' | 'plan' | 'blockout';
 export type ChatCommentSelectionKind = PreviewCommentSelectionKind | 'visual';
 export type ByokChatProtocol =
   | 'anthropic'
@@ -170,12 +171,15 @@ export interface ChatRequest {
   // this run only — they are NOT persisted on the project. Use this to
   // assemble multiple capabilities (e.g. @web-search + @summarize) for
   // a single turn without binding the project to one of them.
+  documentReferences?: string[];
   skillIds?: string[];
   designSystemId?: string | null;
   attachments?: string[];
   commentAttachments?: ChatCommentAttachment[];
   model?: string | null;
   reasoning?: string | null;
+  /** Server-derived SVG quality decision. Run creation replaces client values. */
+  svgExecutionPolicy?: SvgExecutionPolicy | null;
   serviceTier?: string | null;
   /**
    * Run-scoped BYOK provider credentials for the daemon-backed OpenCode
@@ -430,6 +434,7 @@ export interface McpRunCreateRequest {
   agentId?: string;
   skillId?: string;
   /** Explicit per-run Skills. CLI --skill a,b and Web @Skill converge here. */
+  documentReferences?: string[];
   skillIds?: string[];
   pluginId?: string;
   model?: string;
@@ -1448,6 +1453,8 @@ export interface ChatMessage {
    * 只对 `role === 'user'` 有意义;助手侧的失败仍然看 `runStatus`。
    */
   sendFailed?: boolean;
+  /** The daemon's concrete pre-run refusal or transport error; no assistant run existed. */
+  sendFailure?: { message: string; code?: string; status?: number; retryable?: boolean };
   /**
    * 这条消息之后**原地分叉**过一次(点了「新开会话」)。
    *

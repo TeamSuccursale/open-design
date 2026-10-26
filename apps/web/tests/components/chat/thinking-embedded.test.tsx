@@ -219,7 +219,7 @@ describe('N7-c 跑完的推理一律收成一格', () => {
     expect(allThinkChars(container)).toBeGreaterThan(0);   // 正文确实渲染了,只是收着
   });
 
-  it('从「思考中」切到「思考完」的那一刻,推理是收起来的', () => {
+  it('D53:从思考中到思考完,默认收起的推理保持收起', () => {
     /*
      * 这是用户原话「thinking 完了之后…全摊开了」的**那一帧**:同一张壳,
      * `shell.thinking` 从 true 翻到 false。思考中那一格是摊开的(要读到滚动的字),
@@ -234,7 +234,7 @@ describe('N7-c 跑完的推理一律收成一格', () => {
     ));
     openShell(container);
     // 正向对照:思考中的时候正文确实是**读得到**的,否则下面那条不成立
-    expect(visibleThinkChars(container)).toBeGreaterThan(0);
+    expect(visibleThinkChars(container)).toBe(0);
 
     rerender(show(shellOf(items, { status: 'running', thinking: false })));
     openShell(container);

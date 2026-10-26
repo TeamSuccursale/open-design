@@ -610,6 +610,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   /** 壳外正在累积的结论 */
   let openProse: ProseBlock | null = null;
   let doneSeen = false;
+  let questionPreface: { items: ShellItem[]; item: ShellText; before: number } | null = null;
   let markerBuf = '';
   let markerSearchBuf = '';
   let firstStartedAt: number | null = null;
@@ -1009,6 +1010,15 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
         if (scan.doneAt != null) {
           const head = text.slice(0, scan.doneAt);
           if (head) routeInside(head);
+          // A question's final recap must remain readable when execution is collapsed (D53).
+          // Record adjacency now, but move it only at the existing terminal reorder point.
+          if (scan.doneLength === 0 && /^<question-form\b/i.test(searchText.slice(scan.doneAt))) {
+            const items = sink(), item = items[items.length - 1];
+            if (item?.kind === 'text' && !item.thinking && item.text.trim()
+              && !/<(?:question-form|artifact|od-done)\b/i.test(item.text)) {
+              questionPreface = { items, item, before: blocks.length };
+            }
+          }
           doneSeen = true;
           openText = null;
           openProse = null;
@@ -1417,6 +1427,20 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
 
   /* ── 收尾 ─────────────────────────────────────────────────── */
 
+  function liftQuestionPreface(): void {
+    const candidate = questionPreface;
+    questionPreface = null;
+    if (!candidate) return;
+    const question = blocks[candidate.before];
+    // The real parser rejects incomplete/invalid forms; masked code/card payloads never
+    // become candidates. Do not turn protocol documentation or private thinking into prose.
+    if (question?.kind !== 'prose' || !readQuestionFormPayloadAt(question.text, 0)) return;
+    const index = candidate.items.indexOf(candidate.item);
+    if (index < 0) return;
+    candidate.items.splice(index, 1);
+    question.text = candidate.item.text + question.text;
+  }
+
   /**
    * 兜底(c):整轮没发过 done —— 在 run 结束、壳收起的**那一刻**把最后一段过程叙述
    * 提出来当结论。只动这一次,不在流式中途挪动(中途挪动正是候选 E 的代价)。
@@ -1460,6 +1484,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
    * 是不是第一张壳仍要认 —— 第一张壳的表从轮次开头就开始走。
    */
   function closeRun(): void {
+    liftQuestionPreface();
     liftConclusion();
     /*
      * 这个 run 的最后一段推理走到**它这个 run 的收尾**为止,不跨到下一个 run。
@@ -1484,6 +1509,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       closeRunningSegments(shell);
     }
     doneSeen = false;
+    questionPreface = null;
     openText = null;
     openProse = null;
     markerBuf = '';
@@ -1583,6 +1609,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
 
     if (running || !started) return;
 
+    liftQuestionPreface();
     liftConclusion();
 
     if (status === 'canceled') {

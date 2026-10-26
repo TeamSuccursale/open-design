@@ -31,6 +31,7 @@ import { AssistantMessage } from '../../src/components/AssistantMessage';
 import { CollabProvider } from '../../src/collab/collab-context';
 import type { ChatMessage, ProjectFile } from '../../src/types';
 import { workspaceContextFixture } from '../helpers/workspace-context';
+import { markIntakeOwnedFiles } from '../../src/intake-owned-files';
 
 beforeAll(() => {
   const store = new Map<string, string>();
@@ -148,6 +149,14 @@ function renderTurn(message: ChatMessage, projectFiles: ProjectFile[]) {
 }
 
 describe('artifact card turn scope', () => {
+  it('does not render previously misattributed intake metadata as preparation deliverables', () => {
+    const files = ['intake.config.json', 'intake-assets/catalog.json'].map((name) => ({ ...parchmentFile(GREETING_STARTED_AT + 2_000), name, path: name, kind: 'code' as const, mime: 'application/json' }));
+    markIntakeOwnedFiles(files);
+    renderTurn(greetingTurn({ producedFiles: structuredClone(files), events: [{ kind: 'text', text: GREETING_REPLY }] }), files);
+    expect(screen.getByText(/接下来你想做什么/)).toBeTruthy();
+    expect(document.querySelectorAll('[data-artifact-card]')).toHaveLength(0);
+    expect(screen.queryByTestId('file-ops-summary')).toBeNull();
+  });
   it('gives a bare greeting no artifact card, even when its prose names an earlier turn的文件', () => {
     renderTurn(greetingTurn(), [parchmentFile(EARLIER_TURN_MTIME)]);
 

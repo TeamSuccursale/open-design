@@ -47,6 +47,42 @@ describe('projectEventsUrl', () => {
 });
 
 describe('createProjectEventsConnection', () => {
+  it('gives queued writes a connection slot and reconciles after its visible lease', () => {
+    vi.useFakeTimers();
+    const onReady = vi.fn();
+    const connected = vi.fn();
+    const conn = createProjectEventsConnection('p1', vi.fn(), {
+      EventSourceCtor: MockEventSource as unknown as typeof EventSource,
+      onReady, onConnectedChange: connected,
+    });
+    const first = MockEventSource.instances[0]!;
+    first.dispatch('ready', { data: '{}' });
+    vi.advanceTimersByTime(10_000);
+    expect(first.closed).toBe(true);
+    expect(connected).toHaveBeenLastCalledWith(false);
+    expect(MockEventSource.instances).toHaveLength(1);
+    vi.advanceTimersByTime(500);
+    const resumed = MockEventSource.instances[1]!;
+    resumed.dispatch('ready', { data: '{}' });
+    expect(onReady).toHaveBeenCalledTimes(2);
+    conn.close();
+    vi.advanceTimersByTime(30_000);
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  it('also releases a queued stream whose ready handshake never arrived', () => {
+    vi.useFakeTimers();
+    const conn = createProjectEventsConnection('queued', vi.fn(), {
+      EventSourceCtor: MockEventSource as unknown as typeof EventSource,
+      onReady: vi.fn(),
+    });
+    vi.advanceTimersByTime(10_000);
+    expect(MockEventSource.instances[0]!.closed).toBe(true);
+    conn.close();
+    vi.advanceTimersByTime(1_000);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
   it('opens an EventSource against the events URL on creation', () => {
     const conn = createProjectEventsConnection(
       'p1',

@@ -28,7 +28,15 @@ export type RuntimeBuildOptions = {
   serviceTier?: string | null;
 };
 
+export interface RuntimeImageSpecialist {
+  id: string;
+  description: string;
+  configFile: string;
+}
+
 export type RuntimeContext = {
+  /** Host-materialized native Codex roles, available to both create and resume. */
+  imageSpecialists?: readonly RuntimeImageSpecialist[];
   cwd?: string;
   // True when the current chat run has at least one prior persisted
   // assistant message in the same conversation — i.e. this isn't the

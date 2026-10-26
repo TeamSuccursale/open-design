@@ -17,6 +17,7 @@ export function sessionModeToTracking(
 ): TrackingSessionMode {
   if (mode === 'design') return 'design';
   if (mode === 'plan') return 'plan';
+  if (mode === 'blockout') return 'blockout';
   return 'ask';
 }
 

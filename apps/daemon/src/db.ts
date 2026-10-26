@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type {
   ChatMessage,
+  ChatSessionMode,
   CollabCloudComment,
   OdNextDevicePlatformV1,
   PreviewComment,
@@ -67,7 +68,6 @@ import { observeRead } from './services/daemon-health.js';
 type SqliteDb = Database.Database;
 type DbRow = Record<string, any>;
 type JsonObject = Record<string, unknown>;
-type ChatSessionMode = 'design' | 'chat' | 'plan';
 
 let dbInstance: SqliteDb | null = null;
 let dbFile: string | null = null;
@@ -257,6 +257,7 @@ function migrate(db: SqliteDb): void {
       feedback_json TEXT,
       pre_turn_file_names_json TEXT,
       session_mode TEXT,
+      send_state_json TEXT,
       run_context_json TEXT,
       task_analytics_json TEXT,
       applied_plugin_snapshot_json TEXT,
@@ -447,6 +448,9 @@ function migrate(db: SqliteDb): void {
     db.exec(`ALTER TABLE conversations ADD COLUMN intent_signals_json TEXT`);
   }
   const messageCols = db.prepare(`PRAGMA table_info(messages)`).all() as DbRow[];
+  if (!messageCols.some((c: DbRow) => c.name === 'send_state_json')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN send_state_json TEXT`);
+  }
   if (!messageCols.some((c: DbRow) => c.name === 'agent_id')) {
     db.exec(`ALTER TABLE messages ADD COLUMN agent_id TEXT`);
   }
@@ -2419,7 +2423,7 @@ function normalizeConversation(r: DbRow) {
 }
 
 export function normalizeConversationSessionMode(value: unknown): ChatSessionMode {
-  return value === 'chat' || value === 'plan' ? value : 'design';
+  return value === 'chat' || value === 'plan' || value === 'blockout' ? value : 'design';
 }
 
 function numberProperty(key: string, value: unknown) {
@@ -3018,6 +3022,7 @@ function listMessagesUnobserved(db: SqliteDb, conversationId: string) {
               feedback_json AS feedbackJson,
               pre_turn_file_names_json AS preTurnFileNamesJson,
               session_mode AS sessionMode,
+              send_state_json AS sendStateJson,
               run_context_json AS runContextJson,
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
@@ -3097,6 +3102,7 @@ export function getMessage(db: SqliteDb, id: string, conversationId?: string) {
               feedback_json AS feedbackJson,
               pre_turn_file_names_json AS preTurnFileNamesJson,
               session_mode AS sessionMode,
+              send_state_json AS sendStateJson,
               run_context_json AS runContextJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
@@ -3264,7 +3270,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               events_json = ?, attachments_json = ?, comment_attachments_json = ?,
               produced_files_json = ?, trace_object_files_json = ?, feedback_json = ?,
               pre_turn_file_names_json = ?,
-              session_mode = ?, run_context_json = ?, task_analytics_json = ?,
+              session_mode = ?, send_state_json = ?, run_context_json = ?, task_analytics_json = ?,
               applied_plugin_snapshot_json = ?, forked_into_json = ?,
               cancel_origin = ?,
               telemetry_finalized_at = CASE
@@ -3290,6 +3296,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.feedback ? JSON.stringify(m.feedback) : null,
       m.preTurnFileNames ? JSON.stringify(m.preTurnFileNames) : null,
       normalizeMessageSessionModeForStorage(m.sessionMode),
+      serializeMessageSendState(m),
       m.runContext ? JSON.stringify(m.runContext) : null,
       nextTaskAnalyticsJson,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
@@ -3311,7 +3318,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)
       ? m.createdAt
       : now;
-    // 28 values: id, conversation_id, role, content, agent_id, agent_name,
+    // 29 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, result_delivery_state, last_run_event_id, events_json, attachments_json,
     // comment_attachments_json, produced_files_json, trace_object_files_json,
     // feedback_json, pre_turn_file_names_json, session_mode, run_context_json,
@@ -3324,10 +3331,10 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
           run_id, run_status, result_delivery_state, last_run_event_id, events_json,
           attachments_json, comment_attachments_json, produced_files_json,
           trace_object_files_json, feedback_json, pre_turn_file_names_json,
-          session_mode, run_context_json, task_analytics_json,
+          session_mode, send_state_json, run_context_json, task_analytics_json,
           applied_plugin_snapshot_json, forked_into_json, cancel_origin,
           telemetry_finalized_at, started_at, ended_at, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -3347,6 +3354,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.feedback ? JSON.stringify(m.feedback) : null,
       m.preTurnFileNames ? JSON.stringify(m.preTurnFileNames) : null,
       normalizeMessageSessionModeForStorage(m.sessionMode),
+      serializeMessageSendState(m),
       m.runContext ? JSON.stringify(m.runContext) : null,
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
@@ -3379,6 +3387,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               feedback_json AS feedbackJson,
               pre_turn_file_names_json AS preTurnFileNamesJson,
               session_mode AS sessionMode,
+              send_state_json AS sendStateJson,
               run_context_json AS runContextJson,
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
@@ -5415,6 +5424,7 @@ function normalizeMessage(
     feedback: parseJsonOrUndef(row.feedbackJson),
     preTurnFileNames: parseJsonOrUndef(row.preTurnFileNamesJson),
     sessionMode: normalizeMessageSessionMode(row.sessionMode),
+    ...normalizeMessageSendState({ ...parseJsonOrUndef(row.sendStateJson), role: row.role }),
     runContext: parseJsonOrUndef(row.runContextJson),
     taskAnalytics: parseJsonOrUndef(row.taskAnalyticsJson),
     appliedPluginSnapshot: parseJsonOrUndef(row.appliedPluginSnapshotJson),
@@ -5467,8 +5477,32 @@ function scrubDsmlToolProtocolTailFromEvents(events: readonly DbRow[]): DbRow[] 
   return visibleEvents.filter((_, index) => !emptiedTextEventIndexes.has(index));
 }
 
+function normalizeMessageSendState(value: unknown): Pick<ChatMessage, 'clientRequestId' | 'sendFailed' | 'sendFailure'> {
+  if (!value || typeof value !== 'object') return {};
+  const input = value as Record<string, unknown>;
+  if (input.role !== 'user') return {};
+  const clientRequestId = typeof input.clientRequestId === 'string' ? input.clientRequestId.trim().slice(0, 240) : '';
+  const result: Pick<ChatMessage, 'clientRequestId' | 'sendFailed' | 'sendFailure'> = clientRequestId ? { clientRequestId } : {};
+  if (input.sendFailed !== true) return result;
+  result.sendFailed = true;
+  if (input.sendFailure && typeof input.sendFailure === 'object') {
+    const failure = input.sendFailure as Record<string, unknown>;
+    if (typeof failure.message === 'string' && failure.message.trim()) result.sendFailure = {
+      message: failure.message.trim().slice(0, 1200),
+      ...(typeof failure.code === 'string' ? { code: failure.code.slice(0, 200) } : {}),
+      ...(typeof failure.status === 'number' && Number.isFinite(failure.status) ? { status: failure.status } : {}),
+      ...(typeof failure.retryable === 'boolean' ? { retryable: failure.retryable } : {}),
+    };
+  }
+  return result;
+}
+function serializeMessageSendState(message: unknown): string | null {
+  const state = normalizeMessageSendState(message);
+  return Object.keys(state).length ? JSON.stringify(state) : null;
+}
+
 function normalizeMessageSessionMode(value: unknown): ChatSessionMode | undefined {
-  return value === 'chat' || value === 'design' || value === 'plan' ? value : undefined;
+  return value === 'chat' || value === 'design' || value === 'plan' || value === 'blockout' ? value : undefined;
 }
 
 function normalizeResultDeliveryState(
@@ -5486,7 +5520,7 @@ function normalizeResultDeliveryStateForStorage(
 }
 
 function normalizeMessageSessionModeForStorage(value: unknown): ChatSessionMode | null {
-  return value === 'chat' || value === 'design' || value === 'plan' ? value : null;
+  return value === 'chat' || value === 'design' || value === 'plan' || value === 'blockout' ? value : null;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TrackingProjectKind } from '@open-design/contracts/analytics';
+import { isBlockoutFile } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useI18n, useT } from '../i18n';
@@ -26,6 +27,7 @@ import type { PluginFolderAgentAction } from './design-files/pluginFolderActions
 import { getPluginFolderCandidates } from './design-files/pluginFolders';
 import { FileSyncBadge } from '../collab/FileSyncBadge';
 import { Icon } from './Icon';
+import { ProjectIntakeExplorer } from './ProjectIntakeExplorer';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { RemixIcon } from './RemixIcon';
 import {
@@ -147,12 +149,14 @@ interface ActionNotice {
 // source under `code`; the Design Files surface splits CSS/SCSS/etc. into a
 // dedicated "Stylesheets" section to mirror Claude Design. Everything else
 // maps 1:1 to its kind.
-type FileCategory = ProjectFileKind | 'stylesheet';
+type FileCategory = ProjectFileKind | 'stylesheet' | 'blockout' | 'header-footer';
 
 // Section render order. Empty categories are skipped; the FOLDERS section is
 // pinned above all of these from the directory list.
 const SECTION_ORDER: FileCategory[] = [
+  'blockout',
   'html',
+  'header-footer',
   'stylesheet',
   'code',
   'document',
@@ -248,6 +252,8 @@ function acquireHtmlThumbnailFetchSlot(
 }
 
 function fileCategory(file: ProjectFile): FileCategory {
+  if (isBlockoutFile(file.path ?? file.name)) return 'blockout';
+  if (/(?:^|\/)header-footer\/[^/]+\/preview\.html$/i.test((file.path ?? file.name).replaceAll('\\', '/'))) return 'header-footer';
   const dot = file.name.lastIndexOf('.');
   const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : '';
   if (STYLESHEET_EXTENSIONS.has(ext)) return 'stylesheet';
@@ -1643,6 +1649,7 @@ export function DesignFilesPanel({
           }}
           onDrop={handleDrop}
         >
+          {currentDir === '' && filesAuthoritative && !downloadPending ? <ProjectIntakeExplorer projectId={projectId} workspaceContext={workspaceContext} onOpenFile={onOpenFile} /> : null}
           {visibleUploadError ? (
             <div className="df-upload-banner" data-testid="upload-error-banner">
               <span>{visibleUploadError}</span>
@@ -1713,6 +1720,7 @@ export function DesignFilesPanel({
                 filesRefreshKey={filesRefreshKey ?? 0}
                 steps={runSteps ?? []}
                 workspaceContext={workspaceContext}
+                onOpenFile={onOpenFile}
               />
             </div>
           ) : files.length === 0 && liveArtifacts.length === 0 && (folders?.length ?? 0) === 0 && !filesAuthoritative ? (
@@ -1866,7 +1874,7 @@ export function DesignFilesPanel({
                               void handlePluginFolderAgentAction(folder.path, 'contribute')
                             }
                           >
-                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'OpenDesign PR'}
+                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'MelilloDesign PR'}
                           </button>
                         </div>
                       ) : null}
@@ -2103,6 +2111,10 @@ function HtmlCardThumbnail({
     return source === null ? null : buildSrcdoc(source, { baseHref, motionPreview: true });
   });
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const setThumbnailHost = useCallback((node: HTMLDivElement | null) => {
+    hostRef.current = node;
+    makeInert(node);
+  }, []);
   const [scale, setScale] = useState<number | null>(null);
 
   // Content fetches wait until the card scrolls near the viewport; the 800px
@@ -2212,16 +2224,20 @@ function HtmlCardThumbnail({
   }, []);
 
   return (
-    <div ref={hostRef} className="df-thumb-scale-host">
+    <div ref={setThumbnailHost} className="df-thumb-scale-host" aria-hidden="true" style={{ pointerEvents: 'none' }}>
       {tooLargeForThumbnail || srcDoc === null ? (
         <FilePreviewPlaceholder file={file} />
       ) : (
         <iframe
+          ref={makeInert}
           title={file.name}
+          aria-hidden="true"
+          tabIndex={-1}
           srcDoc={srcDoc}
           sandbox="allow-scripts allow-downloads"
           loading="lazy"
           style={{
+            pointerEvents: 'none',
             width: PAGE_THUMB_LAYOUT_WIDTH,
             height: PAGE_THUMB_LAYOUT_HEIGHT,
             ...(scale
@@ -2257,6 +2273,7 @@ function baseDirForFile(name: string): string {
 }
 
 function fileExtensionLabel(name: string): string {
+  if (isBlockoutFile(name)) return 'BLOCKOUT';
   const dot = name.lastIndexOf('.');
   if (dot < 0 || dot === name.length - 1) return '';
   return name.slice(dot + 1).toUpperCase();
@@ -2267,6 +2284,8 @@ function fileExtensionLabel(name: string): string {
 // each category gets a distinct, readable header.
 function sectionLabel(category: FileCategory, t: TranslateFn): string {
   switch (category) {
+    case 'blockout': return t('blockout.files');
+    case 'header-footer': return t('documentFiles.headerFooter');
     case 'html':
       return t('designFiles.sectionPages');
     case 'stylesheet':
@@ -2288,11 +2307,15 @@ function sectionLabel(category: FileCategory, t: TranslateFn): string {
 
 // Singular row subtitle for a category.
 function categoryLabel(category: FileCategory, t: TranslateFn): string {
+  if (category === 'blockout') return t('blockout.file');
+  if (category === 'header-footer') return t('documentFiles.headerFooterPreview');
   if (category === 'stylesheet') return t('designFiles.kindStylesheet');
   return kindLabel(category, t);
 }
 
 function categoryGlyph(category: FileCategory): string {
+  if (category === 'blockout') return kindGlyph('sketch');
+  if (category === 'header-footer') return kindGlyph('html');
   if (category === 'stylesheet') return '#';
   return kindGlyph(category);
 }

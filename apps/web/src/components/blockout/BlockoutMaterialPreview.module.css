@@ -1,0 +1,30 @@
+.content { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 8px; padding: clamp(4px, 1.5cqw, 12px); overflow: hidden; pointer-events: none; color: var(--text); box-sizing: border-box; text-align: left; font-weight: 400; letter-spacing: normal; word-spacing: normal; text-transform: none; background: color-mix(in srgb, var(--studio-accent, var(--accent)) 3%, var(--bg-panel)); }
+.referenceImages { position: absolute; inset: 0; pointer-events: none; opacity: .25; }
+.content[data-underlay] { background: transparent; }
+.content[data-underlay] > :not(.label) { opacity: .18; }
+.content[data-underlay] .label { background: color-mix(in srgb, var(--studio-paper) 88%, transparent); width: fit-content; padding: 2px 4px; }
+.referenceImages img { position: absolute; object-fit: contain; padding: 3px; box-sizing: border-box; }
+.referenceImages ~ .label { background: color-mix(in srgb, var(--bg-panel) 85%, transparent); width: fit-content; padding: 2px 4px; }
+.label { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: none; }
+.label strong { font-size: clamp(9px, 2.4cqw, 13px); line-height: 1.3; font-weight: 600; }
+.label > span { font-size: clamp(8px, 2cqw, 11px); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.textRhythm { display: flex; flex-direction: column; gap: clamp(3px, 1cqw, 6px); flex: 1; overflow: hidden; padding-top: 3px; }
+.textRhythm i { display: block; height: 2px; flex: none; width: 100%; background: color-mix(in srgb, var(--text) 24%, transparent); }
+.textRhythm i:last-child { width: 65%; }
+.content[data-role="heading"] .textRhythm i { height: 4px; width: 85%; }
+.content[data-role="heading"] .textRhythm i:last-child { width: 50%; }
+.content[data-role="caption"] .textRhythm { max-width: 82%; }
+.content[data-role="navigation"] { justify-content: center; gap: 4px; }
+.content[data-role="navigation"] .textRhythm { flex: none; }
+.figure { display: block; position: relative; flex: 1; min-height: 5px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 18%, transparent); }
+.figure i { position: absolute; top: 50%; left: -25%; width: 150%; height: 1px; background: color-mix(in srgb, var(--text) 18%, transparent); transform: rotate(25deg); }
+.figure i:last-child { transform: rotate(-25deg); }
+.table { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, minmax(3px, 1fr)); flex: 1; border-top: 1px solid color-mix(in srgb, var(--text) 20%, transparent); border-left: 1px solid color-mix(in srgb, var(--text) 20%, transparent); min-height: 12px; }
+.table i { border-right: 1px solid color-mix(in srgb, var(--text) 20%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--text) 20%, transparent); }
+.content[data-role="background"] { background: transparent; border: 1px dashed color-mix(in srgb, var(--text) 22%, transparent); }
+.backgroundMark { position: absolute; inset: 12%; display: flex; align-items: center; justify-content: center; gap: 8%; transform: rotate(-25deg); opacity: 0.16; }
+.backgroundMark i { display: block; width: 12%; height: 85%; background: var(--text); }
+.content[data-compact] { padding: 3px; gap: 4px; }
+.content[data-compact] .label strong { font-size: 9px; }
+.content[data-compact] .label > span { font-size: 8px; -webkit-line-clamp: 1; }
+.content[data-compact] .textRhythm { gap: 3px; }

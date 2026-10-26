@@ -572,6 +572,7 @@ function durableRunState(run) {
     assistantMessageId: run.assistantMessageId,
     clientRequestId: run.clientRequestId,
     requestFingerprint: run.requestFingerprint,
+    ...(run.svgExecutionPolicy ? { svgExecutionPolicy: run.svgExecutionPolicy } : {}),
     ...(Object.prototype.hasOwnProperty.call(run, 'appliedPluginSnapshotId')
       ? { appliedPluginSnapshotId: run.appliedPluginSnapshotId }
       : {}),
@@ -961,6 +962,7 @@ export function createChatRunService({
       // emitted to the client as a `done_key` agent event before any model
       // output; see `mintRunDoneKey`.
       doneKey: typeof meta.doneKey === 'string' && meta.doneKey ? meta.doneKey : mintRunDoneKey(),
+      svgExecutionPolicy: meta.svgExecutionPolicy ?? null,
       projectId: typeof meta.projectId === 'string' && meta.projectId ? meta.projectId : null,
       conversationId: typeof meta.conversationId === 'string' && meta.conversationId ? meta.conversationId : null,
       assistantMessageId: typeof meta.assistantMessageId === 'string' && meta.assistantMessageId ? meta.assistantMessageId : null,
@@ -997,7 +999,7 @@ export function createChatRunService({
       toolBundle: normalizeRunToolBundleForRun(meta.toolBundle),
       browserUse: meta.browserUse && typeof meta.browserUse === 'object' ? meta.browserUse : null,
       sessionMode:
-        meta.sessionMode === 'chat' || meta.sessionMode === 'design' || meta.sessionMode === 'plan'
+        meta.sessionMode === 'chat' || meta.sessionMode === 'design' || meta.sessionMode === 'plan' || meta.sessionMode === 'blockout'
           ? meta.sessionMode
           : null,
       context:

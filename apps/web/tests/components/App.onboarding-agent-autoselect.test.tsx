@@ -250,4 +250,26 @@ describe('App first-run agent auto-select', () => {
       expect(screen.getByTestId('agent-id').textContent).toBe('claude');
     });
   });
+
+  it('defaults an empty selection to Codex when both local CLIs are available', async () => {
+    mockedLoadConfig.mockReturnValue({ ...firstRunConfig(), onboardingCompleted: true });
+    mockedFetchDaemonConfig.mockResolvedValue({ onboardingCompleted: true });
+    mockedFetchAgentsStream.mockResolvedValue([
+      ...claudeOnly,
+      { ...claudeOnly[0]!, id: 'codex', name: 'Codex CLI', bin: 'codex' },
+    ]);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('agent-id').textContent).toBe('codex'));
+  });
+
+  it('preserves an explicitly saved Claude selection', async () => {
+    mockedLoadConfig.mockReturnValue({ ...firstRunConfig(), onboardingCompleted: true, agentId: 'claude' });
+    mockedFetchDaemonConfig.mockResolvedValue({ onboardingCompleted: true, agentId: 'claude' });
+    mockedFetchAgentsStream.mockResolvedValue([
+      ...claudeOnly,
+      { ...claudeOnly[0]!, id: 'codex', name: 'Codex CLI', bin: 'codex' },
+    ]);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('agent-id').textContent).toBe('claude'));
+  });
 });

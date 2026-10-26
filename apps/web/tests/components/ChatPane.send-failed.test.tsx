@@ -9,6 +9,14 @@ import type { ChatMessage } from '../../src/types';
 afterEach(() => cleanup());
 
 describe('ChatPane failed user sends', () => {
+  it('offers a read retry before any history exists even though sending is disabled', () => {
+    const retry = vi.fn();
+    render(<ChatPane messages={[]} streaming={false} sendDisabled error="read unavailable" accessError="messages-unavailable" onRetryConversationRead={retry}
+      projectId="project-1" projectFiles={[]} onEnsureProject={async () => 'project-1'} onSend={vi.fn()} onStop={vi.fn()}
+      conversations={[]} activeConversationId="conversation-1" onSelectConversation={vi.fn()} onDeleteConversation={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('chat-conversation-read-retry'));
+    expect(retry).toHaveBeenCalledOnce();
+  });
   it('routes the persistent retry action back to the host with the failed user row', () => {
     const failedUser: ChatMessage = {
       id: 'user-pre-run-failure',
@@ -16,6 +24,7 @@ describe('ChatPane failed user sends', () => {
       content: 'Build the landing page',
       createdAt: 1,
       sendFailed: true,
+      sendFailure: { message: 'Reconnect the selected document folder before sending.', code: 'DOCUMENT_UNAVAILABLE', status: 409 },
     };
     const onResendUserMessage = vi.fn();
 
@@ -37,6 +46,7 @@ describe('ChatPane failed user sends', () => {
       />,
     );
 
+    expect(screen.getByRole('alert').textContent).toBe('Reconnect the selected document folder before sending.');
     fireEvent.click(screen.getByTestId('user-send-failed'));
 
     expect(onResendUserMessage).toHaveBeenCalledTimes(1);

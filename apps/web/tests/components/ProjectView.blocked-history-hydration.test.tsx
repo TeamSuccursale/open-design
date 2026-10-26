@@ -264,6 +264,7 @@ beforeEach(() => {
         { status: status === 200 && !proof ? 404 : status });
     }
     if (url.pathname === `/api/projects/${project.id}/files` && method === 'GET') return Response.json({ files: [RESULT] });
+    if (url.pathname === `/api/projects/${project.id}/intake` && method === 'GET') return Response.json({ version: 1, documents: [], assets: [] });
     if (url.pathname === `/api/projects/${project.id}`) return Response.json({ project, resolvedDir: '/workspace/history-verdict-fixture' });
     if (method !== 'GET' && (url.pathname.includes('/messages/') || url.pathname.endsWith('/files') || url.pathname === '/api/chat')) {
       unexpectedWrites.push(`${method} ${url.pathname}`);
@@ -281,6 +282,28 @@ afterEach(() => {
 });
 
 describe('blocked task history hydration through real ProjectView and ChatPane (OPEND-3028)', () => {
+  it('shows a fresh text-only Blockout reference answer when the host settled completed without a new artifact', async () => {
+    const content = 'The report has exactly eight A4 portrait pages. Structure A uses one dominant view; B pairs figures; C follows a sequence.';
+    const now = Date.now();
+    setHistory(persistedAssistant({ content, sessionMode: 'blockout', startedAt: now - 1000, endedAt: now,
+      strategyTaskBlocked: false, strategyTaskBlockedText: null, strategyTaskDelivered: false,
+      producedFiles: undefined, traceObjectFiles: undefined, resultDeliveryState: undefined,
+      events: [{ kind: 'done_key', key: 'b2260ab1d13444ad' },
+        { kind: 'tool_use', id: 'read-report', name: 'Bash', input: { command: 'Get-Content report.json' }, startedAt: now - 900 },
+        { kind: 'tool_result', toolUseId: 'read-report', content: '{"pages":8}', isError: false, completedAt: now - 800 },
+        { kind: 'text', text: content }] }));
+    proofs.set(runId(), runProof({ createdAt: now - 1000, updatedAt: now, terminalAt: now, artifactCount: 0, artifactPaths: [],
+      strategyTask: blockedTask({ outcome: 'completed', terminal: true, inputStage: 'request', executionMode: null,
+        blockedContext: undefined, deliverableValid: false, settlementReason: 'ended',
+        settlementFacts: { physicalStatus: 'succeeded', deliverableValid: false, askedUserQuestion: false, productionReady: false, emptyReply: false } }) }));
+    render(view());
+    await expectDisplayedStatus(en['chat.record.done']);
+    await waitFor(() => expect(messageElement().textContent).toContain(content));
+    await waitFor(() => expect(observedChat.messages.find((message) => message.id === assistantId())?.runStatus).toBe('succeeded'));
+    expect(streamViaDaemon).not.toHaveBeenCalled(); expect(reattachDaemonRun).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('chat-run-error-card')).toBeNull();
+  });
+
   it('keeps the succeeded Run Done without a card after cold load and a second fresh mount', async () => {
     const original = structuredClone(histories.get(historyKey()));
     const mounted = render(view());

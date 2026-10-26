@@ -1,9 +1,14 @@
 import type http from 'node:http';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { registerProjectRoutes } from '../../src/routes/project/index.js';
+import { ensureProject, removeProjectDir, resolveProjectDir } from '../../src/projects.js';
 
 // POST /api/projects must answer within one request-wide deadline (15s in
 // production) and commit nothing when it cannot: the Web enters an optimistic
@@ -11,11 +16,13 @@ import { registerProjectRoutes } from '../../src/routes/project/index.js';
 // read has to become a definite, retryable 504 the client can roll back from.
 
 const servers: http.Server[] = [];
+const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
     server.close(() => resolve());
   })));
+  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
 function noop() {}
@@ -37,6 +44,7 @@ function buildDeps(input: {
   designSystemDelayMs?: number;
   skillDelayMs?: number;
   getLocalPluginBySource?: ReturnType<typeof vi.fn>;
+  projectsDir?: string;
 }) {
   return {
     projectCreatePreparationTimeoutMs: input.projectCreatePreparationTimeoutMs,
@@ -56,7 +64,7 @@ function buildDeps(input: {
     },
     paths: {
       DESIGN_SYSTEMS_DIR: '',
-      PROJECTS_DIR: '',
+      PROJECTS_DIR: input.projectsDir ?? '',
       SKILLS_DIR: '',
       BRANDS_DIR: '',
       USER_DESIGN_SYSTEMS_DIR: '',
@@ -70,11 +78,13 @@ function buildDeps(input: {
       getWorkspaceProjectByProjectId: () => null,
       listWorkspaceProjects: () => [],
       listProjects: () => [],
+      ...(input.projectsDir ? { removeProjectDir } : {}),
     }),
     projectFiles: functionProxy({
       listFiles: () => [],
       listTabs: () => [],
       resolveProjectDir: () => '',
+      ...(input.projectsDir ? { resolveProjectDir, ensureProject } : {}),
     }),
     conversations: functionProxy({ insertConversation: input.insertConversation }),
     templates: functionProxy({ listTemplates: () => [] }),
@@ -135,7 +145,6 @@ async function post(baseUrl: string, overrides: Record<string, unknown> = {}) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      ...overrides,
       id: 'deadline-project',
       name: 'Deadline project',
       skillId: null,
@@ -146,6 +155,7 @@ async function post(baseUrl: string, overrides: Record<string, unknown> = {}) {
       conversationMode: 'design',
       automaticStrategyTaskProfile: 'prototype',
       pendingPrompt: 'Make a landing page',
+      ...overrides,
     }),
   });
 }
@@ -248,4 +258,65 @@ describe('POST /api/projects preparation deadline', () => {
     expect(insertProject).toHaveBeenCalledTimes(1);
     expect(insertConversation).toHaveBeenCalledTimes(1);
   });
+
+  it('materializes a managed document directory before committing, without a first agent run', async () => {
+    const projectsDir = await mkdtemp(path.join(tmpdir(), 'document-create-'));
+    directories.push(projectsDir);
+    const insertProject = vi.fn((_: unknown, project: Record<string, unknown>) => {
+      expect(existsSync(path.join(projectsDir, 'deadline-project'))).toBe(true);
+      return project;
+    });
+    const baseUrl = await start(buildDeps({ insertProject, insertConversation: vi.fn(), projectCreatePreparationTimeoutMs: 2_000, projectsDir }));
+    const response = await post(baseUrl, {
+      metadata: { kind: 'other', documentSetupIntent: { kind: 'free', purpose: '', contextRoots: [], imageIntakeConsent: false } },
+      conversationMode: 'chat', automaticStrategyTaskProfile: undefined, pendingPrompt: null,
+    });
+    expect([response.status, await response.json()]).toEqual([200, expect.objectContaining({ conversationId: 'conversation-id' })]);
+    expect(insertProject).toHaveBeenCalledOnce();
+    expect(existsSync(path.join(projectsDir, 'deadline-project'))).toBe(true);
+  });
+
+  it('compensates a newly created managed directory when the database commit fails', async () => {
+    const projectsDir = await mkdtemp(path.join(tmpdir(), 'document-create-failed-'));
+    directories.push(projectsDir);
+    const insertProject = vi.fn(() => { throw new Error('commit failed'); });
+    const baseUrl = await start(buildDeps({ insertProject, insertConversation: vi.fn(), projectCreatePreparationTimeoutMs: 2_000, projectsDir }));
+    expect((await post(baseUrl)).status).toBe(400);
+    expect(insertProject).toHaveBeenCalledOnce();
+    expect(existsSync(path.join(projectsDir, 'deadline-project'))).toBe(false);
+  });
+
+  it('preserves an existing managed folder when a later create commit fails', async () => {
+    const projectsDir = await mkdtemp(path.join(tmpdir(), 'document-create-existing-'));
+    directories.push(projectsDir);
+    const directory = path.join(projectsDir, 'deadline-project');
+    await mkdir(directory); await writeFile(path.join(directory, 'original.txt'), 'Keep existing files');
+    const baseUrl = await start(buildDeps({ insertProject: vi.fn(() => { throw new Error('commit failed'); }), insertConversation: vi.fn(), projectCreatePreparationTimeoutMs: 2_000, projectsDir }));
+    expect((await post(baseUrl)).status).toBe(400);
+    expect(await readFile(path.join(directory, 'original.txt'), 'utf8')).toBe('Keep existing files');
+  });
+  it('creates a fast project in its own managed folder and defaults to a direct Design conversation', async () => {
+    const projectsDir = await mkdtemp(path.join(tmpdir(), 'fast-project-create-'));
+    directories.push(projectsDir);
+    const insertProject = vi.fn((_: unknown, project: Record<string, unknown>) => project), insertConversation = vi.fn();
+    const deps = buildDeps({ insertProject, insertConversation, projectCreatePreparationTimeoutMs: 2_000, projectsDir });
+    const baseUrl = await start(deps);
+    const response = await post(baseUrl, { metadata: { kind: 'other', projectMode: 'fast' }, conversationMode: undefined, automaticStrategyTaskProfile: undefined });
+    expect(response.status).toBe(200);
+    expect((await response.json() as { project: { metadata: unknown } }).project.metadata).toMatchObject({ kind: 'other', projectMode: 'fast' });
+    expect(existsSync(path.join(projectsDir, 'deadline-project'))).toBe(true);
+    expect(insertConversation.mock.calls[0]?.[1]).toMatchObject({ sessionMode: 'design' });
+    expect(deps.pluginScope?.loadRegistry).not.toHaveBeenCalled();
+  });
+
+  it('rejects conflicting fast setup and external working folders before creating anything', async () => {
+    const insertProject = vi.fn(), insertConversation = vi.fn();
+    const baseUrl = await start(buildDeps({ insertProject, insertConversation, projectCreatePreparationTimeoutMs: 2_000 }));
+    for (const extra of [{ userWorkingDir: 'C:/unselected' }, { documentSetupIntent: {} }, { linkedDirs: ['C:/unselected'] }]) {
+      const response = await post(baseUrl, { metadata: { kind: 'other', projectMode: 'fast', ...extra } });
+      expect(response.status).toBe(400);
+    }
+    expect(insertProject).not.toHaveBeenCalled(); expect(insertConversation).not.toHaveBeenCalled();
+  });
+
 });

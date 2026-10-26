@@ -150,6 +150,31 @@ export function diagnoseClaudeCliFailure(
     );
   }
 
+  // Some gateways support generation but reject Claude Code's auxiliary
+  // classifier or token-count requests. These are endpoint compatibility
+  // failures, even when debug output also says apiKeySource:none or mentions
+  // "invalid tokens". Re-authenticating or changing permission policy cannot
+  // repair a rejected request schema / missing endpoint.
+  const classifierRequestRejected =
+    /(?:auto[-_ ]?mode|permission[-_ ]?classifier|classifier)/i.test(text)
+    && /(?:\b400\b|invalid_request_error|unsupported.*thinking|thinking.*required)/i.test(text);
+  const tokenCountEndpointMissing =
+    /count[_/-]tokens?/i.test(text)
+    && /(?:\b404\b|not[_ ]found)/i.test(text);
+  if (classifierRequestRejected || tokenCountEndpointMissing) {
+    const diagnostic = withContext(
+      classifierRequestRejected
+        ? `${runtimeLabel}'s permission classifier request was rejected by the model endpoint.`
+        : `${runtimeLabel}'s model endpoint does not support the token-count request.`,
+      classifierRequestRejected
+        ? 'The endpoint rejected the classifier request or its schema. Check compatibility between the endpoint and this Claude Code version. The permission decision remains unchanged.'
+        : 'The endpoint returned a missing-route response for count_tokens. Check endpoint compatibility with this Claude Code version.',
+      input,
+      'AGENT_EXECUTION_FAILED',
+    );
+    return { ...diagnostic, retryable: false };
+  }
+
   const authFailure =
     /\b401\b/.test(text) ||
     /apikeysource["'\s:]+none/i.test(text) ||

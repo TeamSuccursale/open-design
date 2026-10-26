@@ -67,6 +67,22 @@ afterEach(() => {
 });
 
 describe('OD Next task-scoped input snapshots', () => {
+  it('freezes authorized document context across reloads, inherited tasks and run projections without images', () => {
+    const f = fixture();
+    const context = 'Active document: Report [doc-a]. Referenced document: Booklet [doc-b]. Files: outline.txt. Read with od documents context.';
+    const original = createOdNextTaskInputSnapshot({ ...f, taskExecutionId: 'document-context', documentReferenceContext: context });
+    const reloaded = loadOdNextTaskInputSnapshot(original, f.snapshotsRoot);
+    expect(reloaded.documentReferenceContext).toBe(context);
+    expect(reloaded.files).toEqual([]); expect(reloaded.imagePaths).toEqual([]);
+    const inherited = createOdNextTaskInputSnapshot({ ...f, taskExecutionId: 'inherited-context', inheritedSnapshot: original });
+    expect(loadOdNextTaskInputSnapshot(inherited, f.snapshotsRoot).documentReferenceContext).toBe(context);
+    const projection = createOdNextRunInputProjection({ descriptor: inherited, snapshotsRoot: f.snapshotsRoot, projectionsRoot: path.join(f.root, 'projections'), runId: 'follow-on-run' });
+    expect(projection.documentReferenceContext).toBe(context); expect(projection.imagePaths).toEqual([]);
+    removeOdNextRunInputProjection(projection);
+    const cleared = createOdNextTaskInputSnapshot({ ...f, taskExecutionId: 'cleared-context', inheritedSnapshot: inherited, documentReferenceContext: '' });
+    expect(loadOdNextTaskInputSnapshot(cleared, f.snapshotsRoot).documentReferenceContext).toBe('');
+    expect(() => createOdNextTaskInputSnapshot({ ...f, taskExecutionId: 'oversize-context', documentReferenceContext: 'x'.repeat(65 * 1024) })).toThrow(/context exceeds/);
+  });
   it('carries verified old attachments into a fresh task even after the original upload is removed', () => {
     const f = fixture();
     const image = path.join(f.uploadRoot, 'reference.png');

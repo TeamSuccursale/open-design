@@ -9,6 +9,8 @@ import { trackRunFailedToastSurfaceView } from '../../src/analytics/events';
 import type { RunFailureDetail } from '@open-design/contracts';
 import type { AppConfig, ChatMessage, Conversation } from '../../src/types';
 
+const composerProps = vi.hoisted(() => vi.fn());
+
 const translate = (key: string, vars?: Record<string, string | number>) => {
   const localized: Record<string, string> = {
     'chat.conversationsSearchPlaceholder': 'Rechercher des conversations',
@@ -32,7 +34,7 @@ vi.mock('../../src/components/AssistantMessage', () => ({
 }));
 
 vi.mock('../../src/components/ChatComposer', () => ({
-  ChatComposer: forwardRef((_props, _ref) => <div data-testid="composer" />),
+  ChatComposer: forwardRef((props, _ref) => { composerProps(props); return <div data-testid="composer" />; }),
 }));
 
 vi.mock('../../src/analytics/events', async (importOriginal) => {
@@ -381,3 +383,10 @@ function failedAssistantMessage({
     ],
   };
 }
+
+
+it('forwards named documents and current document identity to the existing composer', () => {
+  const documents = [{ id: 'd', projectId: 'project-1', workspaceProjectId: 'child', name: 'Report', kind: 'document' as const, workingDirectory: 'docs/report', folderMode: 'managed' as const, availability: 'available' as const, conversationIds: [], createdAt: '', updatedAt: '', archivedAt: null }];
+  render(<ChatPane messages={[]} streaming={false} error={null} projectId="project-1" projectFiles={[]} projectDocuments={documents} activeProjectDocumentId="d" onEnsureProject={async () => 'project-1'} onSend={vi.fn()} onStop={vi.fn()} conversations={[]} activeConversationId={null} onSelectConversation={vi.fn()} onDeleteConversation={vi.fn()} />);
+  expect(composerProps.mock.calls.at(-1)?.[0]).toMatchObject({ projectDocuments: documents, activeProjectDocumentId: 'd' });
+});

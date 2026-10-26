@@ -811,7 +811,7 @@ export async function createProject(
       }
       if (await isDaemonProxyConnectionFailure(resp)) {
         throw new ProjectCreateError(
-          'Could not reach the local OpenDesign service',
+          'Could not reach the local MelilloDesign service',
           null,
           null,
           true,

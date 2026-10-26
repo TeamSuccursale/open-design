@@ -2,6 +2,7 @@ export type InlineMentionKind =
   | 'plugin'
   | 'skill'
   | 'mcp'
+  | 'document'
   | 'file'
   | 'workspace'
   | 'connector'

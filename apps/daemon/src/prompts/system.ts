@@ -1,4 +1,5 @@
 import { COMMENT_IDENTITY_EDIT_DIRECTIVE } from '@open-design/contracts/prompts/comment-identity';
+import { FAST_PROJECT_MODE_DIRECTIVE, isFastProject, BLOCKOUT_MODE_DIRECTIVE, BLOCKOUT_DESIGN_DIRECTIVE, imageSpecialistsDirective, documentResearchSpecialistsDirective, headerFooterWorkflowDirective } from '@open-design/contracts';
 /**
  * Prompt composer. The base is the OD-adapted "expert designer" system
  * prompt (see ./official-system.ts) — a full identity, workflow, and
@@ -153,6 +154,7 @@ function formatElevenLabsVoiceOptionsErrorForPrompt(
 }
 
 type ProjectMetadata = {
+  projectMode?: 'fast';
   kind?: string;
   intent?: string | null;
   fidelity?: string | null;
@@ -1058,6 +1060,13 @@ export function composeSystemPrompt({
     if (planToolNote) parts.push(planToolNote, '\n\n---\n\n');
   }
   const activeDesignSystemBody = designSystemBody?.trim();
+  const imageSpecialists = imageSpecialistsDirective(agentId, sessionMode);
+  if (imageSpecialists) parts.push(imageSpecialists, '\n\n---\n\n');
+  const documentResearchers = isFastProject(metadata) ? '' : documentResearchSpecialistsDirective(agentId, sessionMode);
+  if (isFastProject(metadata)) parts.push(FAST_PROJECT_MODE_DIRECTIVE, '\n\n---\n\n');
+  if (documentResearchers) parts.push(documentResearchers, '\n\n---\n\n');
+  const headerFooterWorkflow = headerFooterWorkflowDirective(sessionMode);
+  if (headerFooterWorkflow) parts.push(headerFooterWorkflow, '\n\n---\n\n');
   const activeSkillModes = new Set(
     Array.isArray(skillModes)
       ? skillModes.filter(Boolean)
@@ -1099,7 +1108,10 @@ export function composeSystemPrompt({
   // are still composed in — Ask mode is light, not amnesiac.
   const isAskMode = sessionMode === 'chat';
 
-  if (sessionMode === 'plan') {
+  if (sessionMode === 'design') parts.push(BLOCKOUT_DESIGN_DIRECTIVE, '\n\n---\n\n');
+  if (sessionMode === 'blockout') {
+    parts.push(BLOCKOUT_MODE_DIRECTIVE, '\n\n---\n\n');
+  } else if (sessionMode === 'plan') {
     parts.push(PLAN_MODE_OVERRIDE);
     parts.push('\n\n---\n\n');
   } else if (sessionMode === 'chat' && !isSlimCore) {
@@ -1124,7 +1136,7 @@ export function composeSystemPrompt({
   }
 
   const localePrompt = renderUiLocalePrompt(locale, {
-    includeQuickBriefSamples: !isSlimCore,
+    includeQuickBriefSamples: !isSlimCore && !isFastProject(metadata),
   });
   if (localePrompt) {
     parts.push(localePrompt);
@@ -1132,7 +1144,7 @@ export function composeSystemPrompt({
   }
 
   if (!isMediaSurfaceEarly && !isAskMode) {
-    if (!isSlimCore) {
+    if (!isSlimCore && !isFastProject(metadata)) {
       parts.push(renderDiscoveryAndPhilosophy(resolvedExecutionProfile), '\n\n---\n\n');
     }
     // Direction library is only useful when the agent must pick a visual

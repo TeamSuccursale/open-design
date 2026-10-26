@@ -103,35 +103,8 @@ export function ToolRow({
     ? <span className={styles.meta}>{elapsed}</span>
     : row.pending ? <span className={styles.meta} /> : null;
 
-  /**
-   * 这一行该不该**自动**摊开 —— 只回答生命周期那一半。
-   *
-   * 「自动」的对家是**用户自己掀的**:那一半归 `Foldable` 的 `userToggled` 闩,
-   * 一旦用户动过手,下面这个值就再也拨不动它。
-   *
-   * 两条各有各的理由,而且**判据不同**:
-   *
-   *  · **此刻真的在跑** → 摊开。输出正一行行长出来,收着就等于让用户对着一行静止的
-   *    字干等几十秒(稿子 `body-components.html:1010` 的 `<details class="fold" open>`)。
-   *
-   *    判据是 `row.pending && running`,**两个都要**。`row.pending` 的定义是
-   *    `result == null` —— 「这次调用**从来没有回来过**」,不是「它此刻还在跑」。
-   *    用户按停止时那条在飞的调用永远等不到 `tool_result`,`pending` 就永远为真;
-   *    只看它,那一行会**永远摊着**,而且以后每次重载这条老会话都还摊着(装依赖那种
-   *    几百行输出的,一条顶掉整屏)。`running` 才是「此刻」——
-   *    `ExecutionShell:78` 的 `shell.status === 'running' && !shell.stopped`。
-   *
-   *    ⚠️ 别改成「轮次终止时把 `row.pending` 清掉」:行首那一格靠它分档
-   *    (见上面 `icon`),清掉就等于给一次没跑完的调用画上跑完的工具图标 ——
-   *    `build-turn-blocks` 的 `closeRunningSegments` 把这条规矩写在 todo 那一半上,
-   *    逐字是「标成完成是替 agent 说了它没说过的话」。工具行同理。
-   *
-   *  · **失败** → 摊开。报错原文是这时候唯一要读的东西(稿子 `:1018` 的
-   *    `fold is-fail open`)。这一条和轮次跑没跑**无关**:失败是结算过的终态。
-   *
-   * 判据钉在 `tests/components/chat/stopped-run-row-collapse.test.tsx`。
-   */
-  const lifecycleOpen = (row.pending && running) || row.failed;
+  // D53: pending, completed and failed tool details all start collapsed.
+  // Foldable keeps the user's manual choice through output and status updates.
 
   /**
    * 这次失败**有没有原文可给**。
@@ -268,8 +241,7 @@ export function ToolRow({
    * 两支的差别只剩**有没有原文可给** —— 有就能展开,没有就是单行(见下)。
    * 摘要不再拼原文:展开之后同一段话出现两遍。
    *
-   * 「收起时看不到原因」不是代价 —— 失败行默认就是展开的(共用上面那个
-   * `lifecycleOpen`,稿子 `:1018` 的 `open`),原文一上屏就在,只是落在第二行。
+   * D53 keeps the failure label in the summary; the user expands the original error text.
    *
    * 正文复用 `Terminal`(`.term`:`max-height: 104px` + `overflow-y: auto` +
    * 贴底跟随),不另写一套:一段几百字符的 stderr 和一段命令输出在这一层是同一件
@@ -289,7 +261,6 @@ export function ToolRow({
           </>
         )}
         elapsed={elapsed ?? undefined}
-        lifecycleOpen={lifecycleOpen}
         deferBody={deferBody}
         className={styles.fail}
       >
@@ -318,30 +289,12 @@ export function ToolRow({
     );
   }
 
-  /*
-   * 跑命令 · 有人话标题:折叠块(组件 11)。
-   *
-   * 默认状态逐字照稿子(`docs/design/chat-panel/src/body-components.html:1002-1021`
-   * 的 `cmp-meta`):「**执行中展开 → 完成收起**」。三格样例各自是:
-   *   · `:1010-1011` 执行中 —— `<details class="fold" open>`,正文是命令 + 实时输出
-   *   · `:1014-1015` 成功   —— `<details class="fold">`,不带 `open`
-   *   · `:1018-1019` 失败   —— `<details class="fold is-fail" open>`,报错原文是这时候唯一要读的东西
-   *
-   * ⚠️ 这里原来是 `defaultOpen={row.failed}` —— **只有失败展开,执行中漏了**。
-   * 叠上 `deferBody`(收起的折叠块连 body 都不挂载),后果是一条跑了 57 秒的命令,
-   * 这 57 秒里 DOM 上一个字的输出都没有 —— 哪怕在途输出此刻已经躺在 `row.terminal` 里
-   * (`build-turn-blocks.ts` 的 `inFlightOutputOf`)。用户看到的就是「跑了一分钟什么都没有」。
-   *
-   * 而且 `defaultOpen` **修不了「跑完收起」**:它只是初始值,状态翻面时没人再看它一眼
-   * (同 `Foldable` 的 `lifecycleOpen` 那段)。所以走 `lifecycleOpen` —— 它还顺带
-   * 保住了用户的手:跑的时候手动收起的,跑完不许替他打开;手动展开的,不许替他收走。
-   */
+  /* Commands with a description use the same manually controlled disclosure as raw commands (D53). */
   if (row.command && !row.rawTitle) {
     return (
       <Foldable
         summary={<>{icon}<span className={styles.name}>{row.title}</span>{failButton}</>}
         elapsed={elapsed ?? (row.pending ? '' : undefined)}
-        lifecycleOpen={lifecycleOpen}
         deferBody={deferBody}
         /*
          * 失败标记要落在**这一行自己**身上,和 `div.tool` 那几支一致
@@ -410,17 +363,12 @@ export function ToolRow({
    * ── 补法:与上面那支逐字同构,不另发挥 ─────────────────────────────────
    *
    * summary 保留稿子 `:909` 的原样(动词 + 等宽命令 + 秒数槽),正文直接复用同一个
-   * `div.code`;开合规则用**同一个** `lifecycleOpen`,所以「执行中展开 → 完成收起」
-   * 和「用户手动开合优先」两条一次都不用重写。
+   * `div.code`. D53 keeps both forms collapsed until the user opens them.
    *
    * 两个刻意的克制:
    *  · **命令不做 `elide`** —— `FileButton` 的省略是给文件名设计的(保后缀、中间省),
    *    拿去截命令会把 `wc -l a.md transcript.html` 截成 `wc -l a.md tr….html`,
    *    读起来像另一条命令。收起时的截断归 CSS 的 `text-overflow`。
-   *  · **开合走上面那个共用的 `lifecycleOpen`** —— 和有标题那支同一个值,不在这里
-   *    另写一份。它的 `row.failed` 那一项在这一支上永假(条件里带 `!row.failed`,
-   *    失败的命令行落到下面的兜底单行),但共用一个量比复制一个"这里刚好用不到"的
-   *    简化版更难写歪:两支的开合规则从此只有一处可改。
    */
   if (row.command && row.rawTitle && !row.failed) {
     return (
@@ -434,7 +382,6 @@ export function ToolRow({
           </>
         )}
         elapsed={elapsed ?? (row.pending ? '' : undefined)}
-        lifecycleOpen={lifecycleOpen}
         deferBody={deferBody}
       >
         <div className={styles.code}>

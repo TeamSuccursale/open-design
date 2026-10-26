@@ -14,12 +14,15 @@
  * future surfaces (sidebar, log export, etc.) without coupling to
  * AssistantMessage's render shape.
  */
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { isBlockoutFile, isInternalBlockoutFile } from '@open-design/contracts';
+import { BlockoutArtifactCard } from './blockout/BlockoutArtifactCard';
 import { VisuallyHidden } from '@open-design/components';
 import { useT } from '../i18n';
 import type { Dict } from '../i18n/types';
 import { projectFileUrl } from '../providers/registry';
 import { useProjectCollabContext } from '../collab/collab-context';
+import { workspaceProjectHeaders } from '../collab/workspace-identity';
 import { artifactKind, type ArtifactKind } from '../runtime/chat/format';
 import {
   countArtifactFileOps,
@@ -123,7 +126,7 @@ function downloadProjectFile(href: string, name: string): void {
 }
 
 export function FileOpsSummary({
-  entries,
+  entries: sourceEntries,
   projectFileNames,
   onRequestOpenFile,
   projectId,
@@ -137,6 +140,7 @@ export function FileOpsSummary({
   const [expanded, setExpanded] = useState(false);
   // 音频胶囊要自己拼文件 URL(它不走 `ArtifactCard`,拿不到那里的上下文)
   const { workspaceContext } = useProjectCollabContext();
+  const entries = sourceEntries.filter((entry) => !isInternalBlockoutFile(entry.path) || isBlockoutFile(entry.path));
 
   if (entries.length === 0) return null;
 
@@ -537,10 +541,17 @@ export function ArtifactCards({
   onExport?: ((name: string, anchorId: string) => void) | undefined;
 }) {
   const anchorScope = useId().replace(/[^a-zA-Z0-9_-]/g, '');
-  if (items.length === 0) return null;
+  const visibleItems = [...new Map(items.flatMap((item) => {
+    if (isBlockoutFile(item.name)) {
+      const name = /^blockout\/proposal[^/]*\.json$/i.test(item.name) ? 'blockout/layout.json' : item.name;
+      return [[name, { ...item, name }] as const];
+    }
+    return isInternalBlockoutFile(item.name) ? [] : [[item.name, item] as const];
+  })).values()];
+  if (visibleItems.length === 0) return null;
   return (
     <div className="artifact-cards" data-testid="artifact-cards">
-      {items.map((item) => (
+      {visibleItems.map((item) => isBlockoutFile(item.name) ? <BlockoutArtifactCard key={item.name} projectId={projectId} path={item.name} revision={item.revision} onOpen={onOpen} /> : (
         <ArtifactCard
           key={item.name}
           item={item}
@@ -553,6 +564,33 @@ export function ArtifactCards({
       ))}
     </div>
   );
+}
+
+/** SVG snapshots download as octet-stream. Decode their immutable bytes only
+ * in an img sandbox; keep the download endpoint and its security headers. */
+function SvgSnapshotPreview({ src, name }: { src: string; name: string }) {
+  const { workspaceContext } = useProjectCollabContext();
+  const [preview, setPreview] = useState<{ source: string; url: string } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    void (async () => {
+      try {
+        const response = await fetch(src, { signal: controller.signal, ...(workspaceContext ? { headers: workspaceProjectHeaders(workspaceContext) } : {}) });
+        if (!response.ok || Number(response.headers.get('content-length')) > 16 * 1024 * 1024) throw new Error('SVG snapshot unavailable');
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 16 * 1024 * 1024) throw new Error('SVG snapshot too large');
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/svg+xml' }));
+        setPreview({ source: src, url: objectUrl });
+      } catch { if (!controller.signal.aborted) setFailed(src); }
+    })();
+    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [src, workspaceContext]);
+  if (failed === src) return <span className="artifact-card-doc"><Icon name="file-code" size={22} /><span className="artifact-card-doc-name">{name}</span></span>;
+  if (preview?.source !== src) return <span className="artifact-card-mini is-loading"><PixelLiquid /></span>;
+  return <img className="artifact-card-media" src={preview.url} alt="" loading="lazy" data-preview-fit="contain" onError={() => setFailed(src)} />;
 }
 
 function ArtifactCard({
@@ -693,6 +731,8 @@ function ArtifactCard({
             preload="metadata"
             playsInline
           />
+        ) : item.snapshotUrl && /\.svg$/i.test(item.name) ? (
+          <SvgSnapshotPreview src={item.snapshotUrl} name={item.name} />
         ) : (
           <img
             className="artifact-card-media"

@@ -50,6 +50,21 @@ const openShell = (root: HTMLElement): void => {
 };
 
 describe('N2 跑完的 thinking 收进折叠行', () => {
+  it('D53 preserves a manual thought expansion through streamed text and live-to-done updates', () => {
+    const { container, rerender } = render(show(shellOf([think('Initial reasoning.')], { status: 'running', thinking: true })));
+    openShell(container);
+    const thought = screen.getByText(/思考中/).closest('details')!;
+    expect(thought.open).toBe(false);
+    fireEvent.click(thought.querySelector('summary')!); fireEvent(thought, new Event('toggle'));
+    expect(thought.open).toBe(true);
+    rerender(show(shellOf([think('Initial reasoning. More reasoning.')], { status: 'running', thinking: true })));
+    expect(screen.getByText(/思考中/).closest('details')).toBe(thought);
+    expect(thought.open).toBe(true);
+    rerender(show(shellOf([think('Initial reasoning. More reasoning.'), tool('a.png')], { status: 'done', thinking: false })));
+    expect(screen.getByText('思考过程').closest('details')).toBe(thought);
+    expect(thought.open).toBe(true);
+  });
+
   it('两段连续的 thinking 收成【一个】折叠行,标题是「思考过程」,默认不展开正文', () => {
     const { container } = render(show(shellOf([
       think('先判断这一屏属于哪种页面类型。'),
@@ -78,13 +93,15 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
     expect(fold?.contains(screen.getByText('设置页要和它共用同一套间距。'))).toBe(true);
   });
 
-  it('还在思考时**不折叠** —— 那一段归 96px 的流式窗管(设计稿状态 1)', () => {
+  it('还在思考时也先收起,手动展开后保留限高窗(D53)', () => {
     const { container } = render(show(shellOf(
       [think('先判断这一屏属于哪种页面类型。')],
       { status: 'running', thinking: true },
     )));
     openShell(container);
     expect(screen.queryByText('思考过程')).toBeNull();
+    const liveThought = screen.getByText(/思考中/).closest('details')!;
+    expect(liveThought.open).toBe(false); fireEvent.click(liveThought.querySelector('summary')!);
     /*
      * 结构断言。只写 `queryByText('思考过程')` 为 null 的话,这条在没实现折叠时
      * 天然成立 —— 空转,所以必须配一条说明推理**到底在哪**的正向断言。
@@ -138,7 +155,7 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
     expect(screen.getAllByText('思考过程')).toHaveLength(2);
   });
 
-  it('OPEND-2406:运行中的历史/中间 thought 收起,只有当前 live thought 展开', () => {
+  it('D53:历史、中间和当前 live thought 全部默认收起', () => {
     const { container } = render(show(shellOf([
       think('开头已经完成的推理。'),
       tool('first.png'),
@@ -152,7 +169,7 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
       container.querySelectorAll<HTMLDetailsElement>('details[class*="thoughts"]'),
     );
     expect(thoughts).toHaveLength(3);
-    expect(thoughts.map((row) => row.open)).toEqual([false, false, true]);
+    expect(thoughts.map((row) => row.open)).toEqual([false, false, false]);
     expect(thoughts.slice(0, 2).map((row) => row.querySelector('summary')?.textContent))
       .toEqual(['思考过程', '思考过程']);
     expect(thoughts[2]?.querySelector('summary')?.textContent).toContain('思考中');

@@ -273,19 +273,14 @@ describe('AvatarMenu', () => {
     MockAvatarEventSource.instances = [];
   });
 
-  // The composer popover is a one-decision surface: pick the model for the
-  // active agent. Execution mode, which CLI agent runs, PATH rescan, reasoning
-  // effort and the BYOK model are configuration, and live in
-  // Settings → Execution. Keeping them out is what makes the popover compact.
-  it('keeps execution configuration out of the composer popover', () => {
+  it('keeps installation, execution mode and PATH rescanning in settings', () => {
     const onOpenSettings = vi.fn<OpenSettingsHandler>();
     const onRefreshAgents = vi.fn<VoidHandler>();
     renderMenu({ daemonLive: false, onOpenSettings, onRefreshAgents });
 
     openMenu();
 
-    // The execution console itself is gone from this popover per #5517: no mode
-    // switch, no CLI list, no PATH rescan.
+    // The small CLI selector does not replace installation or mode setup.
     expect(screen.queryByRole('button', { name: /avatar.useLocal/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /avatar.useApi/i })).toBeNull();
     expect(screen.queryByRole('button', { name: 'avatar.rescan' })).toBeNull();
@@ -298,6 +293,31 @@ describe('AvatarMenu', () => {
     expect(openSettings).toBeTruthy();
     fireEvent.click(openSettings);
     expect(onOpenSettings).toHaveBeenCalledWith('execution');
+  });
+
+  it('switches between Codex and Claude without overwriting either model choice', () => {
+    const { onAgentChange, onAgentModelChange } = renderMenu({ agents: [claudeAgent, codexAgent] });
+    openMenu();
+    const picker = screen.getByRole('combobox', { name: 'avatar.codeAgent' });
+    expect((picker as HTMLSelectElement).value).toBe('codex');
+    expect(within(picker).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Codex CLI', 'Claude Code',
+    ]);
+    fireEvent.change(picker, { target: { value: 'claude' } });
+    expect(onAgentChange).toHaveBeenCalledWith('claude');
+    expect(onAgentModelChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'avatar.title' })).toBeTruthy();
+  });
+
+  it('keeps an explicitly selected Claude provider and prevents selecting an unavailable CLI', () => {
+    renderMenu({
+      config: { ...baseConfig, agentId: 'claude' },
+      agents: [{ ...codexAgent, available: false }, claudeAgent],
+    });
+    openMenu();
+    const picker = screen.getByRole('combobox', { name: 'avatar.codeAgent' }) as HTMLSelectElement;
+    expect(picker.value).toBe('claude');
+    expect((within(picker).getByRole('option', { name: /Codex CLI/ }) as HTMLOptionElement).disabled).toBe(true);
   });
 
   // Product decision (2026-07-24): the popover is a model picker only. The
@@ -379,6 +399,27 @@ describe('AvatarMenu', () => {
     expect(onAgentModelChange).toHaveBeenCalledWith('deepseek-harness', {
       reasoning: 'max',
     });
+  });
+
+  it.each([
+    { model: 'claude-opus-5-5', levels: ['default', 'low', 'medium', 'high', 'xhigh', 'max'], selected: 'medium' },
+    { model: 'claude-sonnet-4-6', levels: ['default', 'low', 'medium', 'high', 'max'], selected: 'high' },
+  ])('uses the Claude model-specific effort choices for $model', ({ model, levels, selected }) => {
+    const scopedClaude: AgentInfo = {
+      ...claudeAgent,
+      models: [{ id: model, label: model, reasoningOptions: levels.map((id) => ({ id, label: id })) }],
+      reasoningOptions: ['default', 'low', 'medium', 'high', 'xhigh', 'max'].map((id) => ({ id, label: id })),
+    };
+    const { onAgentModelChange } = renderMenu({
+      config: { ...baseConfig, agentId: 'claude', agentModels: { claude: { model, reasoning: selected } } },
+      agents: [scopedClaude],
+    });
+    const menu = openMenu();
+    const effort = within(menu).getByLabelText('avatar.reasoningLabel');
+    expect(effort).toHaveValue(selected);
+    expect(within(effort).getAllByRole('option').map((option) => (option as HTMLOptionElement).value)).toEqual(levels);
+    fireEvent.change(effort, { target: { value: 'max' } });
+    expect(onAgentModelChange).toHaveBeenCalledWith('claude', { reasoning: 'max' });
   });
 
   it('selects a model from the inline list and dismisses the popover', () => {

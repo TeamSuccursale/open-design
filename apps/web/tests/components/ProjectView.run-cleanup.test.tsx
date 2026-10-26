@@ -395,6 +395,19 @@ describe('terminal replay artifact recovery', () => {
 });
 
 describe('selectPrimaryProjectFile', () => {
+  it('does not let applied header/footer previews or logos open the sidebar ahead of the body', () => {
+    const logo = projectFile('documents/doc/header-footer/doc/assets/uuid-logo.svg', 'sketch', 3_000);
+    const preview = projectFile('documents/doc/header-footer/doc/preview.html', 'html', 4_000);
+    const body = projectFile('documents/doc/blockout-comparison.html', 'html', 1_000);
+    expect(selectPrimaryProjectFile([logo, preview])).toBeNull();
+    expect(selectPrimaryProjectFile([logo, preview, body])).toBe(body);
+  });
+  it('does not make the saved setup brief a primary artifact even with an inferred manifest', () => {
+    const brief = projectFile('documents/doc/blockout/brief.md', 'text', 3_000, {
+      entry: 'documents/doc/blockout/brief.md', exports: [], kind: 'html', primary: true, renderer: 'markdown', title: 'Brief', version: 1,
+    });
+    expect(selectPrimaryProjectFile([brief])).toBeNull();
+  });
   it('prefers explicit primary manifests over newer renderable files', () => {
     const newer = projectFile('preview.html', 'html', 2_000);
     const primary = projectFile('index.html', 'html', 1_000, {

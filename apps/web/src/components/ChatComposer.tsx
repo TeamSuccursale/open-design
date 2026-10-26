@@ -15,6 +15,11 @@ import {
 import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { ThinkingOrb } from './composer/ThinkingOrb';
+import sizingStyles from './ChatComposerSizing.module.css';
+import { ProjectDocumentContext } from './project-documents/ProjectDocumentContext';
+import { isBlockoutFile, mergeBlockoutBriefDraft } from '@open-design/contracts';
+import { BlockoutWorkspace } from './blockout/BlockoutWorkspace';
+import { BLOCKOUT_OPEN_EVENT, BLOCKOUT_QUESTION_EVENT, openBlockoutProposals, pendingBlockoutQuestion, type BlockoutAgentRequest, type BlockoutOpenRequest, type BlockoutQuestionEvent, type BlockoutQuestionRequest } from './blockout/events';
 import { useI18n } from '../i18n';
 import { localizePluginDescription, localizePluginTitle } from './plugins-home/localization';
 import type { Dict, Locale } from '../i18n/types';
@@ -48,6 +53,8 @@ import { fetchMcpServers } from "../state/mcp";
 import type { McpServerConfig, McpTemplate } from "../state/mcp";
 import { listPlugins } from "../state/projects";
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, Project, ProjectFile, ProjectMetadata, SkillSummary } from "../types";
+import { documentMentionEntities, filterMentionDocuments } from '../runtime/chat/document-mentions';
+import type { ProjectDocument } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
 import type {
   ContextItem,
@@ -67,6 +74,10 @@ import { Icon, type IconName } from "./Icon";
 import { ChatCloseIcon, ChatFileIcon, ChatSendArrowIcon } from "./chat/primitives/icons";
 import { ComposerPlusMenu, PLUS_SUBMENU_RESOURCE_KIND, type PlusMenuSubmenu } from './ComposerPlusMenu';
 import { LibraryPicker } from './LibraryPicker';
+import { ProjectGalleryDrawer } from './ProjectGalleryDrawer';
+import { ProjectContextActions } from './chat/ProjectContextActions';
+import { ActiveFileTarget } from './chat/ActiveFileTarget';
+import { OPEN_PROJECT_GALLERY_EVENT } from '../providers/project-intake';
 import { FigmaImportModal } from './FigmaImportModal';
 import { FigmaHelpModal } from './FigmaHelpModal';
 import {
@@ -221,7 +232,7 @@ function trackedWorkspaceLinkedDirsForContexts(
 
 type ToolsTab = 'plugins' | 'skills' | 'mcp' | 'import';
 
-type MentionTab = 'all' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
+type MentionTab = 'all' | 'documents' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
 
 const USER_PLUGIN_SOURCE_KINDS = new Set<PluginSourceKind>([
   'user',
@@ -330,10 +341,16 @@ interface Props {
    */
   onRestoreQuotes?: (quotes: ChatQuote[]) => void;
   projectId: string | null;
+  conversationId?: string | null;
   projectFiles: ProjectFile[];
+  projectDocuments?: ProjectDocument[];
+  activeProjectDocumentId?: string | null;
   activeProjectFileName?: string | null;
+  documentPreparationPending?: boolean;
+  blockoutNavigationAvailable?: boolean;
   streaming: boolean;
   sessionMode?: ChatSessionMode;
+  onSessionModeChange?: (mode: ChatSessionMode) => void;
   sendDisabled?: boolean;
   // Read-only viewer of a team-shared project: makes the Lexical editor
   // non-editable (in addition to `sendDisabled` blocking the send action) so
@@ -374,6 +391,7 @@ interface Props {
     meta?: ChatSendMeta,
   ) => ChatSendOutcome | Promise<ChatSendOutcome>;
   onStop: () => void;
+  onBlockoutRequest?: (request:BlockoutAgentRequest)=>Promise<boolean>;
   // Opens the global settings dialog (CLI / model / agent picker). The
   // composer's leading gear icon routes here so users can switch models
   // without leaving the chat.
@@ -546,6 +564,7 @@ export interface ChatSendMeta {
   // forwards these to the daemon's `skillIds` field so the system prompt
   // for this run only is composed with the extra skill bodies, without
   // touching the project's persistent `skillId`.
+  documentReferences?: string[];
   skillIds?: string[];
   /** Overrides the run_created / run_finished `entry_from` analytics prop for
    *  this send (e.g. 'mark' when the turn is sent from the Mark draw overlay).
@@ -593,10 +612,16 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
   function ChatComposer(
     {
       projectId,
+      conversationId = null,
       projectFiles,
+      projectDocuments = [],
+      activeProjectDocumentId = null,
       activeProjectFileName = null,
+      documentPreparationPending = false,
+      blockoutNavigationAvailable = false,
       streaming,
       sessionMode = 'design',
+      onSessionModeChange,
       sendDisabled = false,
       inputDisabled = false,
       initialDraft,
@@ -610,6 +635,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       onRemoveCommentAttachment,
       skills = [],
       onSend,
+      onBlockoutRequest,
       onStop,
       onOpenMcpSettings,
       onBrowsePlugins,
@@ -650,10 +676,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const { locale, t } = useI18n();
     const analytics = useAnalytics();
     const { workspaceContext } = useProjectCollabContext();
-    const activeFileContext =
+    const activeFileCandidate =
       projectMetadata?.importedFrom === 'folder' && activeProjectFileName
         ? activeProjectFileName
         : null;
+    const activeFileKey = activeFileCandidate ? `${projectId}\0${activeFileCandidate}` : null;
+    const [dismissedActiveFileKey, setDismissedActiveFileKey] = useState<string | null>(null);
+    const activeFileContext = activeFileKey !== dismissedActiveFileKey ? activeFileCandidate : null;
+    const activeFileContextRef = useRef(activeFileContext);
+    activeFileContextRef.current = activeFileContext;
+    const dismissedActiveFilePathRef = useRef<string | null>(null);
+    dismissedActiveFilePathRef.current = activeFileKey === dismissedActiveFileKey ? activeFileCandidate : null;
     const activeFileDisplayName = activeFileContext ? lastPathSegment(activeFileContext) : null;
     const [draft, setDraft] = useState(() => initialDraft ?? loadComposerDraft(draftStorageKey) ?? "");
     /*
@@ -665,6 +698,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [placeholderScenario, setPlaceholderScenario] = useState<PlaceholderScenario | null>(null);
     const composerRootRef = useRef<HTMLDivElement | null>(null);
     const pendingSessionModeRef = useRef<ChatSessionMode | null>(null);
+    const documentPreparationPendingRef = useRef(documentPreparationPending);
+    documentPreparationPendingRef.current = documentPreparationPending;
     // Synchronous mirror of `draft`. Event handlers that mutate the draft off
     // a captured render closure (notably the annotation listener, where two
     // uploads can resolve concurrently) read/write this ref so their edits
@@ -704,8 +739,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // Manual editor height set by dragging the shell's gray backdrop up/down.
     // null = the default auto-grow min/max behavior.
     const [manualEditorHeight, setManualEditorHeight] = useState<number | null>(null);
+    const draftIsEmpty = !draft.trim();
+    const draftManualHeight = draftIsEmpty ? null : manualEditorHeight;
+    useEffect(() => { if (draftIsEmpty) setManualEditorHeight(null); }, [draftIsEmpty]);
     const nextAttachmentOrderRef = useRef(nextChatAttachmentOrder(restoredExtrasRef.current.attachments));
     const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+    const [projectGalleryOpen, setProjectGalleryOpen] = useState(false);
+    const [blockoutOpen, setBlockoutOpen] = useState(false);
+    const [blockoutQuestion, setBlockoutQuestion] = useState<BlockoutQuestionRequest | null>(null);
+    const [blockoutLocation, setBlockoutLocation] = useState<{ documentId?: string; pageId?: string; variantId?: string; blockId?:string }>({});
     const [figmaModalOpen, setFigmaModalOpen] = useState(false);
     const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
     const [projectReferenceOpen, setProjectReferenceOpen] = useState(false);
@@ -825,7 +867,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // plugins → skills → mcp → connectors). Resets to 0 whenever the query
     // identity or tab changes; drives the visual highlight + Enter/Tab target.
     const [mentionIndex, setMentionIndex] = useState(0);
+    const [stagedDocuments, setStagedDocuments] = useState<InlineMentionEntity[]>([]);
+    const documentEntities = useMemo(() => documentMentionEntities(projectDocuments, activeProjectDocumentId), [projectDocuments, activeProjectDocumentId]);
+    const filteredDocuments = filterMentionDocuments(documentEntities, mention?.q ?? '');
     const [mentionTab, setMentionTab] = useState<MentionTab>('all');
+    const requestedMentionTab = useRef<MentionTab | null>(null);
     // Viewport caret box the floating popover anchors against. Sampled by the
     // editor at trigger-detection time; null when no trigger is live.
     const [caretRect, setCaretRect] = useState<CaretRect | null>(null);
@@ -1271,7 +1317,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     );
     const composerMentionEntities = useMemo(
       () =>
-        buildComposerMentionEntities({
+        [...documentEntities, ...buildComposerMentionEntities({
           connectors,
           files: projectFiles,
           mcpServers: enabledMcpServers,
@@ -1279,8 +1325,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           skills,
           staged,
           workspaceContexts: selectedWorkspaceContexts,
-        }),
-      [connectors, enabledMcpServers, pluginsForComposer, projectFiles, selectedWorkspaceContexts, skills, staged],
+        })],
+      [connectors, documentEntities, enabledMcpServers, pluginsForComposer, projectFiles, selectedWorkspaceContexts, skills, staged],
     );
     // Resolve which tabs to surface in the consolidated tools popover.
     // Plugins is always visible while a project is active so users can
@@ -1457,7 +1503,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       () => ({
         setDraft: (text: string, options?: ChatComposerDraftOptions) => {
           pendingEntryFromRef.current = options?.entryFrom ?? null;
-          pendingSessionModeRef.current = options?.sessionMode ?? null;
+          pendingSessionModeRef.current = documentPreparationPendingRef.current && options?.sessionMode === 'blockout' ? null : options?.sessionMode ?? null;
           setDraft(text);
           editorRef.current?.setText(text);
           editorRef.current?.focus();
@@ -1571,6 +1617,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       nextAttachmentOrderRef.current = 0;
       setStagedVisualComments([]);
       setStagedSkills([]);
+      setStagedDocuments([]);
       setStagedMcpServers([]);
       setStagedConnectors([]);
       setStagedWorkspaceContexts(linkedWorkspaceContexts);
@@ -1608,6 +1655,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const connectorIds = stagedConnectors.map((c) => c.id);
       const workspaceItems = selectedWorkspaceContexts;
       const context: RunContextSelection = {
+        ...(stagedDocuments.length ? { documentReferences: stagedDocuments.map(item => item.id) } : {}),
         ...(skillIds.length > 0 ? { skillIds } : {}),
         ...(pluginIds.length > 0 ? { pluginIds } : {}),
         ...(mcpServerIds.length > 0 ? { mcpServerIds } : {}),
@@ -1615,6 +1663,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         ...(workspaceItems.length > 0 ? { workspaceItems } : {}),
       };
       const meta: ChatSendMeta = {
+        ...(stagedDocuments.length ? { documentReferences: stagedDocuments.map(item => item.id) } : {}),
         ...(skillIds.length > 0 ? { skillIds } : {}),
         ...(activeAppliedPlugin
           ? {
@@ -1807,12 +1856,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     ): boolean {
       setStreamingAnnotationSendPending(false);
       if (!prompt && attachments.length === 0 && nextCommentAttachments.length === 0) return false;
+      const selectedFile = activeFileContextRef.current;
       const nextAttachments =
-        activeFileContext && !attachments.some((attachment) => attachment.path === activeFileContext)
+        selectedFile && !attachments.some((attachment) => attachment.path === selectedFile)
           ? [
               {
-                path: activeFileContext,
-                name: activeFileDisplayName ?? activeFileContext,
+                path: selectedFile,
+                name: lastPathSegment(selectedFile),
                 kind: 'file' as const,
               },
               ...attachments,
@@ -1834,6 +1884,24 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         ...(pendingSessionMode && !meta?.sessionMode ? { sessionMode: pendingSessionMode } : {}),
         ...(outgoingQuotes.length > 0 ? { quotes: outgoingQuotes } : {}),
       };
+      // This selected chip is an editing target, distinct from @document or
+      // workspace references. Preserve the explicit target in queued/retried turns.
+      if (selectedFile) effectiveMetaShape.context = { ...effectiveMetaShape.context, editTargetFile:selectedFile };
+      else if (effectiveMetaShape.context?.editTargetFile) {
+        const {editTargetFile: _retiredTarget,...context} = effectiveMetaShape.context;
+        effectiveMetaShape.context = context;
+      }
+      if (documentPreparationPendingRef.current && effectiveMetaShape.sessionMode === 'blockout') delete effectiveMetaShape.sessionMode;
+      // A preview can stay open after its automatic edit target is dismissed.
+      // Filter old annotation/send closures too, so they cannot restore that target.
+      const excludedFile = dismissedActiveFilePathRef.current;
+      if (excludedFile && effectiveMetaShape.context?.workspaceItems) {
+        const { workspaceItems, ...remainingContext } = effectiveMetaShape.context;
+        const selectedItems = workspaceItems.filter((item) => !(item.kind === 'file' && item.path === excludedFile));
+        if (selectedItems.length > 0) effectiveMetaShape.context = { ...remainingContext, workspaceItems: selectedItems };
+        else if (Object.keys(remainingContext).length > 0) effectiveMetaShape.context = remainingContext;
+        else delete effectiveMetaShape.context;
+      }
       const effectiveMeta =
         Object.keys(effectiveMetaShape).length > 0 ? effectiveMetaShape : undefined;
       // 引用是这一条消息的上下文,发出去就该清掉 —— 它不是长期状态
@@ -1900,6 +1968,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     }
 
     function appendWorkspacePrompt(item: WorkspaceContextItem) {
+      if (item.kind === 'file' && item.path === activeFileCandidate) restoreActiveFileTarget();
       setStagedWorkspaceContexts((current) =>
         current.some((candidate) => candidate.id === item.id)
           ? current
@@ -2288,6 +2357,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       if (trackedLinkedDir && !(await removeTrackedWorkspaceLinkedDir(id, trackedLinkedDir))) {
         return;
       }
+      if (workspaceItem?.kind === 'file' && workspaceItem.path === activeFileCandidate) {
+        setDismissedActiveFileKey(activeFileKey);
+        activeFileContextRef.current = null;
+        dismissedActiveFilePathRef.current = activeFileCandidate;
+      }
       if (visibleWorkspaceContext?.id === id) setDismissedWorkspaceContextId(id);
       setStagedWorkspaceContexts((prev) => prev.filter((item) => item.id !== id));
       if (!trackedLinkedDir) {
@@ -2306,6 +2380,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           workspaceItem.url ?? '',
         ]));
       }
+    }
+
+    function dismissActiveFileTarget() {
+      setDismissedActiveFileKey(activeFileKey);
+      activeFileContextRef.current = null;
+      dismissedActiveFilePathRef.current = activeFileCandidate;
+      const matchingContext = selectedWorkspaceContexts.find((item) => item.kind === 'file' && item.path === activeFileCandidate);
+      if (matchingContext) void removeWorkspaceContext(matchingContext.id);
+    }
+
+    function restoreActiveFileTarget() {
+      setDismissedActiveFileKey(null);
+      activeFileContextRef.current = activeFileCandidate;
+      dismissedActiveFilePathRef.current = null;
+      if (activeWorkspaceContext?.kind === 'file' && activeWorkspaceContext.path === activeFileCandidate) setDismissedWorkspaceContextId(null);
     }
 
     async function ensureProject(): Promise<string | null> {
@@ -2763,6 +2852,35 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       t,
     ]);
 
+    useEffect(() => {
+      function openGallery(event: Event) {
+        if ((event as CustomEvent<{ projectId: string }>).detail?.projectId === projectId) setProjectGalleryOpen(true);
+      }
+      window.addEventListener(OPEN_PROJECT_GALLERY_EVENT, openGallery);
+      return () => window.removeEventListener(OPEN_PROJECT_GALLERY_EVENT, openGallery);
+    }, [projectId]);
+
+    useEffect(() => {
+      setBlockoutOpen(false); setBlockoutQuestion(null);
+      if (documentPreparationPending) pendingSessionModeRef.current = null;
+      if (!projectId) return;
+      const pending = !documentPreparationPending && pendingBlockoutQuestion(projectId, conversationId);
+      if (pending) { setBlockoutQuestion(pending); setBlockoutOpen(true); }
+      const receive = (event: Event) => {
+        const detail = (event as CustomEvent<BlockoutQuestionEvent>).detail;
+        if (documentPreparationPending || detail?.request.projectId !== projectId || detail.request.conversationId !== conversationId) return;
+        setBlockoutQuestion(detail.request); if (detail.open) setBlockoutOpen(true);
+      };
+      window.addEventListener(BLOCKOUT_QUESTION_EVENT, receive);
+      const openEditor = (event: Event) => {
+        const request = (event as CustomEvent<BlockoutOpenRequest>).detail;
+        if (request?.projectId !== projectId || documentPreparationPending && !blockoutNavigationAvailable) return;
+        setBlockoutQuestion(null); setBlockoutLocation({ documentId: request.documentId, pageId: request.pageId, variantId: request.variantId,blockId:request.blockId }); setBlockoutOpen(true);
+      };
+      window.addEventListener(BLOCKOUT_OPEN_EVENT, openEditor);
+      return () => { window.removeEventListener(BLOCKOUT_QUESTION_EVENT, receive); window.removeEventListener(BLOCKOUT_OPEN_EVENT, openEditor); };
+    }, [projectId, conversationId, documentPreparationPending, blockoutNavigationAvailable]);
+
     // Stages attachments that a surface already uploaded to the project itself
     // (ChatAttachment shape, not File) — e.g. the design browser's hover
     // "添加到对话" capture, which writes the PNG via writeProjectBase64File
@@ -2848,12 +2966,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     function handleShellResizeMouseDown(e: React.MouseEvent<HTMLDivElement>) {
       if (e.target !== e.currentTarget) return;
       if (e.button !== 0) return;
+      if (!draftRef.current.trim()) return;
       const editorEl = e.currentTarget.querySelector<HTMLElement>('.composer-input-editor');
       if (!editorEl) return;
       e.preventDefault();
       const startY = e.clientY;
       const startHeight = editorEl.getBoundingClientRect().height;
-      const DEFAULT_MIN = 72;
+      const DEFAULT_MIN = 48;
       const onMove = (ev: MouseEvent) => {
         const delta = startY - ev.clientY;
         const max = Math.round(window.innerHeight * 0.6);
@@ -2904,6 +3023,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       draftRef.current = text;
       setDraft(text);
       const set = new Set(present.map((e) => `${e.kind}:${e.id}`));
+      setStagedDocuments([...new Map(present.filter(item => item.kind === 'document').map(item => [item.id, item])).values()]);
       if (
         activeAppliedPlugin
         && inlineBackedPluginRef.current?.id === activeAppliedPlugin.pluginId
@@ -2937,7 +3057,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       anchorRect: CaretRect | null;
     }) {
       setCaretRect(anchorRect);
-      if (nextMention && !mention) {
+      if (nextMention && requestedMentionTab.current) {
+        setMentionTab(requestedMentionTab.current);
+        requestedMentionTab.current = null;
+      } else if (nextMention && !mention) {
         setMentionTab('all');
       } else if (!nextMention) {
         setMentionTab('all');
@@ -2993,12 +3116,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         // renders the same files-first section order and highlights the
         // matching row from activeIndex.
         const showFiles = mentionTab === 'all' || mentionTab === 'files';
+        const showDocuments = showFiles || mentionTab === 'documents';
         const showTabs = mentionTab === 'all' || mentionTab === 'tabs';
         const showPlugins = mentionTab === 'all' || mentionTab === 'plugins';
         const showSkills = mentionTab === 'all' || mentionTab === 'skills';
         const showMcp = mentionTab === 'all' || mentionTab === 'mcp';
         const showConnectors = mentionTab === 'all' || mentionTab === 'connectors';
         const total =
+          (showDocuments ? filteredDocuments.length : 0) +
           (showFiles ? filteredFiles.length : 0) +
           (showTabs ? filteredWorkspaceContexts.length : 0) +
           (showPlugins ? filteredPlugins.length : 0) +
@@ -3029,6 +3154,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // lockstep across "All" and individual tabs.
     function pickMentionByFlatIndex(flat: number) {
       let i = flat;
+      if (mentionTab === 'all' || mentionTab === 'files' || mentionTab === 'documents') {
+        if (i < filteredDocuments.length) { insertDocumentMention(filteredDocuments[i]!); return; }
+        i -= filteredDocuments.length;
+      }
       if (mentionTab === 'all' || mentionTab === 'files') {
         if (i < filteredFiles.length) {
           insertMention(filteredFiles[i]!.path ?? filteredFiles[i]!.name);
@@ -3070,6 +3199,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           return;
         }
       }
+    }
+
+    function insertDocumentMention(entity: InlineMentionEntity) {
+      setStagedDocuments(previous => previous.some(item => item.id === entity.id) ? previous : [...previous, entity]);
+      editorRef.current?.insertMention({ token: entity.token!, entity });
+      setMention(null);
     }
 
     function insertMention(filePath: string) {
@@ -3116,6 +3251,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     }
 
     function insertWorkspaceMention(item: WorkspaceContextItem) {
+      if (item.kind === 'file' && item.path === activeFileCandidate) restoreActiveFileTarget();
       setStagedWorkspaceContexts((current) =>
         current.some((candidate) => candidate.id === item.id)
           ? current
@@ -3393,11 +3529,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       <div
         className={[
           'composer',
+          sizingStyles.root,
           dragActive ? 'drag-active' : '',
           activeFileContext ? 'composer-active-file-mode' : '',
           inputDisabled ? 'composer-readonly' : '',
         ].filter(Boolean).join(' ')}
         data-testid="chat-composer"
+        data-editor-sizing={draftManualHeight == null ? 'content' : 'manual'}
+        data-draft-empty={draftIsEmpty}
         ref={composerRootRef}
         onDragOver={(e) => {
           if (inputDisabled) return;
@@ -3506,10 +3645,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           </div>
         ) : null}
         <div
-          className={`composer-shell${manualEditorHeight != null ? ' composer-shell--manual-height' : ''}`}
+          className={`composer-shell${draftManualHeight != null ? ' composer-shell--manual-height' : ''}`}
+          data-testid="composer-editor-shell"
           style={
-            manualEditorHeight != null
-              ? ({ '--composer-manual-h': `${manualEditorHeight}px` } as React.CSSProperties)
+            draftManualHeight != null
+              ? ({ '--composer-manual-h': `${draftManualHeight}px` } as React.CSSProperties)
               : undefined
           }
           onMouseDown={handleShellResizeMouseDown}
@@ -3607,16 +3747,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               t={t}
             />
           ) : null}
-          {activeFileContext ? (
-            <div
-              className="composer-active-file"
-              data-testid="composer-active-file"
-              title={activeFileContext}
-            >
-              <span className="composer-active-file__label">{t('chat.activeFileEditingLabel')}</span>
-              <span className="composer-active-file__name">{activeFileContext}</span>
-            </div>
-          ) : null}
+          {activeFileCandidate ? <ActiveFileTarget file={activeFileCandidate} selected={Boolean(activeFileContext)} disabled={inputDisabled} onRemove={dismissActiveFileTarget} onAttach={restoreActiveFileTarget} /> : null}
           {currentCommentAttachments().length > 0 ? (
             <StagedCommentAttachments
               attachments={currentCommentAttachments()}
@@ -3685,6 +3816,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             boundaryRef={composerRootRef}
           >
             <MentionPopover
+              documents={filteredDocuments}
+              onPickDocument={insertDocumentMention}
               files={filteredFiles}
               workspaceContexts={filteredWorkspaceContexts}
               plugins={filteredPlugins}
@@ -3720,6 +3853,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               t={t}
             />
           </CaretFloatingLayer>
+          <ProjectDocumentContext name={projectDocuments.find(document => document.id === activeProjectDocumentId)?.name} canReference={documentEntities.length > 0} disabled={inputDisabled || sendDisabled} onReference={() => {
+            setComposerEngaged(true);
+            requestedMentionTab.current = 'documents';
+            setMentionTab('documents');
+            setMentionIndex(0);
+            editorRef.current?.focus();
+            editorRef.current?.insertText(`${draftRef.current.trim() ? ' ' : ''}@`);
+          }} />
+          {projectId && projectMetadata?.projectMode !== 'fast' ? <ProjectContextActions projectId={projectId} workspaceContext={workspaceContext} disabled={inputDisabled || streaming} /> : null}
           <div className="composer-row">
             <input
               ref={fileInputRef}
@@ -3871,8 +4013,18 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 icon row (palette icon) instead of the staged-context bar. */}
             {designSystemPicker}
             {leadingAccessory}
+            {projectId ? <Button variant="ghost" aria-label={t('intake.title')} title={t('intake.title')} onClick={() => setProjectGalleryOpen(true)}><Icon name="image" size={17} />{t('intake.openGallery')}</Button> : null}
+            {projectId && blockoutNavigationAvailable ? (
+              <Button
+                variant="ghost"
+                onClick={() => openBlockoutProposals({ projectId })}
+              >
+                <Icon name="blocks" size={17} />
+                {t('chat.blockout.proposals')}
+              </Button>
+            ) : null}
             <span className="composer-spacer" />
-            {/* No mode picker in the composer (2026-08-19, product): the row
+            {/* No general mode picker in the composer (2026-08-19, product): the row
                 carried a 规划/设计/提问 chooser that every run defaulted past.
                 `sessionMode` still flows through this component — a
                 conversation keeps its stored mode and next-step actions still
@@ -3991,6 +4143,33 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             onConfirm={(assets) => addAssetsFromLibrary(assets)}
           />
         ) : null}
+        {projectId && (!documentPreparationPending || blockoutNavigationAvailable) && blockoutOpen ? <BlockoutWorkspace key={`blockout:${projectId}:${blockoutLocation.documentId ?? ''}:${blockoutLocation.pageId ?? ''}:${blockoutLocation.variantId ?? ''}:${blockoutLocation.blockId ?? ''}`} projectId={projectId} workspaceContext={workspaceContext} question={blockoutQuestion}
+          initialDocumentId={blockoutLocation.documentId} initialPageId={blockoutLocation.pageId} initialVariantId={blockoutLocation.variantId} initialBlockId={blockoutLocation.blockId} onPhaseChange={onSessionModeChange} onRequestAlternatives={onBlockoutRequest}
+          onClose={() => { setBlockoutOpen(false); setBlockoutQuestion(null); }}
+          onUseBrief={(text, attachments, mode = 'blockout') => {
+            if (activeFileContext && (isBlockoutFile(activeFileContext) || /(?:^|\/)blockout-comparison[^/]*\.html$/.test(activeFileContext))) dismissActiveFileTarget();
+            const orderStart = reserveAttachmentOrders(attachments.length);
+            const updates = assignChatAttachmentOrders(attachments, orderStart);
+            setStaged((current) => sortChatAttachmentsByOrder([
+              ...current.filter((item) => !/^blockouts\/[\w.-]+\/handoffs\/[\w.-]+\.blockout-update\.json$/.test(item.path)),
+              ...updates,
+            ]));
+            const requestKey = draftStorageKey ? `${draftStorageKey}:blockout-request` : null;
+            let previousRequest: string | null = null;
+            try { if (requestKey) previousRequest = localStorage.getItem(requestKey); } catch { /* optional draft recovery */ }
+            const next = mergeBlockoutBriefDraft(draftRef.current, text, previousRequest);
+            try { if (requestKey) localStorage.setItem(requestKey, text); } catch { /* optional draft recovery */ }
+            draftRef.current = next; setDraft(next); editorRef.current?.setText(next); editorRef.current?.focus();
+            pendingSessionModeRef.current = mode; onSessionModeChange?.(mode);
+          }} /> : null}
+        {projectId ? <ProjectGalleryDrawer key={projectId} projectId={projectId} open={projectGalleryOpen} workspaceContext={workspaceContext} onClose={() => setProjectGalleryOpen(false)} onAdd={(selection) => {
+          const attachments = selection.map(({ asset, attachmentPath }) => ({ path: attachmentPath ?? asset.imagePath, name: asset.title, kind: 'image' as const }));
+          const orderStart = reserveAttachmentOrders(attachments.length);
+          appendOrderedStagedAttachments(assignChatAttachmentOrders(attachments, orderStart));
+          const context = selection.map(({ asset, note, draftText }) => draftText ?? [t('intake.visibleAsset', { title: asset.title }), note.trim()].filter(Boolean).join('\n')).join('\n\n');
+          const next = [draftRef.current.trimEnd(), context].filter(Boolean).join('\n\n');
+          draftRef.current = next; setDraft(next); editorRef.current?.setText(next); editorRef.current?.focus();
+        }} /> : null}
         {figmaModalOpen && projectId ? (
           <FigmaImportModal
             onClose={() => setFigmaModalOpen(false)}
@@ -6518,6 +6697,8 @@ function SlashPopover({
 }
 
 function MentionPopover({
+  documents,
+  onPickDocument,
   files,
   workspaceContexts,
   connectors,
@@ -6536,6 +6717,8 @@ function MentionPopover({
   onPickMcp,
   onPickConnector,
 }: {
+  documents: InlineMentionEntity[];
+  onPickDocument: (entity: InlineMentionEntity) => void;
   files: ProjectFile[];
   workspaceContexts: WorkspaceContextItem[];
   connectors: ConnectorDetail[];
@@ -6558,6 +6741,7 @@ function MentionPopover({
   const ref = useRef<HTMLDivElement | null>(null);
   const tabs: Array<{ id: MentionTab; label: string }> = [
     { id: 'all', label: t('chat.mentionTabAll') },
+    ...(documents.length || tab === 'documents' ? [{ id: 'documents' as const, label: t('chat.mentionSectionDocuments') }] : []),
     { id: 'files', label: t('chat.mentionTabFiles') },
     { id: 'tabs', label: t('chat.mentionTabTabs') },
     { id: 'plugins', label: t('chat.mentionTabPlugins') },
@@ -6567,11 +6751,13 @@ function MentionPopover({
   ];
   const showTabs = tab === 'all' || tab === 'tabs';
   const showFiles = tab === 'all' || tab === 'files';
+  const showDocuments = showFiles || tab === 'documents';
   const showPlugins = tab === 'all' || tab === 'plugins';
   const showSkills = tab === 'all' || tab === 'skills';
   const showMcp = tab === 'all' || tab === 'mcp';
   const showConnectors = tab === 'all' || tab === 'connectors';
   const hasVisibleResults =
+    (showDocuments && documents.length > 0) ||
     (showFiles && files.length > 0) ||
     (showTabs && workspaceContexts.length > 0) ||
     (showPlugins && plugins.length > 0) ||
@@ -6609,6 +6795,15 @@ function MentionPopover({
             )}
           </div>
         ) : null}
+        {showDocuments && documents.length > 0 ? <><div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionDocuments')}</div><p className="mention-document-hint">{t('projectDocuments.referenceScope')}</p></> : null}
+        {showDocuments ? documents.map(document => {
+          const flat = optionIndex++;
+          return <button key={`document-${document.id}`} id={`mention-opt-${flat}`} role="option" aria-selected={flat === activeIndex}
+            className={`mention-item${flat === activeIndex ? ' is-active' : ''}`} type="button"
+            onMouseDown={event => event.preventDefault()} onClick={() => onPickDocument(document)} title={document.title}>
+            <Icon name="file" size={12} /><span className="mention-item-body"><strong data-testid="mention-item-name">{document.label}</strong><span className="mention-meta mention-meta--desc">{t('chat.mentionDocumentReadOnly')}</span></span>
+          </button>;
+        }) : null}
         {showFiles && files.length > 0 ? (
           <>
             <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionFiles')}</div>

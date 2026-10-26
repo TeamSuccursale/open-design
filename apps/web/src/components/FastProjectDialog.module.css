@@ -1,0 +1,22 @@
+.backdrop { position: fixed; inset: 0; z-index: 1350; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--text) 24%, transparent); }
+.dialog { width: min(580px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; border-radius: 16px; background: var(--bg-panel); color: var(--text); box-shadow: var(--shadow-lg); font-size: 14px; line-height: 1.6; scrollbar-color: var(--text-muted) var(--bg-panel); }
+.header { display: flex; gap: 20px; align-items: start; padding: 24px 28px 18px; border-bottom: 1px solid var(--border-soft); }
+.header h2 { margin: 0 0 8px; font-size: 23px; font-weight: 600; letter-spacing: -.025em; }
+.header p { margin: 0; color: var(--text-muted); }
+.header > button { margin-left: auto; flex-shrink: 0; }
+.form { padding: 20px 28px 24px; }
+.form label { display: block; margin-bottom: 8px; font-weight: 500; }
+.form textarea { width: 100%; box-sizing: border-box; font: inherit; caret-color: var(--accent); }
+.form input[type=text] { width: 100%; box-sizing: border-box; font: inherit; caret-color: var(--accent); }
+.goalLabel { margin-top: 20px; }
+.fileLabel { margin-top: 20px; }
+.form input[type=file] { width: 100%; font: inherit; }
+.hint { margin: 10px 0 0; color: var(--text-muted); font-size: 13px; }
+.files { list-style: none; padding: 0; margin: 10px 0 0; }
+.files li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.files li span { min-width: 0; overflow-wrap: anywhere; }
+.footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.error { color: var(--red); margin: 16px 0 0; }
+.dialog :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dialog ::selection { color: var(--bg-panel); background: var(--accent); }
+@media(max-width: 560px) { .header { padding: 20px; } .form { padding: 18px 20px 20px; } }

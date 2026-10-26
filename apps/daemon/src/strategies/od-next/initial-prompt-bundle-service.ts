@@ -1,4 +1,8 @@
 import path from 'node:path';
+import { activeDocumentIdentity } from '../../services/document-reference-context.js';
+import { renderFrozenIntakeContext } from '../../services/project-intake-context.js';
+import { renderFrozenBlockoutContext } from '../../services/blockout-context.js';
+import { renderFrozenDocumentSetupContext } from '../../services/document-setup.js';
 
 import {
   OD_NEXT_BUNDLE_ECHO_GUARD_V2,
@@ -271,7 +275,7 @@ export function createOdNextInitialPromptBundleService(
       taskInputSnapshot,
       path.join(deps.runtimeDataDir, 'od-next-task-inputs'),
     );
-    const runContextPrompt = renderRunContextPrompt(context, project?.metadata);
+    const runContextPrompt = [activeDocumentIdentity(project), renderRunContextPrompt(context, project?.metadata), loadedTaskInputs.documentReferenceContext ?? ''].filter(Boolean).join('\n\n');
     const runtimeToolPrompt = deps.createAgentRuntimeToolPrompt(
       deps.daemonUrl,
       projectRoot && projectId ? { token: 'available' } : null,
@@ -377,7 +381,7 @@ export function createOdNextInitialPromptBundleService(
         taskType: loadedTaskInputs.taskType,
         attachments: loadedTaskInputs.attachmentFactsText,
         taskConfiguration: loadedTaskInputs.taskConfigText,
-        stableContext: odNextStableContextPrompt ?? '',
+        stableContext: [odNextStableContextPrompt ?? '', renderFrozenIntakeContext(loadedTaskInputs.files), renderFrozenBlockoutContext(loadedTaskInputs.files), renderFrozenDocumentSetupContext(loadedTaskInputs.files)].filter(Boolean).join('\n\n'),
         priorTranscript: typeof priorTranscript === 'string' ? priorTranscript : '',
         frozenSkillPackage: renderFrozenSkillRosterContext(frozenSkillPackage),
         requestInputFacts: loadedTaskInputs.workspaceInputFactsText,

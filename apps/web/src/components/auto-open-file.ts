@@ -16,6 +16,9 @@
 //      project file (those will have a slash in `filePath` and reach this
 //      step with zero suffix matches → declined).
 
+import { filterIntakeOwnedFiles, isIntakeOwnedFile } from '../intake-owned-files';
+import { BLOCKOUT_BRIEF_PATH } from '@open-design/contracts';
+
 interface CandidateFile {
   readonly name: string;
   readonly path?: string;
@@ -35,6 +38,21 @@ interface AutoOpenOptions {
 
 const NO_MODULES: ReadonlySet<string> = new Set();
 
+/** Managed recurring-region files support a document; they are not its body deliverable.
+ * This gate is for inferred navigation only. Files/Gallery user clicks still open normally.
+ */
+export function isHeaderFooterSupportFile(file: Pick<CandidateFile, 'name' | 'path'>): boolean {
+  return [file.path, file.name].some((value) => value && /(^|\/)header-footer\//i.test(value.replace(/\\/g, '/')));
+}
+
+/** The saved setup brief is an agent input, not the page the user is designing. */
+export function isBlockoutBriefFile(file: Pick<CandidateFile, 'name' | 'path'>): boolean {
+  return [file.path, file.name].some((value) => {
+    const path = value?.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+    return path === BLOCKOUT_BRIEF_PATH || path?.endsWith(`/${BLOCKOUT_BRIEF_PATH}`);
+  });
+}
+
 function basenameOf(p: string): string {
   return p.split('/').pop() ?? p;
 }
@@ -48,7 +66,7 @@ export function decideAutoOpenAfterWrite(
   // Resolve a positive identification into an open decision, declining files
   // that are modules of a multi-file HTML entry rather than standalone pages.
   const resolve = (fileName: string): { shouldOpen: boolean; fileName: string | null } =>
-    moduleFileNames.has(fileName)
+    moduleFileNames.has(fileName) || nextFiles.some((file) => file.name === fileName && (isIntakeOwnedFile(file) || isHeaderFooterSupportFile(file) || isBlockoutBriefFile(file)))
       ? { shouldOpen: false, fileName: null }
       : { shouldOpen: true, fileName };
 
@@ -139,6 +157,7 @@ function isMediaPreviewFile(file: CandidateFile): boolean {
 // fallback for media-only turns; non-previewable outputs such as decks and raw
 // text are left for the user to open from the produced-files chips.
 function autoOpenPreviewRank(file: CandidateFile): number {
+  if (isIntakeOwnedFile(file) || isHeaderFooterSupportFile(file) || isBlockoutBriefFile(file)) return 0;
   if (isHtmlPreviewFile(file)) return 3;
   if (isMarkdownPreviewFile(file)) return 2;
   if (isMediaPreviewFile(file)) return 1;
@@ -171,6 +190,7 @@ export function selectBuildPreviewHtmlEntry(
   let newest: CandidateFile | null = null;
   for (const file of files) {
     if (file.type === 'dir') continue;
+    if (isHeaderFooterSupportFile(file)) continue;
     if (!isHtmlPreviewFile(file)) continue;
     const depth = siteEntryDepth(file);
     if (depth !== null && depth < entryDepth) {
@@ -284,9 +304,10 @@ function collectTurnCandidates(
   allFiles: ReadonlyArray<CandidateFile>,
   options: SelectAutoOpenTurnOptions,
 ): CandidateFile[] {
+  const delivered = filterIntakeOwnedFiles(producedFiles, allFiles);
   const startedAt = options.turnStartedAt;
   if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || startedAt <= 0) {
-    return [...producedFiles];
+    return delivered;
   }
   const endedAt = options.turnEndedAt;
   const windowEnd =
@@ -295,13 +316,14 @@ function collectTurnCandidates(
       : null;
   const touched = options.agentTouchedFileNames;
   const restrictToTouched = touched != null && touched.size > 0;
-  const seen = new Set(producedFiles.map((f) => f.name));
-  const candidates = [...producedFiles];
+  const seen = new Set(delivered.map((f) => f.name));
+  const candidates = [...delivered];
   for (const file of allFiles) {
     if (!file.name || seen.has(file.name)) continue;
     if (file.type === 'dir') continue;
     if (file.name.startsWith('.') || file.name.includes('/.')) continue;
     if (isUserSketchFile(file)) continue;
+    if (isIntakeOwnedFile(file)) continue;
     if (restrictToTouched && !touched.has(file.name)) continue;
     const mtime = typeof file.mtime === 'number' && Number.isFinite(file.mtime) ? file.mtime : null;
     if (mtime === null || mtime < startedAt - TURN_MTIME_GRACE_MS) continue;
@@ -385,6 +407,10 @@ export function decideAgentFocusOpen(
   // decideAutoOpenAfterWrite: opening the wrong file is worse than opening none.
   if (matches.length !== 1) return declined;
   const file = matches[0]!;
+  if (isIntakeOwnedFile(file) || isBlockoutBriefFile(file)) return declined;
+  // The agent may explicitly request the canonical preview, but logos and
+  // materialized support files must never impersonate a body artifact.
+  if (isHeaderFooterSupportFile(file) && !/(^|\/)header-footer\/(?:[^/]+\/)?preview\.html$/i.test((file.path ?? file.name).replace(/\\/g, '/'))) return declined;
 
   const preTurn = input.preTurnFileNames;
   // Without a pre-turn snapshot we cannot prove the file is new. Decline rather
@@ -491,6 +517,7 @@ function selectSiteEntryFile(
   let entry: CandidateFile | null = null;
   let entryDepth = Number.POSITIVE_INFINITY;
   for (const file of producedFiles) {
+    if (isHeaderFooterSupportFile(file)) continue;
     if (!isHtmlPreviewFile(file)) continue;
     const depth = siteEntryDepth(file);
     if (depth === null) continue;

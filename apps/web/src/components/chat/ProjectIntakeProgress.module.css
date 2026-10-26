@@ -1,0 +1,69 @@
+.root {
+  flex: none;
+  margin: 6px 12px 0;
+  padding: 10px 12px;
+  color: var(--chat-text);
+  background: var(--chat-bg-subtle);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.heading, .summary, .actions, .counts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.heading { justify-content: space-between; gap: 12px; }
+.summary { flex-wrap: wrap; gap: 4px 8px; }
+.summary strong { font-weight: 600; }
+.actions { flex: none; gap: 4px; }
+.actions button { height: 28px; padding: 0 8px; font-size: 12px; }
+.count { color: var(--chat-text-muted); font-variant-numeric: tabular-nums; }
+
+.bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  appearance: none;
+  background: var(--chat-border);
+  accent-color: var(--chat-accent);
+}
+.bar::-webkit-progress-bar { background: var(--chat-border); }
+.bar::-webkit-progress-value { background: var(--chat-accent); }
+.bar::-moz-progress-bar { background: var(--chat-accent); }
+.bar:indeterminate {
+  background: linear-gradient(90deg, var(--chat-border) 0% 35%, var(--chat-accent) 50%, var(--chat-border) 65% 100%);
+  background-size: 200% 100%;
+  animation: scanning 2s ease-in-out infinite;
+}
+.bar:indeterminate::-webkit-progress-bar { background: transparent; }
+@keyframes scanning { to { background-position: -200% 0; } }
+
+.details { margin-top: 6px; color: var(--chat-text-muted); }
+.details summary { cursor: pointer; }
+.counts { display: inline-flex; flex-wrap: wrap; margin-left: 8px; gap: 4px 10px; font-variant-numeric: tabular-nums; }
+.failure, .error { color: var(--chat-red); }
+.error { margin: 6px 0 0; overflow-wrap: anywhere; }
+.documents { margin: 8px 0 0; padding: 0; list-style: none; max-height: 160px; overflow: auto; scrollbar-color: var(--chat-border-strong) transparent; }
+.documents li { padding: 6px 0; }
+.documents li + li { border-top: 1px solid var(--chat-border-soft); }
+.documents li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 12px; }
+.documents li p { margin: 3px 0 0; overflow-wrap: anywhere; }
+.documentName { color: var(--chat-text); overflow-wrap: anywhere; }
+.details summary:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 3px; border-radius: 2px; }
+
+@media (max-width: 540px) {
+  .heading { align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+  .actions { margin-left: auto; }
+  .counts { display: flex; margin: 3px 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar { animation: none; }
+}

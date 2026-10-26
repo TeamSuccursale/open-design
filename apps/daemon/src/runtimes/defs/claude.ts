@@ -1,10 +1,66 @@
 import { agentCapabilities } from '../capabilities.js';
 import { DEFAULT_MODEL_OPTION } from './shared.js';
 import { loadMmdRouteModels } from '../mmd-routes.js';
-import type { RuntimeAgentDef } from '../types.js';
+import type { RuntimeAgentDef, RuntimeCapabilityMap, RuntimeModelOption } from '../types.js';
 
-const CLAUDE_FALLBACK_MODELS = [
+const CLAUDE_REASONING_OPTIONS: RuntimeModelOption[] = [
+  { id: 'default', label: 'Default (CLI config)' },
+  { id: 'low', label: 'Low' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'high', label: 'High' },
+  { id: 'xhigh', label: 'XHigh' },
+  { id: 'max', label: 'Max' },
+];
+
+/**
+ * Claude Code's effort matrix, rather than the API's matrix: the CLI also
+ * accepts max for 4.6. Aliases and unknown proxy IDs stay CLI-resolved because
+ * their concrete model can change with the provider's own configuration.
+ * https://code.claude.com/docs/en/model-config#adjust-effort-level
+ */
+export function claudeReasoningOptions(modelId: string | null | undefined): RuntimeModelOption[] {
+  const model = modelId?.toLowerCase() ?? '';
+  if (/(?:^|[./:])claude-[123](?:-|$)/.test(model)) {
+    return CLAUDE_REASONING_OPTIONS.filter((option) => option.id === 'default');
+  }
+  const version = model.match(/(?:^|[./:])claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?=$|[-.[@:])/);
+  if (version && Number(version[2]) < 5) {
+    const major = Number(version[2]);
+    const minor = Number(version[3] ?? 0);
+    if (major < 4 || minor < 6 || !['opus', 'sonnet'].includes(version[1]!)) {
+      return CLAUDE_REASONING_OPTIONS.filter((option) => option.id === 'default');
+    }
+    if (minor === 6) {
+      return CLAUDE_REASONING_OPTIONS.filter((option) => option.id !== 'xhigh');
+    }
+  }
+  return CLAUDE_REASONING_OPTIONS.map((option) => ({ ...option }));
+}
+
+export function getClaudeEffortError(
+  modelId: string | null | undefined,
+  reasoning: string | null | undefined,
+  capabilities: RuntimeCapabilityMap,
+): { code: string; message: string } | null {
+  if (!reasoning || reasoning === 'default') return null;
+  if (!CLAUDE_REASONING_OPTIONS.some((option) => option.id === reasoning)) {
+    return { code: 'CLAUDE_EFFORT_INVALID', message: `Claude Code does not support effort "${reasoning}". Choose Low, Medium, High, XHigh, Max, or Default.` };
+  }
+  if (!claudeReasoningOptions(modelId).some((option) => option.id === reasoning)) {
+    return { code: 'CLAUDE_MODEL_EFFORT_UNSUPPORTED', message: `The selected Claude model "${modelId}" does not support effort "${reasoning}". Choose a supported level or Default.` };
+  }
+  if (!capabilities.effort) {
+    return { code: 'CLAUDE_EFFORT_UNSUPPORTED', message: 'The installed Claude Code CLI does not advertise --effort. Update Claude Code or choose Default effort before retrying.' };
+  }
+  return null;
+}
+
+const CLAUDE_FALLBACK_MODELS: RuntimeModelOption[] = [
   DEFAULT_MODEL_OPTION,
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+  { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
   { id: 'sonnet', label: 'Sonnet (alias)' },
   { id: 'opus', label: 'Opus (alias)' },
   { id: 'haiku', label: 'Haiku (alias)' },
@@ -12,10 +68,9 @@ const CLAUDE_FALLBACK_MODELS = [
   { id: 'claude-opus-5', label: 'claude-opus-5' },
   { id: 'claude-sonnet-5', label: 'claude-sonnet-5' },
   { id: 'claude-fable-5', label: 'claude-fable-5' },
-  { id: 'claude-opus-4-5', label: 'claude-opus-4-5' },
-  { id: 'claude-sonnet-4-5', label: 'claude-sonnet-4-5' },
-  { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' },
-];
+  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+].map((model) => ({ ...model, reasoningOptions: claudeReasoningOptions(model.id) }));
 
 export const claudeAgentDef = {
     id: 'claude',
@@ -42,6 +97,7 @@ export const claudeAgentDef = {
       '--forward-subagent-text': 'forwardSubagentText',
       '--agents': 'customAgents',
       '--add-dir': 'addDir',
+      '--effort': 'effort',
     },
     // `--thinking-display` is a real option but it is hidden from both
     // `claude --help` and `claude -p --help`, so the capabilityFlags scan
@@ -56,7 +112,11 @@ export const claudeAgentDef = {
     // when present so proxy-backed Claude-compatible models appear in the
     // picker, then keep the built-in aliases as fallback hints.
     fallbackModels: CLAUDE_FALLBACK_MODELS,
-    fetchModels: async (_resolvedBin, env) => loadMmdRouteModels(env, CLAUDE_FALLBACK_MODELS),
+    fetchModels: async (_resolvedBin, env) => {
+      const models = await loadMmdRouteModels(env, CLAUDE_FALLBACK_MODELS);
+      return models?.map((model) => ({ ...model, reasoningOptions: claudeReasoningOptions(model.id) })) ?? null;
+    },
+    reasoningOptions: CLAUDE_REASONING_OPTIONS,
     // Prompt delivered via stdin to avoid both Linux `spawn E2BIG`
     // (MAX_ARG_STRLEN caps a single argv entry at ~128 KB) and Windows
     // `spawn ENAMETOOLONG` (CreateProcess caps the full command line at
@@ -66,6 +126,8 @@ export const claudeAgentDef = {
     // cursor/qwen entries below.
     buildArgs: (_prompt, _imagePaths, extraAllowedDirs = [], options = {}, runtimeContext = {}) => {
       const caps = agentCapabilities.get('claude') || {};
+      const effortError = getClaudeEffortError(options.model, options.reasoning, caps);
+      if (effortError) throw Object.assign(new Error(effortError.message), { code: effortError.code });
       // `--input-format stream-json` lets the daemon stream multiple JSONL
       // messages into stdin instead of closing it after the initial prompt,
       // keeping the turn open so the daemon can stream further user messages
@@ -94,6 +156,9 @@ export const claudeAgentDef = {
       }
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
+      }
+      if (caps.effort && options.reasoning && options.reasoning !== 'default') {
+        args.push('--effort', options.reasoning);
       }
       const dirs = (extraAllowedDirs || []).filter(
         (d) => typeof d === 'string' && d.length > 0,

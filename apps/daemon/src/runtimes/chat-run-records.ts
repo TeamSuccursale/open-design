@@ -8,11 +8,13 @@
 // Each guard takes the narrowest shape it actually reads rather than the full
 // `ChatRun`, so a caller can hand over any object that carries those fields.
 
+import { isHeaderFooterDraftDeliveryReceipt } from '@open-design/contracts';
 import type {
   ChatRunStatus,
   ChatRunStatusResponse,
   ProjectMetadata as ContractProjectMetadata,
   StrategyTaskProjectionV2,
+  SvgExecutionPolicy,
 } from '@open-design/contracts';
 import type { AnalyticsContext } from '../analytics.js';
 import type { RunArtifactBaseline } from '../run-artifact-fs.js';
@@ -35,6 +37,7 @@ import { getProject } from '../db.js';
 import {
   validateProjectDeliverable,
   validateRunDeliverable,
+  revalidateRegisteredBlockoutDelivery,
   type RunDeliverableValidationResult,
 } from '../run-deliverable-validation.js';
 
@@ -68,13 +71,16 @@ export function toProjectRecord(value: unknown): ProjectRecord | null {
 
 /** The run facts `validateChatRunDeliverable` reads. */
 export interface RunForDeliverableValidation {
+  id?: string;
   projectId: string | null;
   projectMetadata?: ProjectMetadata;
+  events?: readonly Pick<RunEventRecord, 'event' | 'data'>[];
 }
 
 export async function validateChatRunDeliverable(input: {
   db: Parameters<typeof getProject>[0];
   projectsRoot: string;
+  dataRoot?: string;
   run: RunForDeliverableValidation;
   runStatus: Parameters<typeof validateRunDeliverable>[0]['runStatus'];
   artifactCount: number;
@@ -83,13 +89,29 @@ export async function validateChatRunDeliverable(input: {
   const project = input.run.projectId
     ? toProjectRecord(getProject(input.db, input.run.projectId))
     : null;
+  // The registrar emits this exact normalized diagnostic only after saving a
+  // draft for the active run's owning library. Agent text, tool output and raw
+  // forwarded frames never become that event envelope. A library model is a
+  // durable delivery in its own right; it does not invent a page-file artifact.
+  const collectionId = project?.metadata?.collectionProjectId ?? project?.id;
+  if (input.runStatus === 'succeeded' && collectionId && input.run.events?.some((event) => {
+    if (event.event !== 'agent') return false;
+    const data = toJsonRecord(event.data);
+    return data.type === 'diagnostic'
+      && isHeaderFooterDraftDeliveryReceipt(data)
+      && data.shape.projectId === collectionId;
+  })) {
+    return { valid: true, validation: 'valid' };
+  }
   return validateRunDeliverable({
+    ...(input.run.id ? { runId: input.run.id } : {}),
     projectsRoot: input.projectsRoot,
     projectId: input.run.projectId,
     projectMetadata:
       project?.metadata ?? input.run.projectMetadata ?? null,
     runStatus: input.runStatus,
     artifactCount: input.artifactCount,
+    ...(input.dataRoot ? { documentScope: { dataRoot: input.dataRoot, getProject: (id: string) => toProjectRecord(getProject(input.db, id)) } } : {}),
     ...(input.touchedPaths ? { touchedPaths: input.touchedPaths } : {}),
   });
 }
@@ -120,6 +142,8 @@ export async function validateChatProjectDeliverable(input: {
 /** The run facts `runTouchedArtifactPaths` reads. */
 export interface RunForTouchedArtifactPaths {
   artifactOutcome?: { diff?: { touchedPaths?: unknown } } | undefined;
+  /** Host-normalized exact diff, persisted with the run for durable replay. */
+  artifactPaths?: unknown;
 }
 
 export function runTouchedArtifactPaths(
@@ -130,11 +154,53 @@ export function runTouchedArtifactPaths(
       | { diff?: { touchedPaths?: unknown } }
       | undefined
   )?.diff;
-  return Array.isArray(diff?.touchedPaths)
-    ? diff.touchedPaths.filter(
+  // An existing outcome with no reliable diff means contention/unknown. Do
+  // not override it with a different source. Hydrated runs have no outcome.
+  const paths = run.artifactOutcome !== undefined
+    ? diff?.touchedPaths : run.artifactPaths;
+  return Array.isArray(paths)
+    ? paths.filter(
         (value): value is string => typeof value === 'string' && value.length > 0,
       )
     : undefined;
+}
+
+export async function revalidateMissingChatRunBlockout(input: {
+  db: Parameters<typeof getProject>[0];
+  projectsRoot: string;
+  dataRoot: string;
+  run: RunForDeliverableValidation & RunForTouchedArtifactPaths;
+  runStatus: Parameters<typeof validateRunDeliverable>[0]['runStatus'];
+  artifactCount: number;
+  cached: Pick<ChatRunStatusResponse, 'deliverableValid' | 'deliverableValidation'>;
+}): Promise<RunDeliverableValidationResult | null> {
+  if (input.cached.deliverableValid !== false || input.cached.deliverableValidation !== 'entry_missing'
+    || input.runStatus !== 'succeeded' || !Number.isFinite(input.artifactCount) || input.artifactCount <= 0) return null;
+  const touchedPaths = runTouchedArtifactPaths(input.run);
+  if (!touchedPaths?.length) return null;
+  const project = input.run.projectId ? toProjectRecord(getProject(input.db, input.run.projectId)) : null;
+  if (!project) return null;
+  const result = await revalidateRegisteredBlockoutDelivery({
+    ...(input.run.id ? { runId: input.run.id } : {}),
+    projectsRoot: input.projectsRoot, projectId: project.id, projectMetadata: project.metadata ?? null,
+    runStatus: input.runStatus, artifactCount: input.artifactCount, touchedPaths,
+    documentScope: { dataRoot: input.dataRoot, getProject: (id) => toProjectRecord(getProject(input.db, id)) },
+  });
+  return result?.valid ? result : null;
+}
+
+/** A receipt poll must resolve terminal evidence itself, without waiting for a separate run-status UI read. */
+export async function resolveChatRunBlockoutDesignEvidence(input: {
+  db: Parameters<typeof getProject>[0]; projectsRoot: string; dataRoot: string;
+  run: RunForDeliverableValidation & RunForTouchedArtifactPaths;
+  runStatus: Parameters<typeof validateRunDeliverable>[0]['runStatus']; artifactCount: number;
+  cached: Pick<ChatRunStatusResponse, 'deliverableValid' | 'deliverableValidation'>;
+}): Promise<RunDeliverableValidationResult | null> {
+  if (input.runStatus !== 'succeeded') return null;
+  if (input.cached.deliverableValid === false) return revalidateMissingChatRunBlockout(input);
+  if (input.cached.deliverableValid === true) return null;
+  const touchedPaths = runTouchedArtifactPaths(input.run);
+  return validateChatRunDeliverable({ ...input, ...(touchedPaths ? { touchedPaths } : {}) });
 }
 
 export interface RunEventRecord
@@ -165,6 +231,7 @@ export interface ChatRun {
   agentId: string | null;
   workspaceScope?: RunWorkspaceScope | null;
   model?: string | null;
+  svgExecutionPolicy?: SvgExecutionPolicy | null;
   status: ChatRunStatus;
   createdAt: number;
   updatedAt: number;
@@ -230,6 +297,9 @@ export interface ChatRun {
   // prompt write to child stdin was queued (pipe buffer full). `lastAgentActivityAt`:
   // the inactivity-watchdog clock, used to derive `last_progress_age_ms`.
   stdinBackpressure?: boolean;
+  /** One silent-start recovery uses complete file-backed input instead of the live pipe. */
+  claudeFileInputRecovery?: boolean;
+  claudeCompactionAttemptCount?: number;
   lastAgentActivityAt?: number;
   retryAttemptCount?: number;
   retryFinalResult?: string;

@@ -137,14 +137,12 @@ test('codex args disable plugins when OD_CODEX_DISABLE_PLUGINS is 1', () => {
     withPlatform('darwin', () => {
       const args = codex.buildArgs('', [], [], {}, { cwd: '/tmp/od-project' });
 
-      assert.deepEqual(args.slice(0, 9), [
+      assert.deepEqual(args.slice(0, 7), [
         'exec',
         '--json',
         '--skip-git-repo-check',
         '--sandbox',
-        'workspace-write',
-        '-c',
-        'sandbox_workspace_write.network_access=true',
+        'danger-full-access',
         '--disable',
         'plugins',
       ]);
@@ -163,14 +161,12 @@ test('codex args disable plugins for an externally attributed Local Codex run', 
         disablePlugins: true,
       });
 
-      assert.deepEqual(args.slice(0, 9), [
+      assert.deepEqual(args.slice(0, 7), [
         'exec',
         '--json',
         '--skip-git-repo-check',
         '--sandbox',
-        'workspace-write',
-        '-c',
-        'sandbox_workspace_write.network_access=true',
+        'danger-full-access',
         '--disable',
         'plugins',
       ]);
@@ -178,7 +174,7 @@ test('codex args disable plugins for an externally attributed Local Codex run', 
   });
 });
 
-test('codex args use workspace-write sandbox on macOS and Linux', () => {
+test('codex args use the owner full-access policy without approvals on macOS and Linux', () => {
   withEnvSnapshot(['OD_CODEX_DISABLE_PLUGINS', 'OD_CODEX_SANDBOX', 'WSL_DISTRO_NAME'], () => {
     delete process.env.OD_CODEX_DISABLE_PLUGINS;
     delete process.env.OD_CODEX_SANDBOX;
@@ -193,13 +189,14 @@ test('codex args use workspace-write sandbox on macOS and Linux', () => {
           '--json',
           '--skip-git-repo-check',
           '--sandbox',
-          'workspace-write',
+          'danger-full-access',
         ]);
         assert.equal(
           args.includes('-c'),
           true,
         );
         assert.equal(args.some((arg) => arg.includes('default_permissions')), false);
+        assert.equal(args.includes('approval_policy="never"'), true);
       });
     }
   });
@@ -249,21 +246,21 @@ test('codex args allow OD_CODEX_SANDBOX danger-full-access override on Linux', (
   });
 });
 
-test('codex args ignore unknown OD_CODEX_SANDBOX values', () => {
+test('codex args keep the owner full-access default when an old sandbox environment value is present', () => {
   withPlatform('linux', () => {
     withEnvSnapshot(['OD_CODEX_DISABLE_PLUGINS', 'OD_CODEX_SANDBOX', 'WSL_DISTRO_NAME'], () => {
       delete process.env.OD_CODEX_DISABLE_PLUGINS;
       process.env.OD_CODEX_SANDBOX = 'workspace-write';
       delete process.env.WSL_DISTRO_NAME;
 
-      assert.equal(codexNeedsDangerFullAccessSandbox('linux', process.env), false);
+      assert.equal(codexNeedsDangerFullAccessSandbox('linux', process.env), true);
       const args = codex.buildArgs('', [], [], {}, { cwd: '/tmp/od-project' });
       assert.deepEqual(args.slice(0, 5), [
         'exec',
         '--json',
         '--skip-git-repo-check',
         '--sandbox',
-        'workspace-write',
+        'danger-full-access',
       ]);
     });
   });

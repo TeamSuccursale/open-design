@@ -69,6 +69,19 @@ function mockVisibility(): void {
 }
 
 describe('project events stream — tab visibility budget', () => {
+  it.each([
+    ['project', createProjectEventsConnection], ['theater', createCritiqueEventsConnection],
+  ] as const)('releases an initially hidden %s tab without waiting for another visibility event', (_name, connect) => {
+    vi.useFakeTimers(); mockVisibility(); visibility = 'hidden';
+    const conn = connect('p1', () => {}, { EventSourceCtor: Ctor });
+    expect(openCount()).toBe(1);
+    vi.advanceTimersByTime(31_000);
+    expect(openCount()).toBe(0);
+    setVisibility('visible'); expect(openCount()).toBe(1);
+    expect(MockEventSource.instances).toHaveLength(2);
+    conn.close(); expect(openCount()).toBe(0);
+  });
+
   it('holds exactly one socket while the tab is visible', () => {
     mockVisibility();
     const conn = createProjectEventsConnection('p1', () => {}, { EventSourceCtor: Ctor });

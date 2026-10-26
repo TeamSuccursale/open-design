@@ -3489,6 +3489,7 @@ describe('ProjectView conversation run isolation', () => {
         role: 'user',
         clientRequestId: firstCall.clientRequestId,
         sendFailed: true,
+        sendFailure: { message: 'daemon 503: unavailable' },
       }),
     );
     expect(persistedMessages.some((message) => message.role === 'assistant')).toBe(false);
@@ -3509,6 +3510,7 @@ describe('ProjectView conversation run isolation', () => {
       role: 'user',
       content: 'hello from b',
     });
+    expect(retryCall.history[0]?.sendFailure).toBeUndefined();
     expect(screen.getByTestId('user-messages').textContent).toBe(
       `${firstCall.userMessageId}|sent|hello from b`,
     );

@@ -28,6 +28,13 @@
   /* ── 底与面 ── */
   --chat-bg: var(--bg);
   --chat-bg-panel: var(--bg-panel);
+  --chat-intake-surface: var(--studio-paper);
+  --chat-intake-canvas: var(--studio-canvas);
+  --chat-intake-ink: var(--studio-ink);
+  --chat-intake-muted: var(--studio-muted);
+  --chat-intake-accent: var(--studio-accent);
+  --chat-intake-tint: var(--studio-tint);
+  --chat-intake-line: var(--studio-line);
   --chat-bg-subtle: var(--bg-subtle);
   --chat-bg-muted: var(--bg-muted);
   --chat-bg-fill-secondary: var(--bg-fill-secondary);
@@ -251,6 +258,13 @@
    设计稿单独指定的色号按它给的暗色值写,没给的同值。 */
 :global([data-theme='dark']) .vars,
 :global([data-theme='dark']) .root {
+  --chat-intake-surface: var(--studio-paper);
+  --chat-intake-canvas: var(--studio-canvas);
+  --chat-intake-ink: var(--studio-ink);
+  --chat-intake-muted: var(--studio-muted);
+  --chat-intake-accent: var(--studio-accent);
+  --chat-intake-tint: var(--studio-tint);
+  --chat-intake-line: var(--studio-line);
   --chat-text: var(--text);
   --chat-text-strong: var(--text-strong);
   --chat-text-muted: var(--text-muted);

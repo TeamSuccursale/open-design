@@ -787,14 +787,14 @@ describe('QuestionFormView', () => {
     );
   });
 
-  it('offers Skip — you decide when a single-question form contains required questions', () => {
+  it('offers Skip these questions when a single-question form contains required questions', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={richForm} interactive onSubmit={onSubmit} />);
 
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(
       true,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Skip — you decide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip these questions' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('- Primary surface: (skipped)'),
@@ -803,7 +803,7 @@ describe('QuestionFormView', () => {
     );
   });
 
-  it('keeps Skip — you decide for a form containing only optional questions', () => {
+  it('keeps Skip these questions for a form containing only optional questions', () => {
     const onSubmit = vi.fn();
     const optionalForm = {
       id: 'optional',
@@ -812,7 +812,7 @@ describe('QuestionFormView', () => {
     } as QuestionForm;
     render(<QuestionFormView form={optionalForm} interactive onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Skip — you decide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip these questions' }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('[form answers — optional]'),
       {},

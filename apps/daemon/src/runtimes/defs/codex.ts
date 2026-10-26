@@ -1,8 +1,17 @@
 import { spawnSync } from 'node:child_process';
+import { CODEX_SANDBOX_MODE, codexPermissionArgs } from '../codex-permissions.js';
 import { DEFAULT_MODEL_OPTION, clampCodexReasoning } from './shared.js';
 import { resolveAgentLaunch } from '../launch.js';
 import type { RuntimeModelOption } from '../types.js';
-import type { RuntimeAgentDef } from '../types.js';
+import type { RuntimeAgentDef, RuntimeContext } from '../types.js';
+
+/** Run-scoped native roles: no user-home writes and no shell interpolation. */
+export function codexImageSpecialistArgs(context: RuntimeContext): string[] {
+  return (context.imageSpecialists ?? []).flatMap((role) => [
+    '-c', `agents.${role.id}.description=${JSON.stringify(role.description)}`,
+    '-c', `agents.${role.id}.config_file=${JSON.stringify(role.configFile.replaceAll('\\', '/'))}`,
+  ]);
+}
 
 function parseCodexStringList(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -164,6 +173,7 @@ const CODEX_SHELL_ENVIRONMENT_INCLUDE_KEYS = [
   'OD_TOOL_TOKEN',
   'OD_DATA_DIR',
   'OD_PROJECT_ID',
+  'OD_RUN_ID',
   'OD_PROJECT_DIR',
   'OD_WORKSPACE_ID',
   'OD_WORKSPACE_MEMBER_ID',
@@ -261,17 +271,12 @@ export function codexUpdatePlanToolArgs(): string[] {
 }
 
 export function codexNeedsDangerFullAccessSandbox(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+  _platform: NodeJS.Platform = process.platform,
+  _env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // Operator override for deployments where Codex cannot create its
-  // workspace-write sandbox, for example unprivileged Linux containers.
-  // Only danger-full-access is accepted; unknown values keep the default path.
-  if (env.OD_CODEX_SANDBOX?.trim() === 'danger-full-access') return true;
-  if (platform === 'win32') return true;
-  // WSL reports `linux` but Codex still hits the Windows read-only
-  // workspace-write sandbox path when launched from there (#2834).
-  return Boolean(env.WSL_DISTRO_NAME?.trim());
+  // This local MelilloDesign fork runs with the owner's explicit full-access
+  // policy on every platform. Both Codex transports consume this same choice.
+  return true;
 }
 
 export const codexAgentDef = {
@@ -316,6 +321,7 @@ export const codexAgentDef = {
       { id: 'medium', label: 'Medium' },
       { id: 'high', label: 'High' },
       { id: 'xhigh', label: 'XHigh' },
+      { id: 'max', label: 'Max' },
     ],
     // Prompt is delivered via stdin pipe (gated by `promptViaStdin: true`
     // below) to avoid Windows `spawn ENAMETOOLONG` while keeping Codex on
@@ -331,12 +337,8 @@ export const codexAgentDef = {
       options = {},
       runtimeContext = {},
     ) => {
-      // Codex CLI's `workspace-write` sandbox blocks shell invocations on
-      // Windows ("powershell.exe ... rejected: blocked by policy", #1721),
-      // because Codex has no working OS-level sandbox on Windows and falls
-      // back to a coarse policy that rejects any shell. macOS (Seatbelt)
-      // and Linux (Landlock+seccomp) keep workspace-write because their
-      // sandbox enforcement permits shell while restricting writes.
+      // Keep fresh sessions and resumed sessions on the same owner-selected
+      // full-access policy, including the app-server transport below.
       const needsDangerFullAccess = codexNeedsDangerFullAccessSandbox();
       // Capture-style resume: when the daemon has a stored Codex thread id for
       // this conversation it asks the CLI to continue that session with
@@ -382,8 +384,10 @@ export const codexAgentDef = {
         args.push('--disable', 'plugins');
       }
       args.push(...codexOpenDesignShellEnvironmentArgs());
+      args.push(...codexImageSpecialistArgs(runtimeContext));
       args.push(...codexReasoningSummaryArgs());
       args.push(...codexUpdatePlanToolArgs());
+      args.push(...codexPermissionArgs());
       // `-C <cwd>` and `--add-dir <dir>` are CREATE-only flags: `codex exec
       // resume` rejects both (`error: unexpected argument '-C' found`), so
       // appending them on a resume turn would make the follow-up turn die
@@ -584,7 +588,7 @@ export function codexResolvedSandboxMode(): 'workspace-write' | 'danger-full-acc
  */
 function buildCodexAppServerArgs(
   extraAllowedDirs: string[] = [],
-  runtimeContext: { disablePlugins?: boolean } = {},
+  runtimeContext: RuntimeContext = {},
 ): string[] {
   const args = ['app-server'];
   if (
@@ -594,9 +598,11 @@ function buildCodexAppServerArgs(
     args.push('--disable', 'plugins');
   }
   args.push(...codexOpenDesignShellEnvironmentArgs());
+  args.push(...codexImageSpecialistArgs(runtimeContext));
   // The plan tool has no `thread/start` or `turn/start` parameter, so unlike
   // the model / effort / summary knobs it stays on argv on this transport too.
   args.push(...codexUpdatePlanToolArgs());
+  args.push(...codexPermissionArgs(), '-c', `sandbox_mode="${CODEX_SANDBOX_MODE}"`);
   if (codexResolvedSandboxMode() === 'workspace-write') {
     args.push('-c', 'sandbox_workspace_write.network_access=true');
     const dirs = (extraAllowedDirs || []).filter(

@@ -19,3 +19,19 @@
 .unanswered[open] > summary .chevron {
   transform: rotate(180deg);
 }
+.acceptedFiles { display: block; margin-top: 7px; color: var(--chat-text-muted); font-size: 12px; line-height: 1.5; }
+.multilineAnswer { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Related binary settings read as one sheet, rather than a stack of interviews. */
+.groupedSettings:global(.question-form) { width: min(100%, 740px); }
+.compactChoices:global(.question-form) { width: min(100%, 740px); container-type: inline-size; }
+.compactChoices :global(.question-form-body) { padding: 0 12px; }
+.compactChoices :global(.qf-label) { margin: 0; padding: 12px 0 4px; font-weight: 500; }
+.compactChoices :global(.qf-options) { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 0 0 10px; border-bottom: 1px solid var(--chat-border-soft); }
+.compactChoices :global(.qf-options) > :global(.qf-chip) { width: auto; min-height: 34px; padding: 6px 8px; align-items: center; }
+.compactChoices :global(.qf-chip-copy) { flex: none; }
+@container (min-width: 540px) {
+  .compactChoices :global(.question-form-body) { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.6fr); column-gap: 20px; }
+  .compactChoices :global(.qf-label) { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--chat-border-soft); }
+  .compactChoices :global(.qf-options) { padding: 6px 0; }
+}

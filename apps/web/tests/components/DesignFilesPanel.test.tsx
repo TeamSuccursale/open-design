@@ -3,6 +3,7 @@
 import {
   cleanup,
   fireEvent,
+  isInaccessible,
   render,
   screen,
   waitFor,
@@ -145,6 +146,15 @@ describe("DesignFilesPanel sections", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it('keeps generated header/footer previews out of the document-page count', () => {
+    renderPanel([file({ name: 'header-footer/report/preview.html' }), file({ name: 'documents/report/page-1.html' })]);
+    expect(screen.getByRole('tab', { name: /^Pages\s*1$/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: /^Header and footer\s*1$/ }));
+    expect(screen.getByTestId('design-file-row-header-footer/report/preview.html')).toBeTruthy();
+    expect(screen.getByText('Header/footer preview')).toBeTruthy();
+    expect(screen.queryByTestId('design-file-row-documents/report/page-1.html')).toBeNull();
   });
 
   it("does not show grouping, sort, filter, or pagination chrome", () => {
@@ -571,6 +581,27 @@ describe("DesignFilesPanel selection", () => {
 });
 
 describe("DesignFilesPanel page thumbnails", () => {
+  it.each(['fresh', 'cached'])("keeps %s decorative HTML controls out of the accessibility and focus paths while the outer Open button works", async (mode) => {
+    const source = '<!doctype html><html><body><button>Guarda pagina 1</button><a href="#page-2">Pagina 2</a><input aria-label="Commento" autofocus></body></html>';
+    const thumbnailFile = file({ name: `decorative-${mode}.html`, kind: 'html', mime: 'text/html', size: 16000, mtime: 1700000000000 });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(source, { status: 200 })));
+    if (mode === 'cached') setHtmlSourceSnapshot({ authorizationScopeKey: 'local', projectId: 'test-project', fileName: thumbnailFile.name, refreshKey: `${thumbnailFile.mtime}:${thumbnailFile.size}:0`, source });
+    const { onOpenFile } = renderPanel([thumbnailFile]);
+    const open = screen.getByRole('button', { name: `Open ${thumbnailFile.name}` }) as HTMLButtonElement;
+    await waitFor(() => expect(open.querySelector('iframe')).toBeTruthy());
+    const iframe = open.querySelector('iframe')!;
+    expect(iframe.srcdoc).toContain('Guarda pagina 1');
+    expect(iframe.getAttribute('aria-hidden')).toBe('true'); expect(isInaccessible(iframe)).toBe(true);
+    expect(iframe.tabIndex).toBe(-1); expect(iframe.hasAttribute('inert')).toBe(true);
+    expect(iframe.parentElement?.hasAttribute('inert')).toBe(true); expect(iframe.parentElement?.getAttribute('aria-hidden')).toBe('true');
+    expect(iframe.style.pointerEvents).toBe('none'); expect(iframe.parentElement?.style.pointerEvents).toBe('none');
+    expect(screen.queryByRole('button', { name: 'Guarda pagina 1' })).toBeNull(); expect(screen.queryByRole('link', { name: 'Pagina 2' })).toBeNull(); expect(screen.queryByRole('textbox', { name: 'Commento' })).toBeNull();
+    expect(isInaccessible(open)).toBe(false); expect(open.hasAttribute('inert')).toBe(false);
+    fireEvent.click(open); expect(onOpenFile).toHaveBeenCalledExactlyOnceWith(thumbnailFile.name);
+    open.focus(); expect(document.activeElement).toBe(open);
+    fireEvent.click(open, { detail: 0 }); expect(onOpenFile).toHaveBeenCalledTimes(2);
+  });
+  // The intake status has its own request; these assertions count only HTML-source loads.
   it.each(['fresh', 'cached'])("keeps %s motion video thumbnails under inactive host playback", async (sourceMode) => {
     const source = '<!doctype html><html><head><meta name="od-motion-output" content="video"></head><body><main data-composition-id="main" data-duration="15" data-width="1920" data-height="1080"><audio src="sound.wav" data-duration="15"></audio></main></body></html>';
     const motionFile = file({ name: `motion-${sourceMode}.html`, kind: 'html', mime: 'text/html', size: 16000, mtime: 1700000000000 });
@@ -595,7 +626,7 @@ describe("DesignFilesPanel page thumbnails", () => {
       }),
     ]);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/raw/"))).toHaveLength(0);
     // Over the inline cap the card thumb never URL-loads the iframe; it falls
     // back to the glyph placeholder.
     expect(container.querySelector(".df-card-thumb iframe")).toBeNull();
@@ -603,7 +634,7 @@ describe("DesignFilesPanel page thumbnails", () => {
   });
 
   it("builds small HTML thumbnails asynchronously without URL-loading the iframe first", async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response("<!doctype html><html><body><main>Small</main></body></html>", {
           status: 200,
@@ -634,7 +665,7 @@ describe("DesignFilesPanel page thumbnails", () => {
   });
 
   it("reuses an exact-version HTML thumbnail source across panel remounts", async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response("<!doctype html><html><body><main>Cached</main></body></html>", {
           status: 200,
@@ -654,21 +685,21 @@ describe("DesignFilesPanel page thumbnails", () => {
     await waitFor(() => {
       expect(first.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/raw/"))).toHaveLength(1);
     first.unmount();
 
     const second = renderPanel([cachedFile]);
     await waitFor(() => {
       expect(second.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/raw/"))).toHaveLength(1);
     second.unmount();
 
     const changed = renderPanel([{ ...cachedFile, mtime: cachedFile.mtime + 1 }]);
     await waitFor(() => {
       expect(changed.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/raw/"))).toHaveLength(2);
   });
 
   it("builds the current file thumbnail from the exact viewer source snapshot", async () => {
@@ -696,7 +727,7 @@ describe("DesignFilesPanel page thumbnails", () => {
       expect(iframe?.getAttribute("srcdoc") ?? iframe?.srcdoc ?? "")
         .toContain("Already loaded");
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/raw/"))).toHaveLength(0);
   });
 
   it("mounts a cached HTML thumbnail with the desktop layout viewport on its first render", () => {

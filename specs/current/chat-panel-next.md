@@ -466,6 +466,22 @@ classDiagram
 | D28 | **产物卡动作按最新版(PR #7170 head `1bbdce0b06`)**:动作在右上角,两枚图标「发布 / 导出」,没有「预览」按钮(整张卡就是预览入口);非 HTML 只剩「导出」;视频卡面不压任何东西。之前的 21:02 版(动作压在图下缘)作废 | 用户 2026-08-21 拍板「就按给你的最新的」;同日设计师指明 PR head 为最新 |
 | D27 | 场景模拟器作为评审与验证载体 | 文档里的状态机图看不出流式效果;真实事件逐帧播放能直接暴露问题(D26 就是这么发现的) |
 
+### 2026-10-23 · MelilloDesign disclosure policy (D53)
+
+The user explicitly asked for reasoning and tool calls to start collapsed because automatic expansion moves the live chat. ExecutionShell, task drawers, ThoughtsRow and every expandable ToolRow now start closed, including running, failed and canceled states. Status labels and elapsed time remain in each summary; errors and activity remain available by manual expansion. Output growth, status changes, done markers and run completion must neither open nor close a disclosure the user has chosen. Thoughts keep the same component identity across live and completed states so that choice persists. This supersedes the earlier automatic expansion/collapse policy at these execution-rendering call sites; Foldable's optional lifecycle API remains available to unrelated consumers.
+
+Completed native question streams also keep their immediately adjacent final recap visible with the question. At the existing terminal reorder point, the real question parser validates the form before lifting that one non-thinking prose segment from execution into its question block. Streaming positions, physical-run boundaries, artifact handling and masked code/protocol examples retain their existing behavior. Earlier reasoning and tool output stay collapsed. If this leaves an execution shell empty, the existing empty-shell rule removes it.
+
+Validation: focused execution disclosure tests cover initial and transition states, manual open/close persistence, live thought → completed thought identity, deferred body mounting, visible failure status, and the existing command-output/file-error boundaries. No event parsing, status classification, body layout or prompt policy changes.
+
+### 2026-10-23 · Background intake ownership
+
+Concurrent extraction is not a native chat deliverable. The authority-scoped ProjectView file refresh reads the existing intake settings/catalog and marks only the reserved intake metadata and exact catalog image/table paths. Those files remain in Files and Gallery, but cannot become chat result cards, trace deliverables, auto-open tabs or an automatic edit target through file diffs, timing inference or focus declarations. Configured extraction destinations are supported without excluding their whole directory. Ordinary JSON, images and generated user files retain their existing behavior. Previously persisted message copies are filtered against the current owned snapshot at display time; no prompt, runtime protocol or wire DTO changes are involved.
+
+Per-page Blockout files keep their logical page identity in chat and Files. Cards show the saved page number/name and corresponding variant thumbnails; their comparison target includes the logical page ID. Page comparison requires a proposal choice before editing and resolves that choice to the actual proposal-scoped page ID. Document-level cards still compare the whole document. A scoped view preserves the document’s full allowance count and original page numbering; ordinary JSON remains unchanged.
+
+2026-10-23 · The chat textbox starts compact (48px text area) and grows naturally with its content up to min(240px, 32vh), then scrolls. Merely focusing the textbox or selecting a file must not enlarge it. Explicit manual resizing remains available for a nonempty draft; clearing/submitting that draft returns the editor to content sizing. This change is scoped to ChatComposer and preserves HomeHero’s independent sizing.
+
 ### 9.1 待设计答复
 
 | 事项 | 卡在谁 |
@@ -477,6 +493,12 @@ classDiagram
 | 产物卡「数量极端」:多产物时谁上大卡 | 待定,否则实现时只能自行拍板 |
 
 ---
+
+### 2026-10-25 · Header/footer editor handoff
+
+The accepted repair pass keeps editor-generated header/footer instructions in the saved message and agent request, but presents their action and document name first in the user bubble. The existing expansion control reveals the original request as “Details sent to Codex”; ordinary user messages and design-system cards retain their prior presentation. This addresses the cold readers mistaking generated implementation instructions for something they needed to author. Structural confirmation now says “Prepare graphic preview”; the existing graphic review and Apply controls remain separate. Adding an alternative explicitly names addition, and the dialog shows preservation of the saved proposal before its inputs.
+
+The targeted question bridges also carry `submitting` separately from `submitDisabled`: an accepted click visibly remains pending in chat and an already-open editor, while a refused send unlocks both views with their draft answers intact. Focused AssistantMessage integration tests use the actual bridge-published props rather than a mock editor handoff.
 
 ## 10. 踩过的坑(每条都已犯过一次,重犯 = 返工)
 

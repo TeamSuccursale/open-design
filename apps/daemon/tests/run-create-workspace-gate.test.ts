@@ -38,6 +38,7 @@ let server: http.Server | null = null;
 let tempDir: string | null = null;
 let createdRunCount = 0;
 let lastCreatedRun: any = null;
+let lastCreatedMeta: any = null;
 let strategyTaskAtPhysicalCancel: any = null;
 let runsServiceStub: ReturnType<typeof createRunsServiceStub> | null = null;
 
@@ -130,6 +131,7 @@ function createRunsServiceStub() {
     },
     create(meta: any) {
       createdRunCount += 1;
+      lastCreatedMeta = meta;
       const run = {
         id: `run-${++seq}`,
         projectId: typeof meta.projectId === 'string' ? meta.projectId : null,
@@ -240,11 +242,13 @@ async function startServer(opts?: {
   authorizePluginRequest?: (req: any, res: any, pluginId: string) => Promise<boolean>;
   authorizePluginWithWorkspaceAuthority?: boolean;
   seedImplicitScenarioPlugin?: boolean;
+  fastProject?: boolean;
   teamProjectResourceState?: 'active' | 'deleted';
   loadPluginRegistryView?: () => Promise<any>;
 }) {
   createdRunCount = 0;
   lastCreatedRun = null;
+  lastCreatedMeta = null;
   strategyTaskAtPhysicalCancel = null;
   runsServiceStub = null;
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-run-ws-gate-'));
@@ -256,7 +260,9 @@ async function startServer(opts?: {
       name: id,
       createdAt: now,
       updatedAt: now,
-      ...(id === PERSONAL_PROJECT && opts?.seedImplicitScenarioPlugin
+      ...(id === PERSONAL_PROJECT && opts?.fastProject
+        ? { metadata: { kind: 'other', projectMode: 'fast' } }
+        : id === PERSONAL_PROJECT && opts?.seedImplicitScenarioPlugin
         ? { metadata: { kind: 'prototype' } }
         : {}),
     });
@@ -444,6 +450,40 @@ async function startServer(opts?: {
 }
 
 describe('POST /api/runs — workspace mutation gate', () => {
+  it.each(['/api/runs', '/api/chat'])('keeps Fast projects on the direct run path through %s', async route => {
+    const authorizePluginRequest = vi.fn(async () => true);
+    const baseUrl = await startServer({ fastProject: true, authorizePluginRequest });
+    const response = await fetch(`${baseUrl}${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: PERSONAL_PROJECT, agentId: 'codex', message: 'Inspect my supplied material in this Fast chat.' }),
+    });
+    expect(response.status).toBe(202);
+    await response.text();
+    expect(createdRunCount).toBe(1);
+    expect(lastCreatedMeta.strategyRolloutDecision).toMatchObject({ taskType: null, effectiveMode: 'off' });
+    expect(lastCreatedMeta.odNextTaskInputSnapshot ?? null).toBeNull();
+    expect(lastCreatedMeta.appliedPluginSnapshotId ?? null).toBeNull();
+    expect(authorizePluginRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['/api/runs', '/api/chat'])('enforces the SVG floor at the shared %s execution boundary', async (route) => {
+    const baseUrl = await startServer();
+    const response = await fetch(`${baseUrl}${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentId: 'codex', message: 'Rework the map as a native SVG',
+        model: 'gpt-6-luna', reasoning: 'low',
+        svgExecutionPolicy: { model: 'gpt-6-luna', reasoning: 'low' },
+      }),
+    });
+    expect(response.status).toBe(202);
+    await response.text();
+    expect(lastCreatedMeta).toMatchObject({
+      model: 'gpt-6.1-sol', reasoning: 'max',
+      svgExecutionPolicy: { model: 'gpt-6.1-sol', reasoning: 'max', complexity: 'complex' },
+    });
+  });
+
   it.each(['/api/runs', '/api/chat'])(
     'keeps project and local plugin gates off the remote Workspace directory through %s',
     async (route) => {

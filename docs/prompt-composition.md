@@ -98,6 +98,12 @@ to the **host**, not to either strategy — if a strategy is retired, these stay
 | Motion video export | Actual source/MP4 linkage, local audio and encoded-output checks run inside the exporter; no model-plan gate | ✅ selected motion skill | ✅ motion task profile |
 | Shared motion source player | Composition-only preview controls and persisted playback; suppressed during frame capture | ✅ motion source | ✅ motion source |
 | Motion `data-poster-time` | Agent-selected seconds; daemon validates the linked MP4 and freezes its frame with the composition dimensions | ✅ selected motion skill | ✅ motion task profile |
+| Blockout conversation mode | Shared engineer collaboration notes, structural alternatives and stopping point before refinement | ✅ shared `blockout-mode.ts` (classic/slim/API-BYOK) | ✅ shared host directive in stable request context |
+| Blockout editor updates | Versioned selected-proposal snapshot, page/block diff, feedback and lazy asset references | ✅ `loadBlockoutContext` reads the explicitly attached update | ✅ the same reference is frozen by `prepareBlockoutContextFiles` |
+| Project header/footer workflow and applied regions | Grouped editorial questions, logo collection, the dedicated editor, shared project revisions and owned HTML page/region materialisation through the same HTTP/`od header-footer` operations | ✅ canonical `header-footer.ts` in classic/slim/API-BYOK, including Fast documents; omitted from read-only plan sessions | ✅ the same canonical directive in stable request context as `header-footer-workflow`, including Fast; read-only plan sessions cannot acquire logos or publish |
+| Intake SVG versions and preference | Per-source version folder, exact preferred file and user's explanation | ✅ shared `intake-vector-proposal.ts` in private attachment context | ✅ same private reference and preferred file frozen with task inputs |
+| Image specialists | Native Codex alpha, photo-vector and image-review roles for page assets/direct requests | ✅ shared `image-specialists.ts` catalogue; runtime config per launch | ✅ same catalogue in stable host context; planning remains read-only |
+| Document research specialists | Bounded Sol/Low readers and deeper text/image retrieval roles; persisted image consent gates visual profiles | ✅ shared `document-research-specialists.ts` catalogue and per-launch native profiles | ✅ same catalogue in stable host context; internal planning cannot start research |
 | `.od-frames/` device shells | prototype device frames | ❌ | ✅ OD Next only |
 
 Two things to read off this table.

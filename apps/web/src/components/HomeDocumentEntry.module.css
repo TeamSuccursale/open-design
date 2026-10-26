@@ -1,0 +1,42 @@
+.entry {
+  min-height: calc(100dvh - 112px);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 28px 80px;
+  color: var(--text);
+}
+.content { width: min(100%, 740px); }
+.content h1 {
+  margin: 0 0 16px;
+  color: var(--text-strong);
+  font-size: clamp(28px, 3vw, 40px);
+  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.intro { margin: 0; max-width: 54ch; font-size: 16px; line-height: 1.65; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.entryOption { display: flex; flex-direction: column; gap: 8px; }
+.entryOption small { color: var(--text-muted); font-size: 12px; padding-inline: 10px; }
+.actions button { height: 52px; padding: 0 22px; gap: 10px; font-size: 15px; }
+.path { max-width: 60ch; margin: 18px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.workflow { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 0; list-style: none; padding: 0; margin: 30px 0 0; font-size: 13px; }
+.workflow li { display: flex; align-items: center; gap: 9px; }
+.workflow li:not(:last-child)::after { content: ''; width: 32px; height: 1px; background: var(--border); margin: 0 18px 0 9px; }
+.workflow svg { color: var(--accent); flex: none; }
+.status { margin: 16px 0 0; color: var(--text-muted); font-size: 13px; }
+.error { margin: 16px 0 0; color: var(--red); font-size: 13px; overflow-wrap: anywhere; }
+.other { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--border-soft); font-size: 13px; color: var(--text-muted); }
+.other button { padding: 0; gap: 6px; font-size: 13px; }
+.back { align-self: flex-start; margin: 0 24px 12px; }
+@media (max-width: 560px) {
+  .entry { min-height: calc(100dvh - 80px); align-items: flex-start; padding: 64px 24px 40px; }
+  .actions { flex-direction: column; }
+  .actions button { width: 100%; justify-content: center; }
+  .other { align-items: flex-start; flex-direction: column; gap: 10px; margin-top: 36px; }
+  .workflow { align-items: flex-start; flex-direction: column; gap: 15px; }
+  .workflow li:not(:last-child)::after { display: none; }
+}

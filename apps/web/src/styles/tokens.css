@@ -45,6 +45,13 @@
   --accent-soft: #ededed;
   --accent-tint: #f7f7f7;
   --accent-hover: #202020;
+  --studio-canvas: #f3f0e8;
+  --studio-paper: #fffefa;
+  --studio-ink: #243d39;
+  --studio-muted: #64716b;
+  --studio-accent: #216258;
+  --studio-tint: #e4eee7;
+  --studio-line: #dbdfd5;
   --brand: #87ea5c;
   --brand-weak: #d0ffb5;
   --brand-soft: #ebffde;
@@ -252,6 +259,13 @@
   --accent-soft: #494949;
   --accent-tint: #353535;
   --accent-hover: #fafafa;
+  --studio-canvas: #252d29;
+  --studio-paper: #303a34;
+  --studio-ink: #f4f1e8;
+  --studio-muted: #bac8be;
+  --studio-accent: #a4d4bc;
+  --studio-tint: #344b40;
+  --studio-line: #4b5e51;
   --brand: #87ea5c;
   --brand-weak: #2f781d;
   --brand-soft: #164111;

@@ -1485,7 +1485,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(sourceMarkup).not.toContain('<img');
   });
 
-  it('keeps a URL-loaded preview iframe alive while the viewer unmounts and remounts', () => {
+  it('keeps a URL-loaded preview iframe alive while the viewer unmounts and remounts', async () => {
     const file = baseFile({
       name: 'page.html',
       path: 'page.html',
@@ -1528,7 +1528,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(firstFrame.getAttribute('src')).toContain('/api/projects/project-1/raw/page.html?v=1710000000&r=0&odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability&odPreviewEpoch=');
     const firstSrc = firstFrame.getAttribute('src');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Leave project' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Leave project' })); });
 
     expect(screen.queryByTestId('artifact-preview-frame')).toBeNull();
     expect(screen.getByTestId('home-view')).toBeTruthy();
@@ -1711,7 +1711,7 @@ describe('FileViewer SVG artifacts', () => {
     });
   });
 
-  it('evicts least-recent inactive preview iframes once the pool exceeds its limit', () => {
+  it('evicts least-recent inactive preview iframes once the pool exceeds its limit', async () => {
     function Harness({ activeKey }: { activeKey: string | null }) {
       return (
         <IframeKeepAliveProvider maxEntries={2}>
@@ -1732,13 +1732,13 @@ describe('FileViewer SVG artifacts', () => {
 
     const { container, rerender } = render(<Harness activeKey="one" />);
     const firstFrame = screen.getByTestId('pooled-frame');
-    rerender(<Harness activeKey={null} />);
+    await act(async () => { rerender(<Harness activeKey={null} />); });
     rerender(<Harness activeKey="two" />);
     const secondFrame = screen.getByTestId('pooled-frame');
-    rerender(<Harness activeKey={null} />);
+    await act(async () => { rerender(<Harness activeKey={null} />); });
     rerender(<Harness activeKey="three" />);
     const thirdFrame = screen.getByTestId('pooled-frame');
-    rerender(<Harness activeKey={null} />);
+    await act(async () => { rerender(<Harness activeKey={null} />); });
 
     const parkedFrames = Array.from(
       container.querySelectorAll<HTMLIFrameElement>('.iframe-keep-alive-pool iframe'),
@@ -1843,6 +1843,30 @@ describe('FileViewer SVG artifacts', () => {
     expect(reactivatedFrame).not.toBe(frame);
     expect(reactivatedFrame.srcdoc).toBe(srcDoc);
     expect(reactivatedFrame.name).toBe(frameName);
+  });
+
+  it.each([false, true])('recovers a stalled URL preview while keeping a successful URL load (loaded=%s)', async (loaded) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = render(<FileViewer
+      projectId={`url-recovery-${loaded}`}
+      projectKind="prototype"
+      file={baseFile({ name: 'page.html', path: 'page.html', mime: 'text/html', kind: 'html' })}
+      liveHtml="<!doctype html><html><body><main>Recovered document</main></body></html>"
+      workspaceActive
+    />);
+    try {
+      const initial = screen.getByTestId('artifact-preview-frame');
+      expect(initial.getAttribute('data-od-render-mode')).toBe('url-load');
+      if (loaded) fireEvent.load(initial);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_001); });
+      const active = screen.getByTestId('artifact-preview-frame');
+      expect(active.getAttribute('data-od-render-mode')).toBe(loaded ? 'url-load' : 'srcdoc');
+      expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
+      if (loaded) expect(active).toBe(initial);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it('does not cover non-empty srcDoc content while paint verification is pending', () => {
@@ -2110,7 +2134,7 @@ describe('FileViewer SVG artifacts', () => {
     }
   });
 
-  it('enforces the iframe pool limit when new active frames attach over parked entries', () => {
+  it('enforces the iframe pool limit when new active frames attach over parked entries', async () => {
     function Frame({ name }: { name: string }) {
       return (
         <PooledIframe
@@ -2131,7 +2155,7 @@ describe('FileViewer SVG artifacts', () => {
 
     const { container, rerender } = render(<Harness names={['parked']} />);
     const parked = screen.getByTestId('pooled-frame-parked');
-    rerender(<Harness names={[]} />);
+    await act(async () => { rerender(<Harness names={[]} />); });
     expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBe(parked);
 
     rerender(<Harness names={['active-one', 'active-two']} />);
@@ -2142,7 +2166,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(container.querySelectorAll('iframe')).toHaveLength(2);
   });
 
-  it('evicts inactive preview iframes for a project when the project is invalidated', () => {
+  it('evicts inactive preview iframes for a project when the project is invalidated', async () => {
     function Harness({ active }: { active: boolean }) {
       const pool = useIframeKeepAlivePool();
       return (
@@ -2172,11 +2196,11 @@ describe('FileViewer SVG artifacts', () => {
     );
     const firstFrame = screen.getByTestId('pooled-frame');
 
-    rerender(
+    await act(async () => { rerender(
       <IframeKeepAliveProvider>
         <Harness active={false} />
       </IframeKeepAliveProvider>,
-    );
+    ); });
     expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBe(firstFrame);
 
     fireEvent.click(screen.getByRole('button', { name: 'Invalidate project' }));

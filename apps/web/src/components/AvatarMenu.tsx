@@ -86,14 +86,14 @@ interface Props {
 
 /**
  * Compact runtime control. Click opens a dropdown with the OpenDesign account
- * and the model picker for the active agent. Execution wiring that is not a
- * per-message choice (execution mode, which CLI agent, PATH rescan, BYOK
- * provider setup) lives in Settings → Execution; this popover keeps the
- * active agent's model and reasoning choices close to the composer.
+ * and the model picker for the active agent. Codex and Claude Code can be
+ * selected here for the next request; installation, sign-in, execution mode
+ * and BYOK provider setup remain in Settings → Execution.
  */
 export function AvatarMenu({
   config,
   agents,
+  daemonLive,
   onAgentChange,
   onAgentModelChange,
   onApiModelChange,
@@ -260,6 +260,11 @@ export function AvatarMenu({
     () => agents.find((a) => a.id === config.agentId) ?? null,
     [agents, config.agentId],
   );
+  const quickAgents = useMemo(() => {
+    const ids = ['codex', 'claude'];
+    if (config.agentId && !ids.includes(config.agentId)) ids.push(config.agentId);
+    return ids.flatMap((id) => agents.find((agent) => agent.id === id) ?? []);
+  }, [agents, config.agentId]);
   const currentAgentModelOptions = useMemo(() => {
     const models = currentAgent?.models ?? [];
     if (currentAgent?.id !== 'amr') return models;
@@ -591,6 +596,26 @@ export function AvatarMenu({
         >
           {config.mode === 'daemon' ? (
             <>
+              {quickAgents.length > 0 ? (
+                <div className="avatar-model-section">
+                  <label className="avatar-select-row">
+                    <span className="avatar-select-label">{t('avatar.codeAgent')}</span>
+                    <select
+                      className="avatar-select"
+                      value={config.agentId ?? ''}
+                      disabled={!daemonLive}
+                      onChange={(event) => onAgentChange(event.target.value)}
+                    >
+                      {!config.agentId ? <option value="" disabled>{t('avatar.noAgentSelected')}</option> : null}
+                      {quickAgents.map((agent) => (
+                        <option key={agent.id} value={agent.id} disabled={!agent.available}>
+                          {agent.name}{!agent.available ? ` · ${t('avatar.metaOffline')}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
               {hasSelectableModels && currentAgent ? (
                 <div className="avatar-model-section">
                   {currentAgent.models && currentAgent.models.length > 0 ? (

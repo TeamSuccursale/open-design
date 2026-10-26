@@ -984,6 +984,11 @@
 .qf-chip {
   display: flex;
   align-items: flex-start;
+  /* Option copy can contain several lines. Outside the chat, the generic
+     button height is 36px; retaining it lets descriptions overlap the next row. */
+  height: auto;
+  min-height: 36px;
+  flex-shrink: 0;
   gap: 8px;
   width: 100%;
   padding: 8px 11px;

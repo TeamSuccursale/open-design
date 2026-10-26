@@ -1,4 +1,27 @@
 // @ts-nocheck
+import { registerProjectIntakeRoutes } from './routes/project-intake.js';
+import { loadIntakeAttachmentContext } from './services/project-intake-context.js';
+import { getRunBlockoutContext, getRunBlockoutDesignTargets, loadBlockoutContext } from './services/blockout-context.js';
+import { activeDocumentIdentity, getRunDocumentReferenceContext, parseDocumentReferences, resolveConversationDocument } from './services/document-reference-context.js';
+import { loadDocumentSetupContext, readDocumentSetup } from './services/document-setup.js';
+import { registerDocumentSetupRoutes } from './routes/document-setup.js';
+import { registerBlockoutWorkspaceRoutes } from './routes/blockout-workspaces.js';
+import { registerProjectHistoryRoutes } from './routes/project-history.js';
+import { registerProjectDocumentsRoutes } from './routes/project-documents.js';
+import { registerHeaderFooterRoutes } from './routes/header-footer.js';
+import { recordHeaderFooterDraftRunDelivery } from './services/header-footer-run-delivery.js';
+import { HeaderFooterRuntime } from './services/header-footer-runtime.js';
+import { ProjectDocumentsRuntime } from './services/project-documents-runtime.js';
+import { ProjectHistoryRuntime } from './services/project-history-runtime.js';
+import { registerBlockoutMaterialRoutes } from './routes/blockout-materials.js';
+import { BlockoutMaterialsService } from './services/blockout-materials.js';
+import { registerDocumentOverviewReadingRoutes } from './routes/document-overview-reading.js';
+import { registerDocumentResearchRoutes } from './routes/document-research.js';
+import { registerProjectCustodianRoutes } from './routes/project-custodians.js';
+import { createProjectCustodianCoordinator } from './services/project-custodian-coordinator.js';
+import { ProjectIntakeService } from './services/project-intake.js';
+import { DocumentResearchService } from './services/document-research.js';
+import { prepareDocumentResearchSpecialists } from './services/document-research-specialists.js';
 import { observeDiscoveryEvent } from './strategies/od-next/discovery-observation.js';
 import { assertCommentFileNotPending } from './collab/comment-file-retirements.js';
 import { captureJsonBodySize } from './http/json-body-size.js';
@@ -138,6 +161,8 @@ import {
   recordPromptDeliveredAtSpawn,
   runtimeReadsPlainTextPromptFromStdin,
   applyClaudeStreamJsonRunBookkeeping,
+  claudeEventCountsAsActionableProgress,
+  claudeProductionEndedWithoutArtifact,
   assertValidRuntimeDefFirstOutputTimeoutMs,
   assertValidRuntimeDefInactivityTimeoutMs,
   classifyChatRunCloseStatus,
@@ -518,6 +543,10 @@ import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import { reapLeftoverAgentProcesses, spawnAgentProcess } from './runtimes/agent-process.js';
+import { CLAUDE_FIRST_OUTPUT_TIMEOUT_MS, CLAUDE_RESULT_EXIT_GRACE_MS, claudeFileInputArgs, isClaudeSessionResult, shouldUseClaudeFileInput } from './runtimes/claude-transport-recovery.js';
+import { getClaudeEffortError } from './runtimes/defs/claude.js';
+import { agentCapabilities } from './runtimes/capabilities.js';
+import { compactClaudeNativeSession, planClaudeContextRecovery, type ClaudeContextRecoveryPlan } from './claude-context-recovery.js';
 import {
   createAmrTerminalReportDeliveryService,
   createAmrTerminalReportFinalizer,
@@ -640,6 +669,7 @@ import { buildDocumentPreview } from './document-preview.js';
 import { lintArtifact, renderFindingsForAgent } from './lint-artifact.js';
 import { loadCraftSections, resolveCraftRequirements } from './craft.js';
 import { skillCwdAliasSegment, stageActiveSkill } from './cwd-aliases.js';
+import { prepareImageSpecialists } from './services/image-specialists.js';
 import { buildDesktopArtifactExportInput, buildDesktopPdfExportInput } from './pdf-export.js';
 import { generateMedia } from './media/index.js';
 import { resolveHyperFramesCliPath } from './media/hyperframes-runtime.js';
@@ -1966,6 +1996,7 @@ export function createOpenDesignToolEnv({
     OD_HYPERFRAMES_BIN: hyperFramesBin,
     OD_NODE_BIN,
     OD_DAEMON_URL: daemonUrl,
+    OD_RUN_ID: runId ?? '',
     OD_STOCK_RUN_ID: runId ?? '',
     OD_STOCK_SESSION_ID: conversationId ?? '',
     OD_STOCK_ANALYTICS_DEVICE_ID: analyticsContext?.deviceId ?? '',
@@ -3280,6 +3311,7 @@ export async function startServer({
   // exactly the incidents it was built for, and silently: the uploader reports
   // `res.ok` and the export continues without the evidence.
   app.use(CHAT_SCROLL_FORENSICS_PATH, chatScrollForensicsBodyParser);
+  app.use('/api/projects/:id/header-footer/assets', express.json({ limit: '72mb' }));
   app.use(express.json({ limit: '4mb', verify: captureJsonBodySize }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
 
@@ -8334,6 +8366,7 @@ export async function startServer({
   const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
   const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
+  let projectHistory: ProjectHistoryRuntime | null = null;
   const design = {
     runs: createChatRunService({
       createSseResponse,
@@ -8349,6 +8382,13 @@ export async function startServer({
         if (incidentId) run.diagnosticIncidentIds = [...new Set([...(run.diagnosticIncidentIds ?? []), incidentId])].slice(-100);
       },
       onEventEmitted: (run, record) => {
+        if (run.projectId && (record.event === 'start' || record.event === 'end')) queueMicrotask(() => {
+          const projectId = run.projectId!;
+          const finalMessage = record.event === 'end' && run.assistantMessageId
+            ? db.prepare('SELECT content FROM messages WHERE id = ?').get(run.assistantMessageId)?.content : undefined;
+          const summary = typeof finalMessage === 'string' ? finalMessage.replace(/```[\s\S]*?```/g, '').replace(/<[^>]*>/g, '').trim().slice(0, 2000) : undefined;
+          void projectHistory?.activity(projectId, record.event === 'start' ? 'agent-start' : 'agent-end', summary).catch((error) => console.warn('[project-history] agent activity could not be recorded', error));
+        });
         if (record.event === 'start') automaticDiagnostics?.trackRun(run.id, {
           sourceId: `run:${run.id}:interrupted:${run.manualResumeAttemptCount ?? 0}:${record.timestamp}`,
           kind: 'active_run', at: record.timestamp, runId: run.id, agentId: run.agentId,
@@ -10316,8 +10356,94 @@ export async function startServer({
     },
     helpers: pluginRouteHelpers,
   });
+  projectHistory = new ProjectHistoryRuntime({
+    dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR,
+    resolveProject: (id) => { const project = getProject(db, id); return project && !project.metadata?.teamMirrorRevokedAt ? { root: resolveProjectDir(PROJECTS_DIR, id, project.metadata) } : null; },
+    isAgentRunning: (projectId) => design.runs.list({ projectId, status: 'active' }).length > 0,
+    beforeRestore: async (projectId, root) => {
+      await projectIntakeService.prepareHistoryRestore(root, projectId);
+      await blockoutMaterials.prepareHistoryRestore(root, projectId);
+    },
+    onError: (error) => console.warn('[project-history] recovery service needs attention', error),
+  });
+  void projectHistory.start().catch((error) => console.warn('[project-history] recovery startup needs attention', error));
+  registerProjectHistoryRoutes(app, { db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    history: { store: (id, root) => projectHistory!.store(id, root), restore: (id, root, input) => projectHistory!.restore(id, root, input), isAgentRunning: (id) => design.runs.list({ projectId: id, status: 'active' }).length > 0 },
+  });
+  const projectIntakeService = new ProjectIntakeService();
+  const documentResearchService = new DocumentResearchService({ dataDir: RUNTIME_DATA_DIR });
+  const projectCustodians = createProjectCustodianCoordinator({ dataDir: RUNTIME_DATA_DIR, intake: projectIntakeService, research: documentResearchService });
+  const blockoutMaterials = new BlockoutMaterialsService({ dataDir: RUNTIME_DATA_DIR, custodians: projectCustodians.custodians, intake: projectIntakeService });
+  const projectDocuments = new ProjectDocumentsRuntime({ dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR, db,
+    beforeWrite: (id, root) => projectHistory!.store(id, root),
+  });
+  registerProjectDocumentsRoutes(app, { db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest, documents: projectDocuments });
+  const headerFooterRuntime = new HeaderFooterRuntime({ db, dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR, documents: projectDocuments,
+    beforeWrite: (id, root) => projectHistory!.store(id, root),
+    isAgentRunning: (ids) => design.runs.list({ status: 'active' }).some((run) => !!run.projectId && ids.includes(run.projectId)),
+  });
+  registerHeaderFooterRoutes(app, { onDraftSaved: ({ req, collectionId, setId, draftVersion, stage }) => {
+    recordHeaderFooterDraftRunDelivery({
+      runId: req.get('x-od-run-id'), requestedProjectId: String(req.params.id), collectionId, setId, draftVersion, stage,
+      getRun: (id) => design.runs.get(id), collectionForProject: (id) => headerFooterRuntime.collectionId(id),
+      emit: (run, receipt) => {
+        const payload = { type: 'diagnostic', ...receipt };
+        persistRunEventToAssistantMessage(db, run, 'agent', payload);
+        design.runs.emit(run, 'agent', payload);
+      },
+    });
+  }, store: async (projectId, req, res, mode) => {
+    if (!await authorizeProjectRequest(req, res, projectId, mode === 'read' ? { mode } : { mode, capability: 'writeFiles' })) return null;
+    const parentId = headerFooterRuntime.collectionId(projectId);
+    if (parentId !== projectId && !await authorizeProjectRequest(req, res, parentId, mode === 'read' ? { mode } : { mode, capability: 'writeFiles' })) return null;
+    return headerFooterRuntime.store(parentId);
+  } });
+  registerProjectIntakeRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, auth: authDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    intakeService: projectIntakeService,
+    history: projectHistory,
+  });
+  registerDocumentSetupRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    history: projectHistory,
+    documentRegistry: projectDocuments,
+    beforeSetupWrite: projectDocuments.beforeSetupWrite,
+  });
+  registerBlockoutWorkspaceRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    blockoutMaterials,
+    history: projectHistory,
+    documentRegistry: projectDocuments,
+    beforeBlockoutWrite: projectDocuments.beforeBlockoutWrite,
+    normalizeBlockout: (id, document) => headerFooterRuntime.normalizeBlockout(id, document),
+    getDesignRun: async (id) => {
+      const run = design.runs.get(id);
+      if (run?.status === 'succeeded') {
+        const { resolveChatRunBlockoutDesignEvidence } = await import('./runtimes/chat-run-records.js');
+        const result = await resolveChatRunBlockoutDesignEvidence({ db, projectsRoot: PROJECTS_DIR, dataRoot: RUNTIME_DATA_DIR,
+          run, runStatus: run.status, artifactCount: Number.isFinite(run.artifactCount) ? run.artifactCount : 0, cached: run });
+        if (result) design.runs.setDeliverableValidation?.(run, result);
+      }
+      return run ? { ...run, blockoutDesignTargets: getRunBlockoutDesignTargets(run) ?? [] } : run;
+    },
+  });
+  registerBlockoutMaterialRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+  }, blockoutMaterials);
+  registerDocumentOverviewReadingRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+  });
+  registerDocumentResearchRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    documentResearch: documentResearchService,
+  });
+  registerProjectCustodianRoutes(app, {
+    db, http: httpDeps, paths: pathDeps, projectStore: projectStoreDeps, authorizeProjectRequest,
+    custodians: projectCustodians.custodians, custodianJournal: projectCustodians.journal, custodianWatch: projectCustodians.watch,
+  });
   registerProjectUploadRoutes(app, {
     db,
+    history: projectHistory,
     http: httpDeps,
     uploads: uploadDeps,
     node: nodeDeps,
@@ -11569,7 +11695,7 @@ export async function startServer({
         ? getConversation(db, conversationId)
         : null;
     const runSessionMode =
-      sessionMode === 'chat' || sessionMode === 'design' || sessionMode === 'plan'
+      sessionMode === 'chat' || sessionMode === 'design' || sessionMode === 'plan' || sessionMode === 'blockout'
         ? normalizeConversationSessionMode(sessionMode)
         : normalizeConversationSessionMode(conversationSession?.sessionMode);
     // Single choke point for the codex transport switch. Every other
@@ -11789,12 +11915,19 @@ export async function startServer({
       typeof projectId === 'string' && projectId
         ? getProject(db, projectId)
         : null;
+    if (projectRecord && cwd) await projectHistory?.store(projectRecord.id, resolveProjectDir(PROJECTS_DIR, projectRecord.id, projectRecord.metadata));
+    const activeProjectDocument = projectRecord ? await resolveConversationDocument({ project: projectRecord,
+      conversationId: typeof conversationId === 'string' ? conversationId : run.conversationId,
+      dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR, getProject: (id) => getProject(db, id) }) : null;
+    const activeBlockoutDocumentId = activeProjectDocument?.blockoutDocumentId ?? activeProjectDocument?.id;
     const effectiveRunSkillId = resolveSkillId(
       typeof skillId === 'string' && skillId
         ? skillId
         : projectRecord?.skillId,
     );
-    const runContextPrompt = renderRunContextPrompt(context, projectRecord?.metadata);
+    const preparedDocumentContext = odNextTaskInputSnapshot?.documentReferenceContext || getRunDocumentReferenceContext(run);
+    if (parseDocumentReferences(chatBody.documentReferences ?? context?.documentReferences).length && preparedDocumentContext === undefined) return failRun('DOCUMENT_REFERENCE_UNAUTHORIZED', 'Document references require an authorized document request');
+    const runContextPrompt = [activeDocumentIdentity(projectRecord, activeProjectDocument), renderRunContextPrompt(context, projectRecord?.metadata), preparedDocumentContext ?? ''].filter(Boolean).join('\n\n');
     const linkedDirs = (() => {
       if (!Array.isArray(projectRecord?.metadata?.linkedDirs)) return [];
       const v = validateLinkedDirs(projectRecord.metadata.linkedDirs);
@@ -11808,7 +11941,12 @@ export async function startServer({
           linkedDirs.map((d) => `- \`${d}\``).join('\n')
         }`
       : '';
-    const attachmentHint = formatProjectAttachmentHint(safeAttachments);
+    const attachmentHint = formatProjectAttachmentHint(safeAttachments)
+      + (cwd && !odNextTaskInputSnapshot ? [await loadIntakeAttachmentContext(cwd, safeAttachments), getRunBlockoutContext(run) ?? await loadBlockoutContext(cwd, attachments, activeBlockoutDocumentId, projectRecord ? {
+        projectId: projectRecord.id, dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR,
+        editTargetFile: normalizeRunContextSelection(context).editTargetFile, getProject: (id) => getProject(db, id),
+      } : undefined), projectRecord?.metadata?.projectMode === 'fast' ? '' : await loadDocumentSetupContext(cwd, projectId, projectRecord?.metadata?.documentSetupIntent, activeBlockoutDocumentId)].filter(Boolean).join('\n\n') : '')
+      + (projectId && projectRecord ? `\n\n${await headerFooterRuntime.context(projectId, activeBlockoutDocumentId)}` : '');
     // Plan §3.A3 / spec §9: thread plugin context onto every tool token
     // so the connector execute route can re-validate the §5.3
     // capability gate without re-reading the SQLite snapshot row.
@@ -12470,11 +12608,23 @@ export async function startServer({
       typeof process.env[def.defaultModelEnvVar] === 'string' &&
       process.env[def.defaultModelEnvVar]?.trim(),
     );
+    if (def.id === 'claude') {
+      await ensureDetectedRuntimeCapabilities(def.id, configuredAgentEnv);
+      const effortError = getClaudeEffortError(safeModel, reasoning, agentCapabilities.get('claude') ?? {});
+      if (effortError) return failRun(effortError.code, effortError.message);
+    }
     const safeReasoning =
       typeof reasoning === 'string' &&
       isKnownReasoningEffort(def, safeModel, reasoning, requestedLiveModelScope)
         ? reasoning
         : null;
+    if (chatBody.svgExecutionPolicy && (
+      safeModel !== chatBody.svgExecutionPolicy.model
+      || safeReasoning !== chatBody.svgExecutionPolicy.reasoning
+    )) {
+      return failRun('SVG_QUALITY_UNAVAILABLE',
+        'The selected Codex runtime cannot honor the SVG model and reasoning floor. Refresh its models or update Codex, then retry.');
+    }
     safeModel = resolveModelForServiceTier(
       def,
       safeModel,
@@ -13642,6 +13792,19 @@ export async function startServer({
         sideEffects,
       });
       if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
+        if (shouldUseClaudeFileInput({
+          agentId: def.id,
+          terminalTrigger: run.terminalTrigger,
+          retryAttemptCount: run.retryAttemptCount ?? 0,
+          parsedEventSeen: claudeParsedEventSeen,
+          ...sideEffects,
+        })) {
+          run.claudeFileInputRecovery = true;
+          design.runs.emit(run, 'diagnostic', {
+            type: 'claude_input_transport_recovery', transport: 'file-backed-text',
+            reason: 'silent_start', mid_turn_steering_available: false,
+          });
+        }
         run.retryOriginalFailure ??= failure ?? undefined;
         if ((run.retryAttemptCount ?? 0) === 0) {
           run.retryOriginFailure = failure ? { ...failure } : null;
@@ -14229,6 +14392,18 @@ export async function startServer({
       // to be filled only by `GET /api/agents`. Probe it here so a daemon that
       // has never served that route still builds the same argv as one that has.
       await ensureDetectedRuntimeCapabilities(def.id, configuredAgentEnv);
+      const imageSpecialists = def.id === 'codex'
+        ? [
+          ...await prepareImageSpecialists(RUNTIME_DATA_DIR, agentOptions),
+          ...await prepareDocumentResearchSpecialists(RUNTIME_DATA_DIR, {
+            projectMode: projectRecord?.metadata?.projectMode,
+            imageConsent: Boolean(projectRecord && (await readDocumentSetup(
+              resolveProjectDir(PROJECTS_DIR, projectId, projectRecord.metadata),
+              projectRecord.metadata?.documentSetupIntent, projectId,
+            ))?.intent.imageIntakeConsent),
+          }),
+        ]
+        : undefined;
       args = def.buildArgs(
         composed,
         promptImagePaths,
@@ -14236,6 +14411,7 @@ export async function startServer({
         agentOptions,
         {
           cwd: effectiveCwd,
+          imageSpecialists,
           hasPriorAssistantTurn,
           agentLogFilePath,
           promptFilePath: promptFile?.path,
@@ -14250,6 +14426,7 @@ export async function startServer({
             : {}),
         },
       );
+      if (def.id === 'claude' && run.claudeFileInputRecovery) args = claudeFileInputArgs(args);
     } catch (err) {
       cleanupPromptFile();
       throw err;
@@ -14392,7 +14569,8 @@ export async function startServer({
     // earlier, so we keep only the new `runStartTimeMs` declaration.
     const runStartTimeMs = Date.now();
     const firstOutputTimeoutMs =
-      resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
+      resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs
+        ?? (def.id === 'claude' ? CLAUDE_FIRST_OUTPUT_TIMEOUT_MS : undefined));
     const artifactQuietPeriodMs = resolveChatRunArtifactQuietPeriodMs();
     // Grace before the inactivity watchdog escalates a stalled child from
     // SIGTERM to SIGKILL. Env-tunable like its OD_CHAT_RUN_* cancel-grace
@@ -14404,6 +14582,9 @@ export async function startServer({
     let inactivityTimer = null;
     let firstOutputTimer = null;
     let firstOutputSeen = false;
+    let claudeParsedEventSeen = false;
+    let claudeContextRecoveryPlan: ClaudeContextRecoveryPlan | null = null;
+    let claudeResultExitTimer: ReturnType<typeof setTimeout> | null = null;
     let childStdoutSeen = false;
     let lastAgentEventPhase = 'spawn pending';
     let lastToolResultChars = 0;
@@ -14997,7 +15178,8 @@ export async function startServer({
         env,
         cwd: effectiveCwd,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-        stdin: stdinMode === 'pipe' && runtimeReadsPlainTextPromptFromStdin(def)
+        stdin: stdinMode === 'pipe' && (runtimeReadsPlainTextPromptFromStdin(def)
+          || (def.id === 'claude' && run.claudeFileInputRecovery))
           ? { prompt: agentStdinPromptPayload(def, composed) }
           : stdinMode,
         runDir: path.join(RUNTIME_DATA_DIR, 'runs', run.id),
@@ -15116,7 +15298,7 @@ export async function startServer({
     // long time in non-streamed reasoning still keep the run alive.
     child.stdout.on('data', (chunk) => {
       childStdoutSeen = true;
-      noteAgentActivity();
+      if (def.id !== 'claude') noteAgentActivity();
       agentStdoutTail = `${agentStdoutTail}${chunk}`.slice(-2000);
     });
 
@@ -15899,6 +16081,24 @@ export async function startServer({
 
     if (def.streamFormat === 'claude-stream-json') {
       const claude = createClaudeStreamHandler((ev) => {
+        claudeParsedEventSeen = true;
+        if (isClaudeSessionResult(ev) && !claudeResultExitTimer) {
+          // A terminal result can be followed by a stuck SessionEnd hook.
+          // Allow normal cleanup, then reap only this captured generation.
+          const resultChild = child;
+          const resultGroupId = run.processGroupId;
+          claudeResultExitTimer = setTimeout(() => {
+            if (run.child !== resultChild || design.runs.isTerminal(run.status)) return;
+            freezeProgressClock();
+            clearInactivityWatchdog();
+            clearFirstOutputWatchdog();
+            void design.runs.terminateProcessTree(run, resultChild, resultGroupId, {
+              reason: 'claude_terminal_result_exit_grace',
+              termGraceMs: inactivityKillGraceMs, killGraceMs: inactivityKillGraceMs,
+            });
+          }, CLAUDE_RESULT_EXIT_GRACE_MS);
+          claudeResultExitTimer.unref?.();
+        }
         // First parsed claude-stream-json event = CLI ready (#3408 §4); the
         // init/system line arrives well before the model's first token.
         noteCliReadyAt();
@@ -15957,6 +16157,33 @@ export async function startServer({
             (ev as any).code === 'AGENT_PROMPT_TOO_LARGE'
               ? 'AGENT_PROMPT_TOO_LARGE'
               : null;
+          const contextPlan = planClaudeContextRecovery({
+            agentId: def.id, error: ev,
+            nativeResumeValidated: agentResumeCtx.isResuming
+              && agentResumePromptPolicy.resumeSessionId === agentResumeCtx.resumeSessionId,
+            sessionId: agentResumePromptPolicy.resumeSessionId,
+            retryAttemptCount: run.retryAttemptCount ?? 0,
+            compactionAttemptCount: run.claudeCompactionAttemptCount ?? 0,
+            latestTurnPrompt: typeof currentPrompt === 'string' && currentPrompt.trim()
+              ? currentPrompt : typeof message === 'string' ? message : '',
+            sideEffects: { ...runSideEffectsForRun(run), cancelRequested: !!run.cancelRequested },
+          });
+          if (contextPlan) {
+            claudeContextRecoveryPlan = contextPlan;
+            run.retryAttemptCount = contextPlan.retryAttemptIndex;
+            run.claudeCompactionAttemptCount = contextPlan.compactionAttemptIndex;
+            run.nativeSessionContinueAttemptCount = 1;
+            run.retryMaxAttempts = 1;
+            run.retryStrategy = 'native_session_continue';
+            clearFirstOutputWatchdog();
+            freezeProgressClock();
+            design.runs.emit(run, 'diagnostic', { type: 'claude_context_recovery', status: 'compacting' });
+            send('agent', { type: 'status', label: 'compacting', message: 'Claude is compacting this conversation before retrying your latest request once.' });
+            try { child.stdin?.end(); } catch { /* already closed */ }
+            run.stdinOpen = false;
+            scheduleForcedChildShutdown();
+            return;
+          }
           // Claude surfaces a connection drop / reset as an in-stream `error`
           // frame (assistant `error:"unknown"` + the raw SDK string), which
           // would otherwise reach the UI verbatim as a non-retryable
@@ -16000,7 +16227,7 @@ export async function startServer({
           return;
         }
         lastAgentEventPhase = summarizeAgentEventForInactivity(ev);
-        noteAgentActivity();
+        if (claudeEventCountsAsActionableProgress(ev)) noteAgentActivity();
         if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
           const visibleDelta = titleMarkerStripper.strip(ev.delta);
           if (visibleDelta) {
@@ -16520,7 +16747,7 @@ export async function startServer({
     // instead of raw SIGTERM (applies to pi-rpc and acp-json-rpc).
     run.acpSession = acpSession;
     child.stderr.on('data', (chunk) => {
-      noteAgentActivity();
+      if (def.id !== 'claude') noteAgentActivity();
       emitVisibleAgentStderr(chunk);
     });
 
@@ -16556,6 +16783,7 @@ export async function startServer({
     };
 
     child.on('error', (err) => {
+      if (claudeResultExitTimer) clearTimeout(claudeResultExitTimer);
       clearInactivityWatchdog();
       clearFirstOutputWatchdog();
       cleanupPromptFile();
@@ -16571,6 +16799,7 @@ export async function startServer({
     });
     child.on('close', async (code, signal) => {
       try {
+      if (claudeResultExitTimer) clearTimeout(claudeResultExitTimer);
       clearInactivityWatchdog();
       clearFirstOutputWatchdog();
       clearForcedChildShutdown();
@@ -16774,6 +17003,63 @@ export async function startServer({
         return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
       }
       flushAgentTitleMarkerBuffer();
+      if (claudeContextRecoveryPlan && !run.cancelRequested) {
+        const plan = claudeContextRecoveryPlan;
+        claudeContextRecoveryPlan = null;
+        const controller = new AbortController();
+        const cancelPoll = setInterval(() => {
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) controller.abort();
+        }, 100);
+        cancelPoll.unref?.();
+        let compactResult;
+        try {
+          compactResult = await compactClaudeNativeSession({
+            command: agentLaunch.launchPath ?? resolvedBin,
+            env: spawnedAgentEnv, cwd: effectiveCwd,
+            runDir: path.join(RUNTIME_DATA_DIR, 'runs', run.id), runId: run.id,
+            sessionId: plan.sessionId, model: safeModel, reasoning: safeReasoning,
+            signal: controller.signal,
+            onSpawn(spawned) {
+              run.child = spawned.child;
+              run.processGroupId = spawned.processGroupId;
+              run.childPid = spawned.child.pid ?? null;
+            },
+            terminate: (spawned) => design.runs.terminateProcessTree(
+              run, spawned.child, spawned.processGroupId,
+              { reason: 'claude_context_compaction_finished', termGraceMs: 300, killGraceMs: 300 },
+            ),
+          });
+        } finally {
+          clearInterval(cancelPoll);
+        }
+        if (run.cancelRequested || design.runs.isTerminal(run.status)) {
+          if (!design.runs.isTerminal(run.status)) finishWithRetryDecision('canceled', null, null, { allowRetry: false });
+          return;
+        }
+        design.runs.emit(run, 'diagnostic', {
+          type: 'claude_context_recovery', status: compactResult.ok ? 'compacted' : 'failed',
+          ...compactResult,
+        });
+        if (compactResult.ok) {
+          run.nativeSessionContinuePending = {
+            sessionId: plan.sessionId, stablePromptHash: currentStableHash,
+            stablePromptSections: currentStableSections,
+            lastInputTokens: compactResult.postTokens ?? null,
+          };
+          design.runs.emit(run, 'run_retry_attempted', {
+            run_id: run.id, retry_of_run_id: run.id, retry_attempt_index: 1,
+            retry_max_attempts: 1, retry_strategy: 'native_session_continue',
+            retry_reason: 'transient_failure', retry_delay_ms: 0,
+          });
+          scheduleRetryRestart(0, { ...chatBody, message: plan.latestTurnPrompt,
+            currentPrompt: plan.latestTurnPrompt, titleGeneration: undefined });
+          return;
+        }
+        send('error', createSseErrorPayload('AGENT_PROMPT_TOO_LARGE',
+          'Claude could not compact this conversation. Your files are preserved. Start a new conversation or reduce the context before retrying.',
+          { retryable: false, details: { compactionFailure: compactResult.reason } }));
+        return finishWithRetryDecision('failed', code ?? 1, signal, { allowRetry: false });
+      }
       if (agentStreamErrorObservedBeforeCancellation && agentStreamError) {
         markRpcCloseReason('stream_error');
         return finishWithRetryDecision('failed', code === 0 ? 1 : (code ?? 1), signal ?? null);
@@ -16901,6 +17187,22 @@ export async function startServer({
         typeof acpSession?.completedSuccessfully === 'function' &&
         acpSession.completedSuccessfully();
       const runArtifactSideEffects = runSideEffectsForRun(run);
+      if (def.id === 'claude' && strategyRunMapping?.inputStage === 'production') {
+        await resolveRunArtifactOutcomeBeforeFinishAsync();
+        const settledEffects = runSideEffectsForRun(run);
+        if (claudeProductionEndedWithoutArtifact({
+          agentId: def.id, exitCode: code, cancelRequested: !!run.cancelRequested,
+          expectsArtifact: true,
+          artifactProducedThisRun: !!(settledEffects.artifactWriteSeen || settledEffects.liveArtifactSeen
+            || (run.artifactCount ?? 0) > 0),
+          awaitingUserInput: emittedRenderableQuestionForm(run.askUserScanText),
+        })) {
+          send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED',
+            'Claude ended the production turn without creating or updating the expected document. Retry the turn or choose another model.',
+            { retryable: true }));
+          return finishWithRetryDecision('failed', 0, signal);
+        }
+      }
       const status = classifyChatRunCloseStatus({
         cancelRequested: !!run.cancelRequested,
         code,
@@ -17232,12 +17534,14 @@ export async function startServer({
         }
         await resolveRunArtifactOutcomeBeforeFinishAsync();
         const deliverableFinalization = await finalizeSuccessfulRunDeliverable({
+          runId: run.id,
           allowIndependentOutput: Boolean(strategyTaskAtStart),
           allowMultipleOutputCandidates: run.strategyRolloutDecision?.taskType === 'discovery',
           ...(run.artifactOutcome?.diff && baselineEntryFile ? { baselineEntryFile } : {}),
           projectsRoot: PROJECTS_DIR,
           projectId: run.projectId ?? null,
           projectMetadata: projectRecord?.metadata,
+          documentScope: { dataRoot: RUNTIME_DATA_DIR, getProject: (id: string) => getProject(db, id) },
           artifactCount: Number.isFinite(run.artifactCount) ? run.artifactCount : 0,
           ...(Array.isArray(run.artifactPaths) ? { touchedPaths: run.artifactPaths } : {}),
           relatedPaths:
@@ -17276,8 +17580,8 @@ export async function startServer({
             console.warn('[deliverable] could not retain verified prototype entry');
           }
         }
+        design.runs.setDeliverableValidation?.(run, deliverable);
         if (strategyCompletionCandidate) {
-          design.runs.setDeliverableValidation?.(run, deliverable);
           deliverableValid = deliverable.valid;
           if (!deliverable.valid && strategyTaskAtStart) {
             console.info('[od-next-task] completion evidence rejected', {
@@ -17567,6 +17871,9 @@ export async function startServer({
         cleanupPromptFile();
       }
     });
+    // Arm before writing: a full opening frame can itself be backpressured.
+    // Waiting for the write callback would leave exactly that stall unbounded.
+    if (def.id === 'claude') armFirstOutputWatchdog();
     if (promptDeliveredAtSpawn) {
       // The complete plain-text prompt became the child's stdin at spawn
       // (runtimes/agent-process.ts), so there is nothing left to write. A
@@ -18386,6 +18693,7 @@ export async function startServer({
     // work below.
     let messageEventPayloadHeal: MessageEventPayloadHealHandle | null = null;
     const cleanupDaemonBackgroundWork = () => {
+      void projectHistory?.close();
       stopDiagnosticConfigObserver();
       stopDiagnosticApiObserver();
       void automaticDiagnostics?.stop();

@@ -80,6 +80,34 @@ describe('AssistantMessage — chat file-link routing (#1239)', () => {
     expect(onRequestOpenFile).toHaveBeenCalledWith('subdir/hero.html');
   });
 
+  it('opens a project-root link from a nested preview without duplicating its directory', () => {
+    const filePath = 'documents/relazione-composizione-finale/blockout-comparison.html';
+    const currentRoute = `/projects/project-1/conversations/conversation-1/files/${filePath}`;
+    window.history.replaceState(null, '', currentRoute);
+    const onRequestOpenFile = vi.fn();
+    const { container } = render(
+      <AssistantMessage
+        message={messageWithText(`Sono salvate le [tre strutture complete](${filePath}).`)}
+        streaming={false}
+        projectId="project-1"
+        projectFileNames={new Set([filePath])}
+        onRequestOpenFile={onRequestOpenFile}
+      />,
+    );
+
+    const anchor = container.querySelector<HTMLAnchorElement>('a.md-link')!;
+    expect(anchor.getAttribute('href')).toBe(filePath);
+    // Browser/AX absolute hrefs resolve against the nested preview route.
+    // The click contract must use the original Markdown path instead.
+    expect(anchor.href).toContain(`/files/documents/relazione-composizione-finale/${filePath}`);
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(clickEvent);
+
+    expect(onRequestOpenFile).toHaveBeenCalledExactlyOnceWith(filePath);
+    expect(clickEvent.defaultPrevented).toBe(true);
+    expect(window.location.pathname).toBe(currentRoute);
+  });
+
   it('routes project raw file URLs through onRequestOpenFile instead of opening a new window', () => {
     const onRequestOpenFile = vi.fn();
     const { container } = render(

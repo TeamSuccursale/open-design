@@ -96,15 +96,16 @@ const fold = (): HTMLDetailsElement => {
   return el;
 };
 
-describe('有报错原文:折叠块、默认展开、原文每一行都在 DOM 里', () => {
-  it('是折叠块,而且默认展开(与失败命令行同一个 lifecycleOpen)', () => {
+describe('有报错原文:默认收起,手动展开后读取完整原文(D53)', () => {
+  it('失败标记保留,原文默认收起', () => {
     render(<ToolRow row={failedFile()} />);
-    expect(fold().open, '失败照旧默认摊开,报错原文是这时候唯一要读的东西').toBe(true);
+    expect(fold().open).toBe(false); expect(screen.getByText('失败')).toBeTruthy();
   });
 
   it('原文的每一行都真的在 DOM 里 —— 这条才是 bug 的判据', () => {
-    // 生产默认 deferBody=true;失败行默认展开,所以正文首帧就该挂上
+    // D53: the error remains deferred until the user opens this row.
     const { container } = render(<ToolRow row={failedFile()} deferBody />);
+    fireEvent.click(fold().querySelector('summary')!);
     for (const line of LONG_ERR.split('\n')) {
       expect(container.textContent, `报错原文缺了这一行:${line}`).toContain(line);
     }
@@ -112,6 +113,7 @@ describe('有报错原文:折叠块、默认展开、原文每一行都在 DOM �
 
   it('原文走那个限高滚动框 —— 几百字符不许把整屏顶开', () => {
     const { container } = render(<ToolRow row={failedFile()} />);
+    fireEvent.click(fold().querySelector('summary')!);
     const box = container.querySelector('div[class*="term"]');
     expect(box, '复用 .term(max-height 104px + overflow-y auto),不另写一套').not.toBeNull();
     expect(box!.textContent).toContain('EACCES');
@@ -138,7 +140,7 @@ describe('有报错原文:折叠块、默认展开、原文每一行都在 DOM �
 
   it('读取失败也一样(不是只有写入)', () => {
     render(<ToolRow row={failedFile({ tool: 'read', name: 'Read', failReason: 'File not found' })} />);
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false); fireEvent.click(fold().querySelector('summary')!);
     expect(screen.getByText('File not found')).toBeTruthy();
     expect(fold().querySelector('summary')?.textContent).toContain('读取');
   });
@@ -151,7 +153,7 @@ describe('用户自己动过的,不许拨回去', () => {
 
   it('用户收起了这一条失败行,重渲染不许替他打开', () => {
     const { rerender } = render(<ToolRow row={failedFile()} />);
-    echoToggle(fold()); // 摊开那一帧的回声,不算用户点过
+    fireEvent.click(fold().querySelector('summary')!); echoToggle(fold());
 
     const summary = fold().querySelector<HTMLElement>('summary')!;
     fireEvent.click(summary);
@@ -236,7 +238,7 @@ describe('从真事件流验起(不手搓 failReason)', () => {
     expect(row.file?.label).toBe('index.html');
 
     const { container } = render(<ToolRow row={row} deferBody />);
-    expect(fold().open).toBe(true);
+    expect(fold().open).toBe(false); fireEvent.click(fold().querySelector('summary')!);
     expect(container.textContent).toContain('errno: -13');
   });
 });

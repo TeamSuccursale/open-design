@@ -268,8 +268,9 @@ describe('EntryShell signed-out recent projects', () => {
     renderAt('/community', { projects: [localProject] });
     await screen.findByTestId('entry-view-home');
     expect(screen.queryByTestId('community-composer-dock')).toBeNull();
-    // Home's own composer is still the single composer in the shell.
-    expect(screen.getAllByTestId('home-hero-composer-card')).toHaveLength(1);
+    // Home begins at the document choice; specialized chat is opened explicitly.
+    expect(screen.queryByTestId('home-hero-composer-card')).toBeNull();
+    expect(screen.getByTestId('document-project-entry')).toBeTruthy();
   });
 });
 
@@ -831,33 +832,68 @@ describe('EntryShell team project content readiness', () => {
   });
 });
 
+async function confirmBlankDocument() {
+  const dialog = await screen.findByRole('dialog', { name: 'Start a document project' });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Project name' }), { target: { value: 'Antro — Test job' } });
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'What is the project’s first document?' }), { target: { value: 'free' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+  fireEvent.click(within(dialog).getByRole('radio', { name: 'Create a new folder managed by the app' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create project and open chat' }));
+}
+
 describe('EntryShell blank-project creation tags nameSource', () => {
-  it('tags the Drafts empty-state "New project" CTA as generated', async () => {
+  it('creates a Fast project with the explicit overall name instead of deriving it from the document request', async () => {
+    const props = renderAt('/');
+    fireEvent.click(await screen.findByRole('button', { name: 'Fast project' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Fast project' }));
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Project name' }), { target: { value: 'Antro — Shared documents' } });
+    fireEvent.change(dialog.getByRole('textbox', { name: 'What would you like to make? (optional)' }), { target: { value: 'Prepare a document named Relazione B.' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Create and start chat' }));
+    await waitFor(() => expect(props.onCreateProject).toHaveBeenCalledTimes(1));
+    expect(props.onCreateProject).toHaveBeenCalledWith(expect.objectContaining({ name: 'Antro — Shared documents', metadata: expect.objectContaining({ projectMode: 'fast', nameSource: 'user' }), conversationMode: 'design' }));
+    expect(props.onCreateProject).toHaveBeenCalledWith(expect.not.objectContaining({ metadata: expect.objectContaining({ documentSetupIntent: expect.anything() }) }));
+  });
+  it('keeps the blank-project wizard ready for retry after asynchronous creation returns false', async () => {
+    const onCreateProject = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    renderAt('/drafts', { onCreateProject });
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    await confirmBlankDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Start a document project' });
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Your choices are kept');
+    expect(onCreateProject.mock.calls[0]![0].name).toBe('Antro — Test job');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create project and open chat' }));
+    await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(2));
+    expect(onCreateProject.mock.calls[1]![0]).toEqual(onCreateProject.mock.calls[0]![0]);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Start a document project' })).toBeNull());
+  });
+  it('preserves the explicit project name from the Drafts creation flow', async () => {
     const props = renderAt('/drafts');
 
     const cta = await screen.findByRole('button', { name: 'New project' });
     fireEvent.click(cta);
-
-    expect(props.onCreateProject).toHaveBeenCalledTimes(1);
+    expect(props.onCreateProject).not.toHaveBeenCalled();
+    await confirmBlankDocument();
+    await waitFor(() => expect(props.onCreateProject).toHaveBeenCalledTimes(1));
     expect(props.onCreateProject).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Untitled',
-        metadata: expect.objectContaining({ nameSource: 'generated' }),
+        name: 'Antro — Test job',
+        metadata: expect.objectContaining({ nameSource: 'user', intent: 'document', documentSetupIntent: expect.objectContaining({ kind: 'free' }) }),
       }),
     );
   });
 
-  it('tags the All-projects empty-state "New project" CTA as generated', async () => {
+  it('preserves the explicit project name from the All-projects creation flow', async () => {
     const props = renderAt('/all-projects');
 
     const cta = await screen.findByRole('button', { name: 'New project' });
     fireEvent.click(cta);
-
-    expect(props.onCreateProject).toHaveBeenCalledTimes(1);
+    expect(props.onCreateProject).not.toHaveBeenCalled();
+    await confirmBlankDocument();
+    await waitFor(() => expect(props.onCreateProject).toHaveBeenCalledTimes(1));
     expect(props.onCreateProject).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Untitled',
-        metadata: expect.objectContaining({ nameSource: 'generated' }),
+        name: 'Antro — Test job',
+        metadata: expect.objectContaining({ nameSource: 'user', intent: 'document', documentSetupIntent: expect.objectContaining({ kind: 'free' }) }),
       }),
     );
   });

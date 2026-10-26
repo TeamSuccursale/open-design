@@ -33,7 +33,7 @@
 
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -63,6 +63,7 @@ describe('claude sub-agent turn_end false success (#5487)', () => {
     LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
     LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
+    OD_NEXT_STRATEGY_ROLLOUT: process.env.OD_NEXT_STRATEGY_ROLLOUT,
   };
   let started: StartedServer | null = null;
   let binDir: string | null = null;
@@ -92,6 +93,7 @@ describe('claude sub-agent turn_end false success (#5487)', () => {
     delete process.env.LANGFUSE_SECRET_KEY;
     delete process.env.LANGFUSE_BASE_URL;
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
 
     started = await startServer({ port: 0, returnServer: true }) as StartedServer;
 
@@ -104,6 +106,7 @@ describe('claude sub-agent turn_end false success (#5487)', () => {
       privacyDecisionAt: Date.now(),
     });
     const controlRun = await createAndWaitForRun(started.url);
+    await assertFixtureUsed(controlRun);
     expect(controlRun.exitCode).toBe(1);
     // Baseline: without the sub-agent frame the crash is correctly a failure.
     expect(controlRun.status).toBe('failed');
@@ -118,12 +121,13 @@ describe('claude sub-agent turn_end false success (#5487)', () => {
       privacyDecisionAt: Date.now(),
     });
     const sidechainRun = await createAndWaitForRun(started.url);
+    await assertFixtureUsed(sidechainRun);
     expect(sidechainRun.exitCode).toBe(1);
     // INVARIANT: a sub-agent (parent_tool_use_id != null) turn boundary must not
     // vouch for the main turn. A non-zero crash with no result frame is a
     // failure regardless of any sub-agent's internal end_turn.
     expect(sidechainRun.status).toBe('failed');
-  });
+  }, 30_000);
 });
 
 async function writeCrashClaude(
@@ -131,7 +135,7 @@ async function writeCrashClaude(
   name: string,
   opts: { withSubagent: boolean },
 ): Promise<string> {
-  const bin = path.join(dir, name);
+  const source = path.join(dir, `${name}.cjs`);
   // Frames written synchronously (fs.writeSync) so nothing is lost when the
   // process exits non-zero. The main turn commits a Task tool_use (stop_reason
   // 'tool_use', so it never sets turnCompletedCleanly), the sub-agent finishes
@@ -148,12 +152,17 @@ async function writeCrashClaude(
         },
       }) + '\\n');`
     : '';
-  await writeFile(bin, `#!/usr/bin/env node
+  await writeFile(source, `
 const fs = require('node:fs');
 function w(s) { fs.writeSync(1, s); }
 if (process.argv.includes('--version')) { w('claude-code 1.0.0-sidechain-test\\n'); process.exit(0); }
 if (process.argv.includes('--help')) { w('Usage: claude -p [--include-partial-messages] [--add-dir DIR]\\n'); process.exit(0); }
+if (process.argv[2] === 'auth' && process.argv[3] === 'status') { w(JSON.stringify({ loggedIn: true, authMethod: 'test' }) + '\\n'); process.exit(0); }
+if (process.argv.includes('--thinking-display')) { console.error('unknown option --thinking-display'); process.exit(2); }
+const outputFormat = process.argv.indexOf('--output-format');
+if (outputFormat < 0 || process.argv[outputFormat + 1] !== 'stream-json') { console.error('Unsupported fixture probe'); process.exit(2); }
 
+process.stdin.once('data', () => {
 w(JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sidechain-test', session_id: 's-sidechain' }) + '\\n');
 // Main turn delegates to a Task sub-agent (stop_reason 'tool_use' keeps stdin open).
 w(JSON.stringify({
@@ -168,9 +177,26 @@ w(JSON.stringify({
 ${subagentFrame}
 // Main agent dies mid-synthesis: non-zero exit, NO result frame, NO error frame.
 setTimeout(() => process.exit(1), 30);
+});
+process.stdin.resume();
+setTimeout(() => process.exit(9), 5000).unref();
 `, 'utf8');
+  if (process.platform === 'win32') {
+    const bin = path.join(dir, `${name}.cmd`);
+    await writeFile(bin, `@echo off\r\n"${process.execPath}" "${source}" %*\r\n`, 'utf8');
+    return bin;
+  }
+  const bin = path.join(dir, name);
+  await writeFile(bin, `#!/bin/sh\nexec '${process.execPath.replace(/'/g, "'\\''")}' '${source.replace(/'/g, "'\\''")}' "$@"\n`, 'utf8');
   await chmod(bin, 0o755);
   return bin;
+}
+
+async function assertFixtureUsed(run: RunStatus): Promise<void> {
+  const events = (await readFile(run.eventsLogPath, 'utf8')).trim().split('\n')
+    .filter(Boolean).map((line) => JSON.parse(line) as { event: string; data?: { type?: string; model?: string } });
+  expect(events.some((event) => event.event === 'agent' && event.data?.type === 'status'
+    && event.data.model === 'claude-sidechain-test')).toBe(true);
 }
 
 async function putConfig(url: string, patch: Record<string, unknown>): Promise<void> {
@@ -210,6 +236,7 @@ async function createAndWaitForRun(url: string): Promise<RunStatus> {
       assistantMessageId: `assistant_sidechain_${randomUUID()}`,
       clientRequestId: `client_sidechain_${randomUUID()}`,
       agentId: 'claude',
+      reasoning: 'default',
       message: 'reproduce sub-agent turn_end false success',
       currentPrompt: 'reproduce sub-agent turn_end false success',
     }),

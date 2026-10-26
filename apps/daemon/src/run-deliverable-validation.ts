@@ -1,16 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { HYPERFRAMES_VIDEO_MODEL } from '@open-design/contracts';
+import { HYPERFRAMES_VIDEO_MODEL, blockoutComparisonFilePath } from '@open-design/contracts';
 import type {
   ChatRunStatus,
   ProjectFile,
   ProjectFileKind,
   ProjectMetadata,
+  ProjectDocument,
 } from '@open-design/contracts';
 
 import { listFiles, resolveProjectDir } from './projects.js';
 import { findTouchedLinkedPage } from './artifacts/linked-page-delivery.js';
+import type { BlockoutContextScope } from './services/blockout-context.js';
 
 export type RunDeliverableValidation =
   | 'valid'
@@ -32,6 +34,7 @@ export interface RunDeliverableValidationResult {
 }
 
 interface ValidateRunDeliverableInput {
+  runId?: string;
   projectsRoot: string;
   projectId: string | null;
   projectMetadata?: Partial<ProjectMetadata> | Record<string, unknown> | null;
@@ -46,6 +49,8 @@ interface ValidateRunDeliverableInput {
    * Requires exact current-run touched paths; never enables project-wide inference. */
   allowIndependentOutput?: boolean;
   allowMultipleOutputCandidates?: boolean;
+  /** Host-owned registry/DB scope; never inferred from a project path or env. */
+  documentScope?: Pick<BlockoutContextScope, 'dataRoot' | 'getProject'>;
 }
 
 export function inferBaselineHtmlEntry(projectRoot: string, paths: Iterable<string>): string | undefined {
@@ -231,6 +236,8 @@ export async function validateProjectDeliverable(
 export async function validateRunDeliverable(
   input: ValidateRunDeliverableInput,
 ): Promise<RunDeliverableValidationResult> {
+  const blockout = await validateBlockoutDelivery(input);
+  if (blockout) return blockout;
   const primary = await resolveDeliverable({ ...input, scope: 'run' });
   if (primary.valid || !input.allowIndependentOutput || !input.touchedPaths?.length
     || !['entry_missing', 'entry_not_touched', 'type_mismatch'].includes(primary.validation)) {
@@ -251,8 +258,132 @@ export async function validateRunDeliverable(
   return representative ?? independent;
 }
 
+/** Named documents deliver saved workspace comparisons rather than one root
+ * entry. Normal projects require their persisted registry association; Fast
+ * also retains its original local catalog path. Both require this run's diff. */
+async function validateBlockoutDelivery(
+  input: ValidateRunDeliverableInput,
+  registeredOnly = false,
+): Promise<RunDeliverableValidationResult | null> {
+  const fast = input.projectMetadata?.projectMode === 'fast';
+  if ((!fast && !input.documentScope) || input.projectMetadata?.entryFile
+    || input.runStatus !== 'succeeded' || !input.projectId
+    || !Number.isFinite(input.artifactCount) || input.artifactCount <= 0
+    || !input.touchedPaths?.length) return null;
+  type Candidate = { observed: string; relative: string; projectId: string; metadata: ValidateRunDeliverableInput['projectMetadata']; registeredDesign?: boolean };
+  const candidates = new Map<string, Candidate>();
+  try {
+    const root = resolveProjectDir(input.projectsRoot, input.projectId, input.projectMetadata);
+    const { listBlockoutWorkspaces, readBlockoutWorkspace } = await import('./services/blockout-workspaces.js');
+    // Native filesystem diffs carry absolute paths; durable run state carries
+    // the host's project-relative copy. Both name exact writes in this root.
+    // A path outside it must never become a virtual registered child alias.
+    const touched = new Set(input.touchedPaths.flatMap((value) => {
+      if (typeof value !== 'string' || !value) return [];
+      if (!path.isAbsolute(value) && !safeRelativeFile(value)) return [];
+      const relative = path.relative(root, path.resolve(root, value)).replaceAll(path.sep, '/');
+      const entry = safeRelativeFile(relative);
+      return entry && !path.isAbsolute(relative) && !relative.startsWith('../') ? [entry] : [];
+    }));
+    const scope = input.documentScope ? { ...input.documentScope, projectId: input.projectId, projectsRoot: input.projectsRoot } : null;
+    const project = scope?.getProject(input.projectId), parentId = project?.metadata?.collectionProjectId ?? input.projectId;
+    let records: readonly ProjectDocument[] = [];
+    if (scope && project) {
+      const { readProjectDocumentsSnapshot } = await import('./services/project-documents.js');
+      records = await readProjectDocumentsSnapshot(scope.dataRoot, parentId);
+    }
+    // Original collection paths remain valid. A registered child's document
+    // must instead resolve through its own project and authoritative metadata.
+    if (!registeredOnly && fast && !input.projectMetadata?.collectionProjectId) {
+      const catalog = await listBlockoutWorkspaces(root);
+      const workspaces = await Promise.allSettled(catalog.documents.map((item) => readBlockoutWorkspace(root, item.id)));
+      for (const result of workspaces) {
+        if (result.status !== 'fulfilled' || !result.value.document) continue;
+        const document = result.value.document;
+        const record = records.find((item) => (item.blockoutDocumentId ?? item.id) === document.documentId);
+        if (record && (record.archivedAt || record.workspaceProjectId !== input.projectId)) continue;
+        const entry = blockoutComparisonFilePath(document);
+        if (touched.has(entry)) candidates.set(entry, { observed: entry, relative: entry, projectId: input.projectId, metadata: input.projectMetadata });
+      }
+    }
+    if (scope && project) {
+      const { resolveRegisteredBlockoutOwner } = await import('./services/blockout-context.js');
+      const { documentRelativePath, sameDocumentFolder } = await import('./services/project-document-folders.js');
+      for (const record of records) {
+        if (record.archivedAt || record.kind !== 'document' || record.projectId !== parentId) continue;
+        if (input.projectId !== parentId && record.workspaceProjectId !== input.projectId) continue;
+        const ownerProject = scope.getProject(record.workspaceProjectId);
+        if (!ownerProject) continue;
+        const alias = `documents/${record.id}/`;
+        const aliasTouched = input.projectId === parentId && [...touched].some((entry) => entry.startsWith(alias));
+        if (!aliasTouched && record.workspaceProjectId !== input.projectId
+          && !sameDocumentFolder(resolveProjectDir(input.projectsRoot, ownerProject.id, ownerProject.metadata), root)) continue;
+        let owner: Awaited<ReturnType<typeof resolveRegisteredBlockoutOwner>>;
+        try { owner = await resolveRegisteredBlockoutOwner(record, parentId, scope); } catch { continue; }
+        if (!owner.projectId) continue;
+        const observedEntries = (relative: string): string[] => {
+          try { documentRelativePath(relative); } catch { return []; }
+          const observedPaths = input.projectId === parentId ? [relative, `${alias}${relative}`] : [relative];
+          return observedPaths.filter((observed) => {
+            if (!touched.has(observed)) return false;
+            // A parent diff is physical evidence. It cannot authorize a child
+            // outside that root merely by presenting a virtual alias string.
+            return input.projectId !== parentId || sameDocumentFolder(path.resolve(root, observed), path.resolve(owner.root, relative));
+          });
+        };
+        const registeredEntry = safeRelativeFile(record.entryFile);
+        const registeredObserved = registeredEntry ? observedEntries(registeredEntry)[0] : undefined;
+        const missingModel = registeredObserved ? { valid: false, validation: 'entry_missing', entryFile: registeredObserved } as const : null;
+        let saved: Awaited<ReturnType<typeof readBlockoutWorkspace>>;
+        try {
+          const catalog = await listBlockoutWorkspaces(owner.root);
+          if (!catalog.documents.some((item) => item.id === owner.documentId)) {
+            if (missingModel) return missingModel;
+            continue;
+          }
+          saved = await readBlockoutWorkspace(owner.root, owner.documentId);
+        } catch { if (missingModel) return missingModel; continue; }
+        if (!saved.document) { if (missingModel) return missingModel; continue; }
+        const { registeredBlockoutDesignDelivery } = await import('./services/blockout-design.js');
+        const designedEntry = input.runId ? await registeredBlockoutDesignDelivery(owner.root, owner.documentId, input.runId, input.projectId).catch(() => undefined) : undefined;
+        const entries = designedEntry ? new Set([designedEntry])
+          : new Set([blockoutComparisonFilePath(saved.document), registeredEntry].filter((entry): entry is string => entry !== null));
+        for (const relative of entries) {
+          for (const observed of observedEntries(relative)) {
+            candidates.set(observed, { observed, relative, projectId: owner.projectId, metadata: ownerProject.metadata,
+              ...(designedEntry ? { registeredDesign: true } : {}) });
+          }
+        }
+      }
+    }
+  } catch { return null; }
+  if (!candidates.size) return null;
+  let representative: RunDeliverableValidationResult | null = null;
+  for (const candidate of [...candidates.values()].sort((a, b) => a.observed.localeCompare(b.observed))) {
+    // Explicit owner entries retain their ordinary selection/touched/type
+    // rules. Every path still receives the independent realpath guard.
+    const result = await resolveDeliverable({ ...input, projectId: candidate.projectId, projectMetadata: candidate.metadata ?? null,
+      touchedPaths: [candidate.relative], scope: 'run', independentOutput: candidate.registeredDesign || !candidate.metadata?.entryFile, requireRealpathContainment: true });
+    const prefix = candidate.observed.slice(0, candidate.observed.length - candidate.relative.length);
+    const observedResult = { ...result, ...(result.entryFile ? { entryFile: `${prefix}${result.entryFile}` } : {}),
+      ...(result.linkedPage ? { linkedPage: `${prefix}${result.linkedPage}` } : {}) };
+    if (!result.valid) return observedResult;
+    representative ??= observedResult;
+  }
+  return representative;
+}
+
+/** Repair a cached pre-registry/absolute-diff miss only from the same run's
+ * exact writes and an actual persisted registered model. Ordinary inferred
+ * entries and the legacy Fast catalog are deliberately outside this repair. */
+export async function revalidateRegisteredBlockoutDelivery(
+  input: ValidateRunDeliverableInput,
+): Promise<RunDeliverableValidationResult | null> {
+  return validateBlockoutDelivery(input, true);
+}
+
 async function resolveDeliverable(
-  input: ValidateRunDeliverableInput & { scope: DeliverableValidationScope; independentOutput?: boolean },
+  input: ValidateRunDeliverableInput & { scope: DeliverableValidationScope; independentOutput?: boolean; requireRealpathContainment?: boolean },
 ): Promise<RunDeliverableValidationResult> {
   const runScoped = input.scope === 'run';
   if (runScoped && input.runStatus !== 'succeeded') {
@@ -343,7 +474,7 @@ async function resolveDeliverable(
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       return { valid: false, validation: 'entry_unreadable', ...facts };
     }
-    if (input.independentOutput) {
+    if (input.independentOutput || input.requireRealpathContainment) {
       const realRelative = path.relative(await fs.realpath(projectRoot), await fs.realpath(target));
       if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
         return { valid: false, validation: 'entry_unreadable', ...facts };

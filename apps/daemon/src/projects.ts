@@ -10,6 +10,7 @@
 import { constants as fsConstants, createReadStream } from 'node:fs';
 import { link, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { withProjectHistoryMutation } from './project-history-observer.js';
 import { Readable } from 'node:stream';
 import JSZip from 'jszip';
 import {
@@ -35,6 +36,7 @@ import {
   SANDBOX_IMPORTED_PROJECT_UNAVAILABLE_MESSAGE,
 } from './sandbox-mode.js';
 import { isOrchestratorScratchWorkspace } from './workspace-contract.js';
+import { visibleBlockoutFiles } from './services/blockout-visible-files.js';
 
 const FORBIDDEN_SEGMENT = /^$|^\.\.?$/;
 const RESERVED_PROJECT_FILE_SEGMENTS = new Set(['.file-versions', '.live-artifacts']);
@@ -154,13 +156,14 @@ export async function listFiles(projectsRoot, projectId, opts = {}) {
   // projects can contain framework installs too; surfacing package HTML like
   // node_modules/tslib/*.html as artifacts produces blank previews.
   await collectFiles(dir, '', out, isIgnoredProjectDirName, dir);
+  const visible = await visibleBlockoutFiles(dir, out);
   // Newest first — matches the visual order users expect after generating.
-  out.sort((a, b) => b.mtime - a.mtime);
+  visible.sort((a, b) => b.mtime - a.mtime);
   const since = Number(opts.since);
   if (Number.isFinite(since) && since > 0) {
-    return out.filter((f) => Number(f.mtime) > since);
+    return visible.filter((f) => Number(f.mtime) > since);
   }
-  return out;
+  return visible;
 }
 
 export async function listProjectFolders(projectsRoot, projectId, opts = {}) {
@@ -939,13 +942,15 @@ export async function writeProjectFile(
       }
     }
   }
-  await writeFile(target, body);
-  await projectFileWriteTestHooks.afterCommit?.({ safeName, target, body });
-  if (validatedManifest) {
-    const manifestFileName = artifactManifestNameFor(safeName);
-    const manifestTarget = await resolveSafeReal(dir, manifestFileName);
-    await writeFile(manifestTarget, JSON.stringify(validatedManifest, null, 2));
-  }
+  await withProjectHistoryMutation({ projectId, root: dir, paths: [safeName, ...(validatedManifest ? [artifactManifestNameFor(safeName)] : [])] }, async () => {
+    await writeFile(target, body);
+    await projectFileWriteTestHooks.afterCommit?.({ safeName, target, body });
+    if (validatedManifest) {
+      const manifestFileName = artifactManifestNameFor(safeName);
+      const manifestTarget = await resolveSafeReal(dir, manifestFileName);
+      await writeFile(manifestTarget, JSON.stringify(validatedManifest, null, 2));
+    }
+  });
   const st = await stat(target);
   const persistedManifest = await readManifestForPath(dir, safeName);
   const result = {
@@ -1050,7 +1055,7 @@ export async function deleteProjectFile(projectsRoot, projectId, name, metadata?
   assertVisibleForImportedProject(name, metadata);
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
-  await unlink(file);
+  await withProjectHistoryMutation({ projectId, root: dir, paths: [name] }, () => unlink(file));
 }
 
 export async function renameProjectFile(projectsRoot, projectId, fromName, toName, metadata?) {
@@ -1113,9 +1118,11 @@ export async function renameProjectFile(projectsRoot, projectId, fromName, toNam
 
   await mkdir(path.dirname(targetPath), { recursive: true });
   await projectFileRenameTestHooks.beforeCommit?.({ source, target: targetPath });
-  await renameFilePath(source, targetPath, { noOverwrite: true });
-  await commitArtifactManifestRename(manifestRename, newName);
-  await updateArtifactManifestRefsForRename(dir, oldName, newName);
+  await withProjectHistoryMutation({ projectId, root: dir, paths: [oldName, newName, artifactManifestNameFor(oldName), artifactManifestNameFor(newName)] }, async () => {
+    await renameFilePath(source, targetPath, { noOverwrite: true });
+    await commitArtifactManifestRename(manifestRename, newName);
+    await updateArtifactManifestRefsForRename(dir, oldName, newName);
+  });
 
   const st = await stat(targetPath);
   const manifest = await readManifestForPath(dir, newName);

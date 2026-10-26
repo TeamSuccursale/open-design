@@ -48,6 +48,7 @@ import { resolve } from 'node:path';
 import type { ReactElement } from 'react';
 import type { ChatMessage, PersistedAgentEvent } from '@open-design/contracts';
 import { I18nProvider } from '../../../src/i18n';
+import { openExecutionDetails } from '../../helpers/open-execution-details';
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
 import type {
@@ -228,6 +229,7 @@ describe('秒表接线 · 一个 timer,数字自己走', () => {
     const { container } = render(
       <I18nProvider initial="zh-CN"><AssistantMessage message={message} streaming /></I18nProvider>,
     );
+    openExecutionDetails(container);
     expect(rowText(container)).toContain('3.0s');
     act(() => { vi.advanceTimersByTime(6_000); });
     expect(rowText(container)).toContain('9.0s');

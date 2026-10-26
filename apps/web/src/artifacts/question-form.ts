@@ -30,6 +30,7 @@
 import { parsePartialJson } from '../runtime/partial-json';
 import { chatProtocolSkipRanges } from './chat-protocol-context';
 import { rangeContains, type Range } from './markdown-context';
+import { BlockoutTargetSchema, HeaderFooterTargetSchema, type BlockoutTarget, type HeaderFooterTarget } from '@open-design/contracts';
 
 export type QuestionType =
   | 'radio'
@@ -127,6 +128,8 @@ export interface FormOption {
 
 export interface FormQuestion {
   id: string;
+  /** Render and submit this question only while another visible answer matches. */
+  showWhen?: { questionId: string; equals: string | boolean };
   label: string;
   type: QuestionType;
   options?: FormOption[];
@@ -187,6 +190,10 @@ export interface QuestionForm {
   title: string;
   questions: FormQuestion[];
   submitLabel?: string;
+  /** Related questions can share one answer/confirmation; omitted keeps the existing stepped flow. */
+  layout?: 'grouped' | 'stepped';
+  blockoutTarget?: BlockoutTarget;
+  headerFooterTarget?: HeaderFooterTarget;
   /**
    * BCP-47 tag of the language the model localized the form into (e.g.
    * "zh-CN"). Host-rendered strings inside the form card (the "Other" chip,
@@ -486,7 +493,7 @@ function findCloseTag(input: string, from: number, closeTag: string): number {
 }
 
 function parseAttrs(raw: string): Record<string, string> {
-  const re = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  const re = /([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   const out: Record<string, string> = {};
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw)) !== null) {
@@ -538,18 +545,30 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
     if (mapped) questions.push(mapped);
   });
   if (questions.length === 0) return { form: null, reason: 'empty-questions' };
+  if (rawQuestions.some((raw) => raw && typeof raw === 'object' && 'showWhen' in raw && !validShowWhen((raw as Record<string, unknown>).showWhen)) || !validQuestionDependencies(questions)) return { form: null, reason: 'unsupported-payload' };
   const id = attrs.id ?? (typeof obj.id === 'string' ? obj.id : 'discovery');
   const title =
     attrs.title ?? (typeof obj.title === 'string' ? obj.title : 'A few quick questions');
   const submitLabel = typeof obj.submitLabel === 'string' ? obj.submitLabel : undefined;
+  const layout = obj.layout === 'grouped' || obj.layout === 'stepped' ? obj.layout : undefined;
   const lang = typeof obj.lang === 'string' && obj.lang.trim().length > 0 ? obj.lang.trim() : undefined;
+  const blockoutTarget = BlockoutTargetSchema.safeParse(obj.blockoutTarget ?? {
+    pageId: attrs['blockout-page'],
+    ...(attrs['blockout-variant'] ? { variantId: attrs['blockout-variant'] } : {}),
+    ...(attrs['blockout-document'] ? { documentId: attrs['blockout-document'] } : {}),
+    ...(attrs['blockout-block'] ? { blockId: attrs['blockout-block'] } : {}),
+  });
+  const headerFooterTarget = HeaderFooterTargetSchema.safeParse(obj.headerFooterTarget);
   return {
     form: {
       id,
       title,
       questions,
       ...(submitLabel ? { submitLabel } : {}),
+      ...(layout ? { layout } : {}),
       ...(lang ? { lang } : {}),
+      ...(blockoutTarget.success ? { blockoutTarget: blockoutTarget.data } : {}),
+      ...(headerFooterTarget.success ? { headerFooterTarget: headerFooterTarget.data } : {}),
     },
   };
 }
@@ -707,6 +726,7 @@ function mapRawQuestion(q: unknown, index: number): FormQuestion | null {
   const accept = typeof qo.accept === 'string' ? qo.accept : undefined;
   return {
     id,
+    ...(validShowWhen(qo.showWhen) ? { showWhen: qo.showWhen } : {}),
     label,
     type,
     ...(options ? { options } : {}),
@@ -725,6 +745,41 @@ function mapRawQuestion(q: unknown, index: number): FormQuestion | null {
     ...(accept && type === 'file' ? { accept } : {}),
     ...(cards ? { cards } : {}),
   };
+}
+
+function validShowWhen(value: unknown): value is NonNullable<FormQuestion['showWhen']> {
+  if (!value || typeof value !== 'object') return false;
+  const condition = value as Record<string, unknown>;
+  return typeof condition.questionId === 'string' && condition.questionId.trim().length > 0 && (typeof condition.equals === 'string' || typeof condition.equals === 'boolean');
+}
+
+function validQuestionDependencies(questions: readonly FormQuestion[]): boolean {
+  const byId = new Map(questions.map((question) => [question.id, question]));
+  if (!questions.some((question) => question.showWhen)) return true;
+  if (byId.size !== questions.length) return false;
+  for (const question of questions) {
+    const seen = new Set([question.id]); let next = question.showWhen;
+    while (next) {
+      if (seen.has(next.questionId)) return false;
+      seen.add(next.questionId);
+      const parent = byId.get(next.questionId);
+      if (!parent) return false;
+      next = parent.showWhen;
+    }
+  }
+  return true;
+}
+
+export function visibleFormQuestions(form: QuestionForm, answers: Record<string, string | string[]>): FormQuestion[] {
+  const byId = new Map(form.questions.map((question) => [question.id, question]));
+  function visible(question: FormQuestion, seen = new Set<string>()): boolean {
+    if (!question.showWhen) return true;
+    if (seen.has(question.id)) return false;
+    seen.add(question.id);
+    const parent = byId.get(question.showWhen.questionId);
+    return Boolean(parent && visible(parent, seen) && answers[parent.id] === String(question.showWhen.equals));
+  }
+  return form.questions.filter((question) => visible(question));
 }
 
 /**
@@ -784,6 +839,8 @@ export function parsePartialQuestionForm(input: string): QuestionForm | null {
   // omitting it here makes a custom CTA flicker in only once the close tag
   // arrives.
   const submitLabel = typeof top.submitLabel === 'string' ? top.submitLabel : undefined;
+  const layoutValue = completeTopLevelString(body, 'layout');
+  const layout = layoutValue === 'grouped' || layoutValue === 'stepped' ? layoutValue : undefined;
   // Adopt `lang` only once its string literal is fully terminated (same
   // churn-avoidance as `id`): a partially streamed "zh-C" would briefly
   // resolve to the wrong dictionary.
@@ -794,6 +851,7 @@ export function parsePartialQuestionForm(input: string): QuestionForm | null {
     title,
     questions,
     ...(submitLabel ? { submitLabel } : {}),
+    ...(layout ? { layout } : {}),
     ...(lang ? { lang } : {}),
   };
 }
@@ -1154,7 +1212,7 @@ export function formatFormAnswers(
 ): string {
   const lines: string[] = [];
   lines.push(`[form answers — ${form.id}]`);
-  for (const q of form.questions) {
+  for (const q of visibleFormQuestions(form, answers)) {
     const v = answers[q.id];
     let display: string;
     if (Array.isArray(v)) {
@@ -1163,8 +1221,12 @@ export function formatFormAnswers(
       display = v.trim().length > 0 ? formOptionDisplayForValue(q, v.trim()) : '(skipped)';
     }
     else display = '(skipped)';
-    lines.push(`- ${q.label}: ${display}`);
+    // Indentation distinguishes textarea continuation lines from the next
+    // answer, even when the user writes "- Another question: ..." in a note.
+    lines.push(`- ${q.label}: ${display.replace(/\r?\n/g, '\n  ')}`);
   }
+  if (form.blockoutTarget) lines.push(`\n[blockout target] ${JSON.stringify(form.blockoutTarget)}`);
+  if (form.headerFooterTarget) lines.push(`\n[header/footer target] ${JSON.stringify(form.headerFooterTarget)}`);
   return lines.join('\n');
 }
 
@@ -1201,7 +1263,7 @@ export function isFormAnswersMessage(content: string): boolean {
  */
 export function formAnswersDisplayBody(content: string): string {
   if (!isFormAnswersMessage(content)) return content;
-  const body = content.trim().replace(FORM_ANSWERS_HEADER_LINE, '').trim();
+  const body = content.trim().replace(FORM_ANSWERS_HEADER_LINE, '').replace(/^\[(?:blockout target|header\/footer target)\]\s*\{[^\n]*\}\s*$/gm, '').trim();
   return body.length > 0 ? body : content;
 }
 

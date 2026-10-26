@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { attachCodexAppServerSession } from '../src/agent-protocol/codex-app-server/session.js';
+import { resolveSvgExecutionPolicy } from '@open-design/contracts';
 
 type Frame = Record<string, any>;
 
@@ -82,6 +83,23 @@ function completeHandshake(child: FakeChild, threadId = 'th-1') {
 }
 
 describe('codex app-server session', () => {
+  it('keeps the coordinator alive and its history intact when a native worker completes', () => {
+    const { child, agentEvents, marks, session } = harness();
+    completeHandshake(child, 'parent');
+    child.say({ method: 'thread/started', params: { thread: { id: 'worker', path: '/worker/rollout.jsonl' } } });
+    child.say({ method: 'item/agentMessage/delta', params: { threadId: 'worker', itemId: 'worker-answer', delta: 'Only proposal A is ready' } });
+    child.say({ method: 'turn/completed', params: { threadId: 'worker', turn: { status: 'completed' } } });
+    expect(child.stdinEnded).toBe(0);
+    expect(marks).not.toContain('turn-complete');
+    expect(session.getDurableSessionId()).toBe('parent');
+    expect(session.getLastSessionPath()).toBe('/CODEX_HOME/rollout.jsonl');
+    expect(agentEvents.some((event) => event.delta === 'Only proposal A is ready')).toBe(false);
+    child.say({ method: 'item/agentMessage/delta', params: { threadId: 'parent', itemId: 'answer', delta: 'All proposals integrated' } });
+    expect(agentEvents.some((event) => event.delta === 'All proposals integrated')).toBe(true);
+    child.say({ method: 'turn/completed', params: { threadId: 'parent', turn: { status: 'completed' } } });
+    expect(marks).toContain('turn-complete');
+    expect(child.stdinEnded).toBe(1);
+  });
   describe('handshake', () => {
     it.each([
       ['open-design/0.122.0 (macOS 26.0; arm64) open-design/9.9.9', false],
@@ -191,6 +209,15 @@ describe('codex app-server session', () => {
       const params = child.sent('turn/start')?.params;
       expect(params.model).toBe('gpt-5.4-mini');
       expect(params.effort).toBe('high');
+    });
+
+    it.each(['Create a simple SVG icon', 'Reconstruct the detailed map as SVG'])('delivers SVG policy to native Codex for %s', (prompt) => {
+      const policy = resolveSvgExecutionPolicy({ agentId: 'codex', prompt, model: 'gpt-6-luna', reasoning: 'low' });
+      const { child } = harness({ model: policy?.model, reasoning: policy?.reasoning });
+      completeHandshake(child);
+      expect(child.sent('turn/start')?.params).toMatchObject({
+        model: 'gpt-6.1-sol', effort: prompt.includes('map') ? 'max' : 'xhigh',
+      });
     });
 
     it('omits model and effort when the run did not pin them', () => {
@@ -426,6 +453,16 @@ describe('codex app-server session', () => {
       const error = agentEvents.find((e) => e.type === 'error');
       expect(error).toBeDefined();
       expect(String(error?.message)).toContain('missing field');
+      expect(child.stdinEnded).toBe(1);
+    });
+    it('settles a rejected resume rather than leaving app-server running forever', () => {
+      const { child, session, agentEvents } = harness({ resumeSessionId: 'locked-thread' });
+      child.say({ id: child.sent('initialize')!.id, result: {} });
+      child.say({ id: child.sent('thread/resume')!.id, error: { code: -32600, message: 'thread already has an active writer' } });
+      expect(child.stdinEnded).toBe(1);
+      expect(session.completedSuccessfully()).toBe(false);
+      expect(agentEvents.filter((event) => event.type === 'error')).toHaveLength(1);
+      expect(child.sent('turn/start')).toBeUndefined();
     });
   });
 

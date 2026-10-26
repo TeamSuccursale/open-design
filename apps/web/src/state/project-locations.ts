@@ -4,14 +4,18 @@ import type {
   ScanProjectLocationsResponse,
   UpdateProjectLocationsRequest,
 } from '@open-design/contracts';
+import { withRequestDeadline } from '../runtime/request-deadline';
 
-export async function fetchProjectLocations(): Promise<ProjectLocation[]> {
+export async function fetchProjectLocations(options: { signal?: AbortSignal; throwOnError?: boolean } = {}): Promise<ProjectLocation[]> {
   try {
-    const resp = await fetch('/api/project-locations');
-    if (!resp.ok) return [];
-    const json = (await resp.json()) as ProjectLocationsResponse;
-    return Array.isArray(json.locations) ? json.locations : [];
-  } catch {
+    return await withRequestDeadline(async (signal) => {
+      const resp = await fetch('/api/project-locations', { signal });
+      if (!resp.ok) throw new Error('Could not load project storage locations');
+      const json = (await resp.json()) as ProjectLocationsResponse;
+      return Array.isArray(json.locations) ? json.locations : [];
+    }, options);
+  } catch (error) {
+    if (options.throwOnError) throw error;
     return [];
   }
 }

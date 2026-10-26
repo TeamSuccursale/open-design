@@ -2,6 +2,42 @@ import { describe, expect, it } from 'vitest';
 import { diagnoseClaudeCliFailure } from '../src/claude-diagnostics.js';
 
 describe('diagnoseClaudeCliFailure', () => {
+  it('does not mislabel a rejected permission classifier schema as authentication failure', () => {
+    const diagnostic = diagnoseClaudeCliFailure({
+      agentId: 'claude', exitCode: 1,
+      stderrTail: 'apiKeySource:none; auto-mode classifier API Error 400 invalid_request_error: thinking is required, invalid tokens',
+      env: { ANTHROPIC_BASE_URL: 'https://gateway.example.test' },
+    });
+
+    expect(diagnostic?.message).toContain('classifier request was rejected');
+    expect(diagnostic?.detail).toContain('permission decision remains unchanged');
+    expect(diagnostic?.detail).not.toContain('/login');
+    expect(diagnostic?.code).toBe('AGENT_EXECUTION_FAILED');
+    expect(diagnostic?.retryable).toBe(false);
+  });
+
+  it('reports a missing count_tokens endpoint without login or permission-policy workarounds', () => {
+    const diagnostic = diagnoseClaudeCliFailure({
+      agentId: 'claude', exitCode: 1,
+      stderrTail: 'apiKeySource:none POST /v1/messages/count_tokens 404 not_found_error',
+      env: { ANTHROPIC_BASE_URL: 'https://gateway.example.test' },
+    });
+
+    expect(diagnostic?.message).toContain('does not support the token-count request');
+    expect(diagnostic?.detail).not.toContain('/login');
+    expect(diagnostic?.retryable).toBe(false);
+  });
+
+  it('keeps genuine classifier authentication failures in the authentication path', () => {
+    const diagnostic = diagnoseClaudeCliFailure({
+      agentId: 'claude', exitCode: 1,
+      stderrTail: 'permission classifier API Error 401 unauthorized: token expired', env: {},
+    });
+
+    expect(diagnostic?.message).toContain('could not authenticate');
+    expect(diagnostic?.message).toContain('/login');
+  });
+
   it('maps Claude Not logged in stdout to /login guidance (#1928)', () => {
     const diagnostic = diagnoseClaudeCliFailure({
       agentId: 'claude',

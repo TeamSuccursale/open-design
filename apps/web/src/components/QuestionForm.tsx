@@ -4,6 +4,7 @@ import { Fragment,
   useContext,
   useEffect,
   useImperativeHandle,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,7 @@ import {
   formatFormAnswers,
   formOptionValueForLabel,
   normalizeHexColor,
+  visibleFormQuestions,
 } from '../artifacts/question-form';
 import {
   visualStyleCardsForContext,
@@ -37,6 +39,7 @@ import {
 import { Icon } from './Icon';
 import { ChevronIcon } from './chat/primitives/icons';
 import styles from './QuestionForm.module.css';
+import { acceptedFileTypes } from '../runtime/chat/accepted-file-types';
 
 export type QuestionFormInteraction =
   | {
@@ -96,6 +99,8 @@ interface Props {
     files?: QuestionFormFileSubmission[],
   ) => void;
   submitDisabled?: boolean;
+  // The owning form occurrence has been sent and is still awaiting history.
+  submitting?: boolean;
   visualStyleContext?: VisualStyleContext;
   // When enabled, the form moves on after the timeout. Any unanswered field,
   // including a required one, is submitted as "(skipped)".
@@ -131,12 +136,15 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     onInteraction,
     onSubmit,
     submitDisabled = false,
+    submitting = false,
     visualStyleContext,
     autoContinueAfterTimeout = false,
   },
   ref,
 ) {
   const uiT = useT();
+  const submissionBlocked = submitDisabled || submitting;
+  const instanceId = useId();
   // Answer-content strings follow the form's declared language, falling back
   // to the UI locale when it is absent or unsupported. Required/navigation
   // controls use uiT independently; they are not part of the answer content.
@@ -197,10 +205,12 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   // Use the normalized snapshot for rendering so legacy tone values select
   // the same visual card that a new submission will send.
   const currentAnswers = submittedAnswers !== undefined ? initial : answers;
-  const stepped = (unansweredHistory || !locked) && !hideInternalSubmit && form.questions.length > 1;
-  const activeQuestion = form.questions[activeQuestionIndex];
-  const isLastQuestion = activeQuestionIndex === form.questions.length - 1;
-  const questionsToRender = stepped && activeQuestion ? [activeQuestion] : form.questions;
+  const visibleQuestions = visibleFormQuestions(form, currentAnswers);
+  const visibleForm = { ...form, questions: visibleQuestions };
+  const stepped = form.layout !== 'grouped' && (unansweredHistory || !locked) && !hideInternalSubmit && visibleQuestions.length > 1;
+  const activeQuestion = visibleQuestions[activeQuestionIndex];
+  const isLastQuestion = activeQuestionIndex === visibleQuestions.length - 1;
+  const questionsToRender = stepped && activeQuestion ? [activeQuestion] : visibleQuestions;
   /*
    * 交付稿第 21 / 22 格的底栏**只有一行**,逐颗核对过是 `换一批 | 随机 | 下一步` 三颗
    * (曾经记成还有一颗「撑开」——**没有**;「铺开成网格」是选项区右上角那枚开关,不在底栏)。
@@ -243,9 +253,9 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
 
   useEffect(() => {
     setActiveQuestionIndex((current) =>
-      Math.min(current, Math.max(0, form.questions.length - 1)),
+      Math.min(current, Math.max(0, visibleQuestions.length - 1)),
     );
-  }, [form.questions.length]);
+  }, [visibleQuestions.length]);
 
   function hasCustomAnswer(q: QuestionForm['questions'][number]): boolean {
     const value = currentAnswers[q.id];
@@ -412,6 +422,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
           <span className="qf-own-label">{label}</span>
           <textarea
             rows={1}
+            aria-label={`${q.label}: ${label}`}
             className="qf-own-input qf-input"
             data-testid="qf-input"
             value={value}
@@ -511,9 +522,12 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     skippedIds: ReadonlySet<string> = skippedQuestionIds,
   ) {
     if (!onSubmit) return;
-    const submittedAnswers = answersWithSkippedQuestions(form, answers, skippedIds);
-    const submissionForm = formWithVisualStyleOptions(form, visualStyleContext);
-    const files = collectFileSubmissions(form, fileAnswers, skippedIds);
+    const visibleAnswers = Object.fromEntries(visibleQuestions.filter((question) => answers[question.id] !== undefined).map((question) => [question.id, answers[question.id]!]));
+    const skippedAnswers = answersWithSkippedQuestions(visibleForm, visibleAnswers, skippedIds);
+    const submissionQuestions = visibleFormQuestions(visibleForm, skippedAnswers);
+    const submittedAnswers = Object.fromEntries(submissionQuestions.filter((question) => skippedAnswers[question.id] !== undefined).map((question) => [question.id, skippedAnswers[question.id]!]));
+    const submissionForm = formWithVisualStyleOptions({ ...visibleForm, questions: submissionQuestions }, visualStyleContext);
+    const files = collectFileSubmissions(submissionForm, fileAnswers, skippedIds);
     if (files.length > 0) {
       onSubmit(formatFormAnswers(submissionForm, submittedAnswers), submittedAnswers, source, files);
     } else {
@@ -531,7 +545,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   function handleSkipAll() {
     if (locked || !onSubmit) return;
     const empty: Record<string, string | string[]> = {};
-    onSubmit(formatFormAnswers(formWithVisualStyleOptions(form, visualStyleContext), empty), empty, 'skip');
+    onSubmit(formatFormAnswers(formWithVisualStyleOptions(visibleForm, visualStyleContext), empty), empty, 'skip');
   }
 
   function handleSkipCurrent() {
@@ -540,7 +554,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       element: 'step_skip',
       questionId: activeQuestion.id,
       stepIndex: activeQuestionIndex + 1,
-      stepCount: form.questions.length,
+      stepCount: visibleQuestions.length,
     });
     const nextSkipped = new Set(skippedQuestionIds);
     nextSkipped.add(activeQuestion.id);
@@ -558,7 +572,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       element: 'step_back',
       questionId: activeQuestion.id,
       stepIndex: activeQuestionIndex + 1,
-      stepCount: form.questions.length,
+      stepCount: visibleQuestions.length,
     });
     setActiveQuestionIndex((current) => Math.max(0, current - 1));
   }
@@ -569,13 +583,13 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       element: 'step_next',
       questionId: activeQuestion.id,
       stepIndex: activeQuestionIndex + 1,
-      stepCount: form.questions.length,
+      stepCount: visibleQuestions.length,
     });
     setActiveQuestionIndex((current) => current + 1);
   }
 
   // Per-question checkbox selection caps must hold.
-  const withinSelectionLimits = form.questions.every((q) => {
+  const withinSelectionLimits = visibleQuestions.every((q) => {
     if (q.type !== 'checkbox' || q.maxSelections === undefined) return true;
     const v = currentAnswers[q.id];
     return !Array.isArray(v) || v.length <= q.maxSelections;
@@ -583,7 +597,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   // 有选项的问题必须先有答案,不想答走旁边的「跳过」——「跳过」会把值序列化成
   // "(skipped)",让 agent 拿默认值往下走。判据来自交付稿意图澄清那五格的状态标签
   // (5-1「一个都没选 ——『下一步』置灰」/ 5-4「没写字前『下一步』仍置灰」)。
-  const requiredAnswered = form.questions.every((q) => {
+  const requiredAnswered = visibleQuestions.every((q) => {
     if (!questionNeedsAnswer(q, visualStyleContext)) return true;
     if (skippedQuestionIds.has(q.id)) return true;
     const v = currentAnswers[q.id];
@@ -598,7 +612,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     const raw = colorText[id];
     return raw !== undefined && normalizeHexColor(raw) === null;
   };
-  const noColorTextPending = form.questions.every(
+  const noColorTextPending = visibleQuestions.every(
     (q) => q.type !== 'color' || !colorTextIsInvalid(q.id),
   );
   const ready = withinSelectionLimits && requiredAnswered && noColorTextPending;
@@ -610,10 +624,13 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       variant="primary"
       className="qf-primary-action"
       onClick={handleSubmit}
-      disabled={submitDisabled || !ready}
-      title={!submitDisabled && ready ? uiT('qf.submitTitle') : uiT('qf.submitDisabledTitle')}
+      disabled={submissionBlocked || !ready}
+      title={submitting
+        ? uiT('questions.submitting')
+        : !ready ? uiT('qf.submitDisabledTitle')
+          : !submitDisabled ? uiT('qf.submitTitle') : undefined}
     >
-      {form.submitLabel ?? uiT('qf.submitDefault')}
+      {submitting ? uiT('questions.submitting') : form.submitLabel ?? uiT(form.layout === 'grouped' ? 'qf.submitGrouped' : 'qf.submitDefault')}
     </Button>
   );
   /*
@@ -634,20 +651,21 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       className="qf-visual-foot-action"
       data-action="skip"
       onClick={handleSkipAll}
-      disabled={submitDisabled}
+      disabled={submissionBlocked}
     >
       {uiT('questionForm.skip')}
     </Button>
   );
   // A manual Skip all is always available, including for required questions.
   const canSkipAll = true;
-  const hasRequiredQuestions = form.questions.some((q) => q.required === true);
+  const hasRequiredQuestions = visibleQuestions.some((q) => q.required === true);
   // Timeout continuation shares the explicit Skip semantics: unanswered
   // questions, including required ones, are serialized as "(skipped)".
   const autoContinueEnabled =
     autoContinueAfterTimeout &&
+    !form.headerFooterTarget && !form.blockoutTarget &&
     !locked &&
-    !submitDisabled;
+    !submissionBlocked;
   const currentQuestionReady = ((): boolean => {
     if (!activeQuestion) return true;
     // 分步态下「下一步」也不许在半截的 Hex 上放行
@@ -718,10 +736,18 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   // remounting this component's answer/draft state or adding another card.
   const FormContainer = unansweredHistory ? 'details' : 'div';
   const FormHead = unansweredHistory ? 'summary' : 'div';
+  const groupedSettings = form.layout === 'grouped' && questionsToRender.length > 1
+    && questionsToRender.every((question) => question.type !== 'direction-cards' && question.id !== 'tone');
+  const compactChoices = form.layout === 'grouped' && questionsToRender.length > 2 && questionsToRender.every((question) =>
+    question.type === 'radio' && question.id !== 'tone' && question.options?.length === 2
+    && question.options.every((option) => !option.description && option.label.length <= 70));
   return (
+    <>
+    {submitting ? <div role="status" aria-live="polite">{uiT('questions.submitting')}</div> : null}
     <FormContainer
-      className={`question-form${locked ? ' question-form-locked' : ''}${unansweredHistory ? ` ${styles.unanswered}` : ''}`}
+      className={`question-form${locked ? ' question-form-locked' : ''}${unansweredHistory ? ` ${styles.unanswered}` : ''}${groupedSettings ? ` ${styles.groupedSettings}` : ''}${compactChoices ? ` ${styles.compactChoices}` : ''}`}
       data-form-id={form.id}
+      aria-busy={submitting || undefined}
     >
       <FormHead className="question-form-head">
         {/*
@@ -828,7 +854,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   所以这里不需要再判「这一问是不是当前问」。
                 */}
                 {stepped ? (
-                  <StepProgress index={activeQuestionIndex} total={form.questions.length} />
+                  <StepProgress index={activeQuestionIndex} total={visibleQuestions.length} />
                 ) : null}
               </div>
               {/* 一道题就是「题目 + 必填标识 + 用来作答的控件」,没有第四样。
@@ -926,6 +952,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
               {q.type === 'text' ? (
                 <input
                   type="text"
+                  aria-label={q.label}
                   className="qf-input"
                   data-testid="qf-input"
                   value={typeof value === 'string' ? value : ''}
@@ -937,6 +964,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
               {q.type === 'number' ? (
                 <input
                   type="number"
+                  aria-label={q.label}
                   className="qf-input"
                   data-testid="qf-input"
                   value={typeof value === 'string' ? value : ''}
@@ -998,6 +1026,8 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                 <div className="qf-file-wrap">
                   <input
                     type="file"
+                    aria-label={q.label}
+                    aria-describedby={acceptedFileTypes(q.accept) ? `${instanceId}-${encodeURIComponent(q.id)}-file-types` : undefined}
                     className="qf-file"
                     multiple={q.multiple}
                     accept={q.accept}
@@ -1009,6 +1039,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                       update(q.id, q.multiple ? names : names[0] ?? '');
                     }}
                   />
+                  {acceptedFileTypes(q.accept) && <small className={styles.acceptedFiles} id={`${instanceId}-${encodeURIComponent(q.id)}-file-types`}>{uiT('qf.acceptedFileTypes', { types: acceptedFileTypes(q.accept) })}</small>}
                   {fileValueLabel(value) ? (
                     <div className="qf-file-summary">{fileValueLabel(value)}</div>
                   ) : null}
@@ -1029,6 +1060,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
               {q.type === 'textarea' ? (
                 <textarea
                   className="qf-textarea"
+                  aria-label={q.label}
                   value={typeof value === 'string' ? value : ''}
                   placeholder={q.placeholder}
                   disabled={locked}
@@ -1092,7 +1124,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                     !isLastQuestion ? 'question-footer' : undefined
                   }
                   onClick={handleSkipCurrent}
-                  disabled={submitDisabled}
+                  disabled={submissionBlocked}
                 >
                   {uiT('questionForm.skip')}
                 </Button>
@@ -1104,7 +1136,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                       variant="ghost"
                       data-chat-preserve-scroll-anchor="question-footer"
                       onClick={handlePreviousQuestion}
-                      disabled={submitDisabled}
+                      disabled={submissionBlocked}
                     >
                       {uiT('settings.onboardingBack')}
                     </Button>
@@ -1123,17 +1155,18 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                         : handleNextQuestion
                     }
                     disabled={
-                      submitDisabled || (isLastQuestion ? !ready : !currentQuestionReady)
+                      submissionBlocked || (isLastQuestion ? !ready : !currentQuestionReady)
                     }
                     title={
-                      !submitDisabled && activeQuestion?.required === true && !currentQuestionReady
-                        ? uiT('qf.submitDisabledTitle')
-                        : isLastQuestion && !submitDisabled && ready
-                          ? uiT('qf.submitTitle')
-                          : undefined
+                      submitting ? uiT('questions.submitting')
+                        : activeQuestion?.required === true && !currentQuestionReady
+                          ? uiT('qf.submitDisabledTitle')
+                          : isLastQuestion && !submitDisabled && ready
+                            ? uiT('qf.submitTitle')
+                            : undefined
                     }
                   >
-                    {isLastQuestion
+                    {submitting ? uiT('questions.submitting') : isLastQuestion
                       ? form.submitLabel ?? uiT('qf.submitDefault')
                       : uiT('nextStep.title')}
                   </Button>
@@ -1148,7 +1181,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                     size="sm"
                     variant="ghost"
                     onClick={handleSkipAll}
-                    disabled={submitDisabled}
+                    disabled={submissionBlocked}
                   >
                     {uiT('questions.skipAll')}
                   </Button>
@@ -1162,6 +1195,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
         )}
       </div>
     </FormContainer>
+    </>
   );
 });
 
@@ -2931,26 +2965,43 @@ export function parseSubmittedAnswers(
   form: QuestionForm,
   userMessageContent: string,
 ): Record<string, string | string[]> | null {
-  const lines = userMessageContent.split('\n').map((l) => l.trim());
+  const lines = userMessageContent.split(/\r?\n/);
   if (lines.length === 0) return null;
-  const header = lines[0] ?? '';
+  const header = (lines[0] ?? '').trim();
   // We accept any "form answers" header so the agent can paraphrase.
   if (!/^\[form answers/i.test(header)) return null;
   const answers: Record<string, string | string[]> = {};
   const labelToId = new Map<string, string>();
   for (const q of form.questions) labelToId.set(q.label.toLowerCase(), q.id);
-  const uploadSummaryIndex = lines.findIndex((line) => /^\[uploaded design files\]$/i.test(line));
-  const answerLines = uploadSummaryIndex === -1 ? lines : lines.slice(0, uploadSummaryIndex);
-  for (let i = 1; i < answerLines.length; i++) {
-    const line = answerLines[i] ?? '';
-    const m = /^[-*]\s*([^:]+):\s*(.*)$/.exec(line);
-    if (!m) continue;
-    const labelKey = m[1]!.trim().toLowerCase();
-    const value = m[2]!.trim();
+  // Labels can contain colons ("Relazione: intestazione?"). Match the
+  // complete known label, longest first, rather than splitting at its first
+  // colon and silently dropping the recorded answer from the summary.
+  const knownLabels = [...labelToId.keys()].sort((left, right) => right.length - left.length);
+  const recorded = new Map<string, string[]>();
+  let activeQuestion: QuestionForm['questions'][number] | undefined;
+  const appendContinuation = (line: string) => { if (activeQuestion && (activeQuestion.type === 'textarea' || activeQuestion.type === 'text')) recorded.get(activeQuestion.id)?.push(line); };
+  for (let i = 1; i < lines.length; i++) {
+    const raw = lines[i] ?? '', line = raw.trim();
+    // Canonical multiline values indent their continuation. Check this
+    // before looking for a question label so note text cannot impersonate
+    // a second answer such as "- Nome del documento: ...".
+    if (/^ {2}/.test(raw) && activeQuestion) { appendContinuation(raw.slice(2)); continue; }
+    if (/^\[uploaded design files\]$/i.test(line)) break;
+    if (/^\[(?:blockout target|header\/footer target)\]/i.test(line)) { activeQuestion = undefined; continue; }
+    const m = /^[-*]\s*(.*)$/.exec(line);
+    if (!m) { appendContinuation(raw); continue; }
+    const body = m[1]!.trim(), lower = body.toLowerCase();
+    const labelKey = knownLabels.find((label) => lower.startsWith(`${label}:`));
+    if (labelKey === undefined) { appendContinuation(raw); continue; }
     const id = labelToId.get(labelKey);
     if (!id) continue;
     const q = form.questions.find((x) => x.id === id);
     if (!q) continue;
+    activeQuestion = q; recorded.set(id, [body.slice(q.label.length + 1).trim()]);
+  }
+  for (const [id, parts] of recorded) {
+    const q = form.questions.find((question) => question.id === id)!;
+    const value = parts.join('\n').trim();
     if (q.type === 'checkbox') {
       answers[id] = value
         .split(',')
@@ -3088,7 +3139,7 @@ export function isShortValueAnswer(item: QuestionFormAnsweredSummary['items'][nu
  * 两边都从这里取值,那条缝就不存在了。
  */
 export function AnsweredValue({ item }: { item: QuestionFormAnsweredSummary['items'][number] }) {
-  if (!item.swatch) return <b>{item.value}</b>;
+  if (!item.swatch) return <b className={item.value.includes('\n') ? styles.multilineAnswer : undefined}>{item.value}</b>;
   return (
     <span
       className="color-answer"

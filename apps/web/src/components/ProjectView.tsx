@@ -1,6 +1,33 @@
 import { useStartupReady } from '../observability/startup-ready';
+import { userSendFailureFromError } from '../runtime/chat/send-failure';
+import { DocumentSetupReview } from './document-setup/DocumentSetupReview';
+import documentSetupStyles from './document-setup/DocumentSetup.module.css';
+import { DocumentProjectWorkspace } from './document-setup/DocumentProjectWorkspace';
+import { ProjectHistoryButton, ProjectHistoryController } from './history/ProjectHistoryControl';
+import { ProjectDocumentsPanel } from './project-documents/ProjectDocumentsPanel';
+import { HeaderFooterWorkspace, HeaderFooterLauncher } from './header-footer/HeaderFooterWorkspace';
+import { headerFooterEntryAvailable } from './header-footer/entry-availability';
+import { useHeaderFooterPageContext } from './header-footer/useHeaderFooterPageContext';
+import { buildFastHeaderFooterContinuationPrompt, headerFooterContinuationKey } from '../runtime/header-footer-continuation';
+import { HEADER_FOOTER_REQUEST_EVENT, HEADER_FOOTER_UPDATED_EVENT, HEADER_FOOTER_QUESTION_EVENT, type HeaderFooterAgentRequest, type HeaderFooterQuestionEvent, type HeaderFooterQuestionRequest } from './header-footer/events';
+import { QuestionFormView } from './QuestionForm';
+import { HeaderFooterDocumentEntry } from './document-presentation/HeaderFooterDocumentEntry';
+import { getHeaderFooterWorkspace } from '../providers/header-footer';
+import { DOCUMENT_PREPARATION_RESUME_EVENT, documentSetupRequest } from '../providers/document-setup';
+import { buildDocumentPreparationResumePrompt } from '../runtime/document-preparation-continuation';
+import { hasActiveQuestionForm } from '../runtime/chat/active-question-form';
+import { isFastProject, projectDocumentForConversation } from '@open-design/contracts';
+import { useProjectDocuments } from './project-documents/useProjectDocuments';
+import { useProjectDocumentRegistrySync } from './project-documents/useProjectDocumentRegistrySync';
+import type { ProjectDocument } from '@open-design/contracts';
+import { Button } from '@open-design/components';
+import { openBlockoutEditor, OPEN_BLOCKOUT_PROPOSALS_EVENT, type BlockoutOpenRequest } from './blockout/events';
+import { useBlockoutNavigationAvailability } from './blockout/useBlockoutNavigationAvailability';
+import { buildDocumentSetupStartPrompt, buildDocumentSetupPreparationPrompt } from '@open-design/contracts';
 import { navigationTiming, useProjectNavigationReady, observeNavigation } from '../observability/navigation-timing';
 import { withLiveArtifactDeliveries } from '../runtime/live-artifact-delivery';
+import { markIntakeOwnedFiles, isIntakeOwnedFile } from '../intake-owned-files';
+import { fetchIntakeSettings, fetchProjectIntake } from '../providers/project-intake';
 import { readRetriedErrorSurface, retriedErrorSurfaceKey, writeRetriedErrorSurface } from '../runtime/chat/retried-error-surface';
 import type { ObservedPublicShareLink, ObservedShareUpdateRequest } from './share/observed-public-share-link';
 import type { ShareLoginReturn } from './share/share-login-return';
@@ -86,6 +113,7 @@ import {
 } from '../runtime/strategy-question-continuation';
 import {
   isTodoWriteToolName,
+  resolveSvgExecutionPolicy,
   isWorkspaceLifecycleReadable,
   workspaceBillingAuthorityContext,
   workspacePrincipalKey,
@@ -357,6 +385,8 @@ import { invalidateHtmlSourceSnapshotProject } from './html-source-snapshot-cach
 import {
   decideAgentFocusOpen,
   decideAutoOpenAfterWrite,
+  isHeaderFooterSupportFile,
+  isBlockoutBriefFile,
   selectAutoOpenProducedArtifact,
   selectAutoOpenTurnArtifact,
   selectAutoOpenTurnArtifacts,
@@ -1297,7 +1327,7 @@ function buildCreateDesignSystemFromProjectPrompt(input: {
       ]
     : ['- Active design system: (none)'];
   return [
-    'Create this project as a complete OpenDesign design system workspace.',
+    'Create this project as a complete MelilloDesign design system workspace.',
     '',
     'Autonomy requirement:',
     '- Do not ask setup or clarification questions during design-system generation.',
@@ -1386,7 +1416,7 @@ function historyWithWorkspaceContext(
     '',
     '',
     '<active-workspace-context>',
-    'OpenDesign selected or inferred these workspace contexts for this turn. Treat absolute paths as reference context unless the user explicitly asks to edit them.',
+    'MelilloDesign selected or inferred these workspace contexts for this turn. Treat absolute paths as reference context unless the user explicitly asks to edit them.',
     ...items.map((item, index) => {
       const details = [
         item.path ? `path: ${item.path}` : null,
@@ -1683,6 +1713,7 @@ function isStoredRunContextSelection(value: unknown): value is RunContextSelecti
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return (
+    (record.documentReferences === undefined || isStoredStringArray(record.documentReferences)) &&
     (record.skillIds === undefined || isStoredStringArray(record.skillIds)) &&
     (record.pluginIds === undefined || isStoredStringArray(record.pluginIds)) &&
     (record.mcpServerIds === undefined || isStoredStringArray(record.mcpServerIds)) &&
@@ -2349,6 +2380,22 @@ export function ProjectView({
   }
   const projectRunWorkspaceContext =
     canonicalProjectRunWorkspaceContextRef.current.context;
+  const collectionProjectId = project.metadata?.collectionProjectId ?? project.id;
+  const collectionProjectName = project.metadata?.collectionProjectName ?? project.name;
+  const documentLibrary = useProjectDocuments(collectionProjectId, projectRunWorkspaceContext, !projectReadsHeld);
+  const [documentsPanelOpen, setDocumentsPanelOpen] = useState(false);
+  const activeProjectDocumentId = project.metadata?.collectionDocumentId
+    ?? projectDocumentForConversation(documentLibrary.documents, project.id, routeConversationId)?.id
+    ?? null;
+  const [headerFooterTargetId, setHeaderFooterTargetId] = useState<string | null>(null);
+  const [headerFooterStartAt, setHeaderFooterStartAt] = useState<'library' | 'editor' | 'assets'>('library');
+  const [headerFooterQuestion, setHeaderFooterQuestion] = useState<HeaderFooterQuestionRequest | null>(null);
+  const headerFooterContinuationsRef = useRef(new Set<string>());
+  const headerFooterPageContext = useHeaderFooterPageContext(collectionProjectId, headerFooterTargetId, documentLibrary.documents, project.metadata?.documentSetupIntent?.editorialSettings, projectRunWorkspaceContext, !projectReadsHeld);
+  const headerFooterCurrentId = activeProjectDocumentId ?? documentLibrary.selectedDocumentId ?? documentLibrary.documents[0]?.id ?? null;
+  const headerFooterCurrentDocument = documentLibrary.documents.find((document) => document.id === headerFooterCurrentId);
+  const headerFooterEnabled = headerFooterCurrentDocument?.presentation?.header === true || headerFooterCurrentDocument?.presentation?.footer === true || Boolean(headerFooterCurrentDocument?.presentation?.headerFooter);
+  const openHeaderFooter = (id: string, startAt: 'library' | 'editor' | 'assets' = 'library') => { setHeaderFooterStartAt(startAt); setHeaderFooterTargetId(id); };
   const projectResourceAuthority: ProjectResourceAuthority =
     projectWorkspaceScopeState.failure === 'forbidden'
     || projectWorkspaceScopeState.failure === 'unsupported'
@@ -2704,6 +2751,11 @@ export function ProjectView({
     source: 'read' | 'create';
   } | null>(null);
   const conversationLoadError = conversationLoadFailure?.message ?? null;
+  const retryConversationRead = () => {
+    setError(null);
+    if (conversationLoadFailure?.source === 'read') setConversationListRetryNonce((value) => value + 1);
+    else setMessageLoadRetryNonce((value) => value + 1);
+  };
   const conversationMaterializationRecoveryRef =
     useRef<ConversationMaterializationRecovery | null>(null);
   const conversationMaterializationGenerationControllerRef =
@@ -2716,6 +2768,7 @@ export function ProjectView({
   const conversationMaterializationRecoveryInFlightRef =
     useRef<ConversationMaterializationRecovery | null>(null);
   const [messageLoadRetryNonce, setMessageLoadRetryNonce] = useState(0);
+  const [conversationListRetryNonce, setConversationListRetryNonce] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Claimed by Send/reattach, not by transcript order: a delayed host memory
   // notification can be appended after the currently running assistant row.
@@ -2807,6 +2860,8 @@ export function ProjectView({
   const projectFiles = projectFilesSnapshot.files;
   const committedFilesRefreshKey = projectFilesSnapshot.refreshKey;
   const committedFilesGeneration = projectFilesSnapshot.generation;
+  const blockoutNavigationAvailable = useBlockoutNavigationAvailability(project.id, projectFiles, committedFilesRefreshKey, projectRunWorkspaceContext, !projectReadsHeld);
+  useEffect(() => { if (committedFilesRefreshKey > 0) documentLibrary.refresh(); }, [committedFilesRefreshKey, documentLibrary.refresh]);
   const projectFilesGenerationRef = useRef(committedFilesGeneration);
   const committedFilesRefreshKeyRef = useRef(committedFilesRefreshKey);
   committedFilesRefreshKeyRef.current = committedFilesRefreshKey;
@@ -2833,7 +2888,43 @@ export function ProjectView({
   const projectFilesRequestSeqRef = useRef(0);
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
-  const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const documentWorkflow = Boolean(project.metadata?.documentSetupIntent || project.metadata?.intent === 'document' || activeSessionMode === 'blockout');
+  const [documentWorkspaceVisible, setDocumentWorkspaceVisible] = useState(false);
+  const [blockoutComparisonDocumentId, setBlockoutComparisonDocumentId] = useState('document-1');
+  const [blockoutComparisonPageId, setBlockoutComparisonPageId] = useState<string | undefined>();
+  const fastProject = isFastProject(project.metadata);
+  const [documentSetupPending, setDocumentSetupPending] = useState(!fastProject && Boolean(project.metadata?.documentSetupIntent));
+  // Parent-owned outputs share files, but their editing chats do not replay
+  // the collection's preparation controls or dispatch its multi-output handoff.
+  useEffect(() => {
+    if (fastProject || activeProjectDocumentId && !project.metadata?.collectionDocumentId) setDocumentSetupPending(false);
+  }, [fastProject, activeProjectDocumentId, project.metadata?.collectionDocumentId]);
+  const [preparationFilesOpen, setPreparationFilesOpen] = useState(false);
+  const [workspaceFocusedState, setWorkspaceFocusedState] = useState(false);
+  const documentSetupPendingRef = useRef(documentSetupPending);
+  documentSetupPendingRef.current = documentSetupPending;
+  // Preparation always keeps its conversation visible. Focus requests can
+  // reveal the files alongside it, but cannot collapse the only visible pane.
+  const workspaceFocused = !documentSetupPending && workspaceFocusedState;
+  const setWorkspaceFocused = useCallback((focused: boolean) => {
+    if (documentSetupPendingRef.current) {
+      if (focused) setPreparationFilesOpen(true);
+      setWorkspaceFocusedState(false);
+      return;
+    }
+    setWorkspaceFocusedState(focused);
+  }, []);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const request = (event as CustomEvent<BlockoutOpenRequest>).detail;
+      if (request?.projectId !== project.id || documentSetupPending && !blockoutNavigationAvailable) return;
+      setBlockoutComparisonDocumentId(request.documentId || 'document-1');
+      setBlockoutComparisonPageId(request.pageId);
+      setDocumentWorkspaceVisible(true); setWorkspaceFocused(false);
+    };
+    window.addEventListener(OPEN_BLOCKOUT_PROPOSALS_EVENT, open);
+    return () => window.removeEventListener(OPEN_BLOCKOUT_PROPOSALS_EVENT, open);
+  }, [project.id, documentSetupPending, blockoutNavigationAvailable]);
   // Read by `renderPreferredChatPanelWidth` instead of closing over
   // `workspaceFocused` directly, so that callback's identity (and therefore
   // the ResizeObserver effect keyed on it, below) doesn't need to depend on
@@ -3706,6 +3797,7 @@ export function ProjectView({
   // still equals `conversationsRefreshTokenRef.current` at await-return is
   // allowed to apply its result.
   const conversationsRefreshTokenRef = useRef(0);
+  const routedConversationRefreshRef = useRef<string | null>(null);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const currentConversationHasProgrammaticBrandExtractionRun = useMemo(
     () => messages.some((m) => isProgrammaticBrandExtractionStatusMessage(m, currentProject.metadata)),
@@ -3740,6 +3832,8 @@ export function ProjectView({
       !messagesInitialized || messagesAuthorityKeyRef.current !== projectRunAuthorityKey
     ));
   const currentConversationStreaming = streaming && streamingConversationId === activeConversationId;
+  useProjectDocumentRegistrySync(`${collectionProjectId}:${projectRunAuthorityKey}:${activeConversationId}`, currentConversationStreaming, documentLibrary.documents.length === 0, documentLibrary.refresh, !projectReadsHeld,
+    [...messages].reverse().find((message) => message.role === 'assistant' && message.runId && message.runStatus && !['running', 'queued'].includes(message.runStatus))?.runId);
   const currentConversationControlStreaming =
     currentConversationStreaming || currentConversationHasProgrammaticBrandExtractionRun;
   const currentConversationBusy = currentConversationReadPending
@@ -3958,6 +4052,7 @@ export function ProjectView({
     project.id,
     projectReadsHeld,
     projectRunAuthorityKey,
+    conversationListRetryNonce,
   ]);
 
   const recoverMaterializedConversations = useCallback(async (
@@ -4099,14 +4194,13 @@ export function ProjectView({
   // Issue #1505: when the URL changes the routed conversation id while
   // we are already inside the project (e.g. the user clicks "Open
   // project" on a different routine history row in the same project),
-  // switch the active conversation without re-fetching the list.
-  // Guards: only acts when the routed id is non-null AND present in
-  // the already-loaded list, and only when it differs from the current
-  // active id. Falls through to a no-op for stale / missing routes so
-  // the default picker above keeps its result.
+  // switch the active conversation. A document Open can materialize a chat
+  // after the initial list, so an unknown routed ID receives one scoped
+  // refresh before treating it as stale/missing.
   useEffect(() => {
     if (!routeConversationId) {
       lastSeenRouteConversationIdRef.current = null;
+      routedConversationRefreshRef.current = null;
       return;
     }
     if (conversations.length === 0) return;
@@ -4120,10 +4214,25 @@ export function ProjectView({
     if (routeConversationId === lastSyncedConversationIdRef.current) return;
     if (lastSeenRouteConversationIdRef.current === routeConversationId) return;
     const match = conversations.find((c) => c.id === routeConversationId);
-    if (!match) return;
+    if (!match) {
+      const key = JSON.stringify([project.id, projectRunAuthorityKey, routeConversationId]);
+      if (routedConversationRefreshRef.current === key || projectReadsHeld) return;
+      routedConversationRefreshRef.current = key;
+      const capturedProjectId = project.id, authorityKey = projectRunAuthorityKey;
+      let disposed = false;
+      void listConversations(capturedProjectId, { workspaceContext: projectRunWorkspaceContext }).then((list) => {
+        if (disposed || projectIdRef.current !== capturedProjectId || projectRunAuthorityKeyRef.current !== authorityKey) return;
+        if (!list.some((item) => item.id === routeConversationId && item.projectId === capturedProjectId)) return;
+        conversationsRefreshTokenRef.current += 1;
+        setConversations(list);
+        lastSeenRouteConversationIdRef.current = routeConversationId;
+        setActiveConversationId(routeConversationId);
+      }).catch(() => { /* A deleted/stale route retains the existing fallback. */ });
+      return () => { disposed = true; };
+    }
     lastSeenRouteConversationIdRef.current = routeConversationId;
     setActiveConversationId(routeConversationId);
-  }, [routeConversationId, conversations, activeConversationId]);
+  }, [routeConversationId, conversations, activeConversationId, project.id, projectRunAuthorityKey, projectReadsHeld, projectRunWorkspaceContext]);
 
   // Reset chat pane to the open default on project switch. Shared non-owner
   // projects re-collapse once collab status confirms (see below) — but only
@@ -4131,6 +4240,7 @@ export function ProjectView({
   const sharedNonOwnerChatDefaultAppliedRef = useRef<string | null>(null);
   useEffect(() => {
     setWorkspaceFocused(false);
+    setPreparationFilesOpen(false);
     sharedNonOwnerChatDefaultAppliedRef.current = null;
   }, [project.id]);
 
@@ -4656,14 +4766,22 @@ export function ProjectView({
   ): Promise<ProjectFile[]> => {
     const requestSeq = ++projectFilesRequestSeqRef.current;
     const requestedRefreshKey = filesRefreshRequestKeyRef.current;
+    const fileWorkspaceContext = projectRunWorkspaceContextRef.current;
     let next: ProjectFile[];
     try {
       next = await fetchProjectFiles(project.id, {
-        workspaceContext: projectRunWorkspaceContextRef.current,
+        workspaceContext: fileWorkspaceContext,
         requireAuthoritative: true,
         ...(options?.fresh ? { fresh: true } : {}),
         ...(options?.afterChange ? { afterChange: true } : {}),
       });
+      if (next.some((file) => ['intake.config.json', 'intake-assets/catalog.json'].includes(file.path ?? file.name))) {
+        const [settings, catalog] = await Promise.allSettled([
+          fetchIntakeSettings(project.id, fileWorkspaceContext),
+          fetchProjectIntake(project.id, fileWorkspaceContext),
+        ]);
+        markIntakeOwnedFiles(next, settings.status === 'fulfilled' ? settings.value : null, catalog.status === 'fulfilled' ? catalog.value : null);
+      }
     } catch {
       // A transport/HTTP failure is not an authoritative empty directory.
       // Keep the last accepted snapshot and generation, while preserving the
@@ -4955,6 +5073,7 @@ export function ProjectView({
 
   const requestOpenFile = useCallback((name: string) => {
     if (!name) return;
+    if (documentSetupPendingRef.current) setPreparationFilesOpen(true);
     lastHostRequestedOpenRef.current = name;
     setOpenRequest({ name, nonce: Date.now() });
   }, []);
@@ -7554,6 +7673,12 @@ export function ProjectView({
             );
           },
           handlers: {
+            onExecutionSettings: ({ agentId, model }) => {
+              if (typeof model !== 'string' || !model) return;
+              const agentName = agentModelDisplayName(agentId ?? message.agentId, message.agentName, model);
+              updateMessageById(message.id, (previous) => ({ ...previous, agentName }));
+              persistSoon();
+            },
             onDelta: (delta) => {
               // First payload from the resumed stream is real recovery — the daemon is
               // sending data, not just answering REST status probes.  Reset the
@@ -8725,7 +8850,7 @@ export function ProjectView({
         ...(meta ?? {}),
         clientRequestId,
       };
-      const runSessionMode = meta?.sessionMode ?? activeSessionMode;
+      const runSessionMode = meta?.sessionMode ?? (documentSetupPending ? 'chat' : activeSessionMode);
       const retryTarget = meta?.retryOfAssistantId
         ? resolveRetryTarget(messages, meta.retryOfAssistantId)
         : null;
@@ -8756,7 +8881,8 @@ export function ProjectView({
           : resumesBlockedTask
             ? pendingBlockedTask.taskAnalytics
           : buildInitialTaskAnalytics(randomUUID()));
-      const runContext = meta?.context ?? retryTarget?.userMsg.runContext;
+      const baseRunContext = meta?.context ?? retryTarget?.userMsg.runContext;
+      const runContext = meta?.documentReferences?.length ? { ...baseRunContext, documentReferences: meta.documentReferences } : baseRunContext;
       const unclaimedHistoryBase = retryTarget
         ? retryTarget.priorMessages
         : baseMessages ?? messages;
@@ -8944,10 +9070,21 @@ export function ProjectView({
         config.mode === 'daemon' && config.agentId
           ? config.agentModels?.[config.agentId]
           : undefined;
-      const effectiveSelectedAgentChoice = effectiveAgentModelChoice(
+      const selectedRuntimeChoice = effectiveAgentModelChoice(
         selectedAgent,
         selectedAgentChoice,
       );
+      const svgPolicy = resolveSvgExecutionPolicy({
+        agentId: config.mode === 'daemon' ? config.agentId ?? null : null,
+        prompt,
+        attachments: [...runAttachments.map((file) => file.path),
+          ...(runContext?.workspaceItems ?? []).flatMap((item) => item.path ? [item.path] : [])],
+        model: selectedRuntimeChoice?.model ?? null,
+        reasoning: selectedRuntimeChoice?.reasoning ?? null,
+      });
+      const effectiveSelectedAgentChoice = svgPolicy
+        ? { ...selectedRuntimeChoice, model: svgPolicy.model, reasoning: svgPolicy.reasoning }
+        : selectedRuntimeChoice;
       const assistantAgentId =
         config.mode === 'daemon'
           ? config.agentId ?? undefined
@@ -9821,6 +9958,13 @@ export function ProjectView({
       abortRef.current = controller;
       cancelRef.current = cancelController;
       const handlers = {
+        onExecutionSettings: ({ agentId, model }: { agentId?: string; model?: string | null }) => {
+          if (typeof model !== 'string' || !model) return;
+          const agentName = agentModelDisplayName(agentId ?? assistantAgentId, selectedAgent?.name, model);
+          latestAssistantMsg = { ...latestAssistantMsg, agentName };
+          updateAssistant((previous) => ({ ...previous, agentName }));
+          persistAssistantSoon();
+        },
         onDelta: (delta: string) => {
           if (delta.trim()) retireFundingHint();
           // See reattach-path comment above for rationale.  PR #4651 round 9.
@@ -10282,7 +10426,7 @@ export function ProjectView({
                 const next = current.flatMap((message) => {
                   if (message.id === assistantId) return [];
                   if (message.id !== userMsg.id) return [message];
-                  failedUser = { ...message, sendFailed: true };
+                  failedUser = { ...message, sendFailed: true, sendFailure: userSendFailureFromError(err) };
                   return [failedUser];
                 });
                 if (failedUser) persistMessage(failedUser);
@@ -10622,6 +10766,7 @@ export function ProjectView({
           clientRequestId,
           skillId: project.skillId ?? null,
           skillIds: Array.isArray(meta?.skillIds) ? meta.skillIds : [],
+          documentReferences: Array.isArray(meta?.documentReferences) ? meta.documentReferences : [],
           context: runContext,
           designSystemId: runtimeDesignSystemId ?? null,
           workspaceContext: projectRunWorkspaceContext,
@@ -10871,6 +11016,7 @@ export function ProjectView({
           clientRequestId,
           skillId: project.skillId ?? null,
           skillIds: Array.isArray(meta?.skillIds) ? meta.skillIds : [],
+          documentReferences: Array.isArray(meta?.documentReferences) ? meta.documentReferences : [],
           context: runContext,
           designSystemId: runtimeDesignSystemId ?? null,
           workspaceContext: projectRunWorkspaceContext,
@@ -11018,6 +11164,7 @@ export function ProjectView({
       supersedeRetriedError,
       activeConversationId,
       activeSessionMode,
+      documentSetupPending,
       currentConversationBusy,
       queueChatSendForCurrentConversation,
       messages,
@@ -11077,12 +11224,13 @@ export function ProjectView({
       const currentMessages = messagesRef.current;
       const currentMessage = currentMessages.find((message) => message.id === failedMessage.id);
       if (currentMessage?.role !== 'user' || !currentMessage.sendFailed) return;
+      const previousSendFailure = currentMessage.sendFailure;
 
-      const retryMessage: ChatMessage = { ...currentMessage, sendFailed: undefined };
+      const retryMessage: ChatMessage = { ...currentMessage, sendFailed: undefined, sendFailure: undefined };
       function restoreFailedState() {
         updateMessageById(
           retryMessage.id,
-          (message) => ({ ...message, sendFailed: true }),
+          (message) => ({ ...message, sendFailed: true, sendFailure: previousSendFailure }),
           true,
         );
       }
@@ -11099,11 +11247,12 @@ export function ProjectView({
           clientRequestId: retryMessage.clientRequestId ?? retryMessage.id,
           userMessageId: retryMessage.id,
           acceptDurableQueue: true,
-          ...(retryMessage.sessionMode ? { sessionMode: retryMessage.sessionMode } : {}),
+          ...(documentSetupPending ? { sessionMode: 'chat' as const } : retryMessage.sessionMode ? { sessionMode: retryMessage.sessionMode } : {}),
           ...(retryMessage.runContext
             ? {
                 context: retryMessage.runContext,
                 skillIds: retryMessage.runContext.skillIds,
+                documentReferences: retryMessage.runContext.documentReferences,
               }
             : {}),
           ...(retryMessage.appliedPluginSnapshot
@@ -11118,7 +11267,7 @@ export function ProjectView({
         restoreFailedState,
       );
     },
-    [handleSend, updateMessageById],
+    [handleSend, updateMessageById, documentSetupPending],
   );
 
   const handleComposerSend = useCallback(
@@ -11588,6 +11737,30 @@ export function ProjectView({
     handleSend,
     messagesInitialized,
   ]);
+
+  useEffect(() => {
+    const requested = (event: Event) => {
+      const detail = (event as CustomEvent<HeaderFooterAgentRequest>).detail;
+      if (!detail || detail.projectId !== collectionProjectId || projectMutationReadOnly || currentConversationBusy) return;
+      const document = documentLibrary.documents.find((item) => item.id === detail.documentId);
+      if (!document) return;
+      setHeaderFooterTargetId(null);
+      void handleSend(`${detail.prompt}\n\nLavora su intestazione e piè di pagina del documento “${document.name}”. Usa il modello e il brief salvati nella libreria del progetto; conserva le altre pagine e non avviare la grafica del corpo.`, [], [], { sessionMode: 'design' });
+    };
+    const updated = (event: Event) => { if ((event as CustomEvent<{ projectId?: string }>).detail?.projectId === collectionProjectId) documentLibrary.refresh(); };
+    const question = (event: Event) => {
+      const detail = (event as CustomEvent<HeaderFooterQuestionEvent>).detail;
+      if (!detail || ![project.id, collectionProjectId].includes(detail.request.projectId) || detail.request.conversationId !== activeConversationId) return;
+      if (detail.clear) { setHeaderFooterQuestion((current) => current?.key === detail.request.key ? null : current); return; }
+      const target = documentLibrary.documents.find((item) => item.id === detail.request.target.documentId || item.blockoutDocumentId === detail.request.target.documentId);
+      if (!target) return;
+      setHeaderFooterQuestion(detail.request);
+      if (detail.open) { setHeaderFooterStartAt('editor'); setHeaderFooterTargetId(target.id); }
+    };
+    window.addEventListener(HEADER_FOOTER_REQUEST_EVENT, requested); window.addEventListener(HEADER_FOOTER_UPDATED_EVENT, updated);
+    window.addEventListener(HEADER_FOOTER_QUESTION_EVENT, question);
+    return () => { window.removeEventListener(HEADER_FOOTER_REQUEST_EVENT, requested); window.removeEventListener(HEADER_FOOTER_UPDATED_EVENT, updated); window.removeEventListener(HEADER_FOOTER_QUESTION_EVENT, question); };
+  }, [project.id, activeConversationId, collectionProjectId, projectMutationReadOnly, currentConversationBusy, documentLibrary.documents, documentLibrary.refresh, handleSend]);
 
   const handleSendBoardCommentAttachments = useCallback(
     async (
@@ -12175,7 +12348,7 @@ export function ProjectView({
     projectMutationReadOnly,
   ]);
 
-  const handleSelectConversation = useCallback((id: string, measureNavigation = true) => {
+  const handleSelectConversation = useCallback((id: string, measureNavigation = true, targetFileName?: string | null) => {
     if (id === activeConversationId && failedMessagesConversationId !== id) return;
     const navigationId = measureNavigation ? observeNavigation(() => navigationTiming.begin(
       { kind: 'project', projectId: project.id, conversationId: activeConversationId },
@@ -12205,7 +12378,7 @@ export function ProjectView({
         kind: 'project',
         projectId: project.id,
         conversationId: id,
-        fileName: openTabsState.active ?? null,
+        fileName: targetFileName !== undefined ? targetFileName : openTabsState.active ?? null,
       },
       {
         replace: true,
@@ -12850,6 +13023,7 @@ export function ProjectView({
     [skills, designTemplates, project.skillId],
   );
   const chatResizeLabel = t('project.resizeChatPanel');
+  const preparationPanelToggleLabel = t(preparationFilesOpen ? 'preview.hideSidebar' : 'preview.showSidebar', { label: t('designFiles.title') });
   const workspacePanelTrack = workspacePanelTrackForMinWidth(workspacePanelMinWidth);
   // The comment panel floats over the workspace now, so opening it must not
   // touch the split at all: the chat column keeps the width the user set.
@@ -14106,6 +14280,62 @@ export function ProjectView({
   // between them never replays the `.app` entrance animation.
   return (
     <CollabProvider value={collabValue}>
+      {headerFooterTargetId && <HeaderFooterWorkspace projectId={collectionProjectId} documentId={headerFooterTargetId} projectName={collectionProjectName} totalPages={headerFooterPageContext.totalPages} initialFormat={headerFooterPageContext.initialFormat} startAt={headerFooterStartAt} workspaceContext={projectRunWorkspaceContext} readOnly={projectMutationReadOnly} busy={currentConversationBusy}
+        onDocumentChange={(id) => { setHeaderFooterQuestion(null); setHeaderFooterStartAt('library'); setHeaderFooterTargetId(id); }}
+        setId={headerFooterQuestion?.target.setId} highlight={headerFooterQuestion ? { region: headerFooterQuestion.target.region, blockId: headerFooterQuestion.target.blockId, question: headerFooterQuestion.props.form.title } : undefined}
+        renderQuestion={headerFooterQuestion ? (flush) => <QuestionFormView {...headerFooterQuestion.props} autoContinueAfterTimeout={false} onSubmit={async (...args) => { try { await flush(); } catch { return false; } return headerFooterQuestion.props.onSubmit?.(...args); }} /> : undefined}
+        onClose={() => setHeaderFooterTargetId(null)} onApplied={async (state) => {
+          const firstApplication = !documentLibrary.documents.find((item) => item.id === headerFooterTargetId)?.presentation?.headerFooter;
+          documentLibrary.refresh(); refreshFilesAndDesignMd(); onProjectsRefresh();
+          const setup = project.metadata?.documentSetupIntent ? await documentSetupRequest(project.id, projectRunWorkspaceContext) : null;
+          const requiredIds = new Set(setup?.intent.editorialSettings?.map((setting) => setting.documentId) ?? [headerFooterTargetId]);
+          const required = state?.documents.filter((document) => requiredIds.has(document.id) && !document.archivedAt && (document.presentation?.header === true || document.presentation?.footer === true)) ?? [];
+          const ready = required.length > 0 && required.every((document) => state?.bindings.some((binding) => binding.documentId === document.id && binding.status === 'applied' && binding.snapshot));
+          if (!firstApplication || !ready) return;
+          const continuationKey = headerFooterContinuationKey(project.id, headerFooterTargetId, state);
+          if (!continuationKey || headerFooterContinuationsRef.current.has(continuationKey)) return;
+          if (project.metadata?.projectMode === 'fast') {
+            if (currentConversationBusy) return;
+            headerFooterContinuationsRef.current.add(continuationKey);
+            const documentName = state?.documents.find((item) => item.id === headerFooterTargetId)?.name ?? headerFooterCurrentDocument?.name ?? project.name;
+            setHeaderFooterTargetId(null);
+            try { await handleSend(buildFastHeaderFooterContinuationPrompt(documentName), [], [], { sessionMode: activeSessionMode === 'blockout' ? 'blockout' : 'design' }); }
+            catch (reason) { headerFooterContinuationsRef.current.delete(continuationKey); throw reason; }
+            return;
+          }
+          if (setup) {
+            if (headerFooterContinuationsRef.current.has(continuationKey)) return;
+            headerFooterContinuationsRef.current.add(continuationKey);
+            setHeaderFooterTargetId(null);
+            window.dispatchEvent(new CustomEvent(DOCUMENT_PREPARATION_RESUME_EVENT, { detail: { projectId: project.id } }));
+          }
+        }} />}
+      {documentsPanelOpen && <ProjectDocumentsPanel projectId={collectionProjectId} projectName={collectionProjectName} activeDocumentId={activeProjectDocumentId} workspaceContext={projectRunWorkspaceContext} readOnly={projectMutationReadOnly} initialPreparationRunning={project.metadata?.projectMode === 'fast' && streaming} initialPreparationAwaitingAnswer={project.metadata?.projectMode === 'fast' && hasActiveQuestionForm(messages, Boolean(projectDesignSystemId), { requiredOnly: true })} onClose={() => setDocumentsPanelOpen(false)} onOpen={async (document: ProjectDocument) => {
+        const targetProjectId = document.workspaceProjectId;
+        const conversationId = document.conversationIds[0];
+        if (!conversationId) throw new Error('Document conversation could not open');
+        if (targetProjectId === project.id) {
+          const capturedProjectId = project.id, authorityKey = projectRunAuthorityKey;
+          const list = await listConversations(capturedProjectId, { workspaceContext: projectRunWorkspaceContext });
+          if (projectIdRef.current !== capturedProjectId || projectRunAuthorityKeyRef.current !== authorityKey) return;
+          if (!list.some((item) => item.id === conversationId && item.projectId === capturedProjectId)) throw new Error('Document conversation could not open');
+          // The authorized Open may have created this chat after our original
+          // conversation GET. Switch the actual transcript, not only the URL.
+          conversationsRefreshTokenRef.current += 1;
+          setConversations(list);
+          // A document Open explicitly chooses its registered entry. Activate
+          // it in the same batch as the chat switch so tab URL sync cannot
+          // carry the previous document's image/file into the new chat.
+          const entry = document.entryFile ?? null;
+          if (entry) requestOpenFile(entry); else setOpenRequest(null);
+          persistTabsState({ tabs: entry && !openTabsState.tabs.includes(entry) ? [...openTabsState.tabs, entry] : openTabsState.tabs, active: entry });
+          handleSelectConversation(conversationId, false, entry);
+        }
+        const fileName = document.entryFile ?? null;
+        onProjectsRefresh();
+        navigate({ kind: 'project', projectId: targetProjectId, conversationId, fileName });
+      }} />}
+      <ProjectHistoryController projectId={project.id} workspaceContext={projectRunWorkspaceContext} enabled={!projectReadsHeld && !projectMutationReadOnly} onRestored={refreshFilesAndDesignMd} />
       <CritiqueTheaterMount
         projectId={project.id}
         enabled={critiqueTheaterEnabled}
@@ -14118,22 +14348,36 @@ export function ProjectView({
         ref={splitRef}
         className={[
           projectSplitClassName(workspaceFocused),
+          documentSetupPending ? documentSetupStyles.preparingSplit : '',
           resizingChatPanel && !workspaceFocused ? 'is-resizing-chat' : '',
         ].filter(Boolean).join(' ')}
-        style={projectSplitStyle(workspaceFocused, splitLeftPanelWidth, workspacePanelTrack)}
+        style={{ ...projectSplitStyle(workspaceFocused, splitLeftPanelWidth, workspacePanelTrack), position: 'relative' }}
         // A Home send's creation phase, for tests and diagnostics: `pending`
         // while the project row does not exist yet (reads held), `persisted`
         // until the first transcript settles, absent otherwise.
         data-creation-phase={
           creationHandoff ? (creationHandoff.persisted ? 'persisted' : 'pending') : undefined
         }
+        data-preparation-files-open={documentSetupPending ? preparationFilesOpen : undefined}
       >
+        {documentWorkspaceVisible && (!documentSetupPending || blockoutNavigationAvailable) && !projectMutationReadOnly && <DocumentProjectWorkspace
+          projectId={project.id} title={project.metadata?.documentSetupIntent?.subtype || currentProject.name}
+          initialDocumentId={blockoutComparisonDocumentId}
+          initialPageId={blockoutComparisonPageId}
+          workspaceContext={projectRunWorkspaceContext} enabled={!projectReadsHeld}
+          running={currentConversationStreaming}
+          verifiedAgent={(() => { const latest = [...messages].reverse().find((message) => message.role === 'assistant' && message.runId); return latest ? agentDisplayName(latest.agentId || config.agentId || 'codex') ?? undefined : undefined; })()}
+          failed={messages.some((message) => message.role === 'assistant' && message.runStatus === 'failed')}
+          chatOpen={!workspaceFocused} left={workspaceFocused ? 0 : splitLeftPanelWidth + SPLIT_RESIZE_HANDLE_WIDTH}
+          onBack={() => setDocumentWorkspaceVisible(false)} onChat={() => setWorkspaceFocused(false)}
+          onFiles={() => setDocumentWorkspaceVisible(false)} onStop={handleStop}
+        />}
         <div
           className={[
             'split-chat-slot',
-            chatSlotHidden ? 'split-chat-slot-hidden' : '',
+            chatSlotHidden && !documentSetupPending ? 'split-chat-slot-hidden' : '',
           ].filter(Boolean).join(' ')}
-          aria-hidden={chatSlotHidden || undefined}
+          aria-hidden={(!documentSetupPending && chatSlotHidden) || undefined}
         >
           {/* Workspace tab strip dock: on the project route the strip leaves
               the full-width chrome row and sits here, directly above the chat
@@ -14152,13 +14396,17 @@ export function ProjectView({
                   dropdown portals in after these, so CSS `order` fixes the
                   visual sequence. */}
               <div className={historyDockStyles.dock} ref={setHistoryPortalTarget} data-testid="chat-history-dock" />
+              {!projectReadsHeld && <Button variant="ghost" title={collectionProjectName} onClick={() => setDocumentsPanelOpen(true)}><Icon name="folder" size={15} />{locale === 'it' ? 'Documenti' : 'Documents'}</Button>}
+              {!projectReadsHeld && headerFooterCurrentId && headerFooterEnabled && headerFooterEntryAvailable({ applied: Boolean(headerFooterCurrentDocument?.presentation?.headerFooter), busy: currentConversationBusy, messages, suppressDirectionForms: Boolean(projectDesignSystemId) }) && <HeaderFooterLauncher name={headerFooterCurrentDocument?.name} onClick={() => openHeaderFooter(headerFooterCurrentId)} ready={Boolean(headerFooterCurrentDocument?.presentation?.headerFooter)} />}
+              {!projectReadsHeld && !projectMutationReadOnly && <ProjectHistoryButton projectId={project.id} />}
               <button
                 type="button"
                 className="split-chat-collapse od-tooltip"
-                onClick={() => setWorkspaceFocused(true)}
-                title={t('chat.collapsePane')}
-                aria-label={t('chat.collapsePane')}
-                data-tooltip={t('chat.collapsePane')}
+                onClick={() => documentSetupPending ? setPreparationFilesOpen((open) => !open) : setWorkspaceFocused(true)}
+                title={documentSetupPending ? preparationPanelToggleLabel : t('chat.collapsePane')}
+                aria-label={documentSetupPending ? preparationPanelToggleLabel : t('chat.collapsePane')}
+                aria-expanded={documentSetupPending ? preparationFilesOpen : undefined}
+                data-tooltip={documentSetupPending ? preparationPanelToggleLabel : t('chat.collapsePane')}
                 data-tooltip-placement="bottom"
                 data-testid="chat-collapse-toggle"
               >
@@ -14168,6 +14416,41 @@ export function ProjectView({
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled || seedConversationId !== null ? (
             <ChatPane
+              projectDocuments={documentLibrary.documents}
+              activeProjectDocumentId={activeProjectDocumentId}
+              documentPreparationPending={documentSetupPending}
+              blockoutNavigationAvailable={blockoutNavigationAvailable}
+              documentSetupContent={<>{!fastProject && project.metadata?.documentSetupIntent && (!activeProjectDocumentId || project.metadata.collectionDocumentId) ? <DocumentSetupReview
+                key={project.id}
+                projectId={project.id}
+                workspaceContext={projectRunWorkspaceContext}
+                expectedWorkingDirectory={project.metadata.baseDir ?? project.metadata.userWorkingDir}
+                enabled={!projectReadsHeld && documentLibrary.documents.length > 0}
+                canStart={Boolean(activeConversationId && messagesInitialized && !streaming)}
+                hasActiveQuestion={hasActiveQuestionForm(messages, Boolean(projectDesignSystemId))}
+                onExit={onBack}
+                onPendingChange={(pending) => { setDocumentSetupPending(pending); if (pending) setWorkspaceFocused(false); }}
+                onPrepareChat={(setup) => handleSend(setup.intent.preparationConversation?.resumeRequestId ? buildDocumentPreparationResumePrompt(setup) : buildDocumentSetupPreparationPrompt(setup), [], [], {
+                  sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.resumeRequestId ?? setup.intent.preparationConversation?.requestId,
+                })}
+                onStart={async (setup) => {
+                  const required = (setup.intent.editorialSettings ?? setup.confirmed?.editorialSettings ?? []).filter((setting) => setting.presentation.header === true || setting.presentation.footer === true);
+                  if (required.length) {
+                    const library = await getHeaderFooterWorkspace(collectionProjectId, projectRunWorkspaceContext);
+                    if (required.some((setting) => !library.bindings.some((binding) => binding.documentId === setting.documentId && binding.snapshot && binding.status === 'applied'))) {
+                      const sent = await handleSend(buildDocumentSetupStartPrompt(setup), [], [], { sessionMode: 'chat', clientRequestId: setup.intent.preparationConversation?.headerFooterRequestId });
+                      return sent ? 'header-footer' : false;
+                    }
+                  }
+                  if (setup.confirmed?.blockoutApproach === 'manual') {
+                    openBlockoutEditor({ projectId: project.id });
+                    return true;
+                  }
+                  return handleSend(buildDocumentSetupStartPrompt(setup), [], [], {
+                    sessionMode: 'blockout', clientRequestId: setup.intent.preparationConversation?.blockoutRequestId,
+                  });
+                }}
+              /> : null}{!documentSetupPending && !projectReadsHeld && headerFooterEntryAvailable({ applied: false, busy: currentConversationBusy, messages, suppressDirectionForms: Boolean(projectDesignSystemId) }) && <HeaderFooterDocumentEntry documents={activeProjectDocumentId ? documentLibrary.documents.filter((document) => document.id === activeProjectDocumentId) : documentLibrary.documents} onOpen={(id) => openHeaderFooter(id, 'assets')} />}</>}
               historyPortalTarget={historyPortalTarget}
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
@@ -14218,7 +14501,7 @@ export function ProjectView({
                 conversationLoadError ? null : errorSourceAssistantId
               }
               projectId={project.id}
-              sessionMode={activeSessionMode}
+              sessionMode={documentSetupPending ? 'chat' : activeSessionMode}
               onSessionModeChange={handleActiveConversationSessionModeChange}
               projectKindForTracking={projectKindFromMetadataToTracking(currentProject.metadata)}
               projectFiles={projectFiles}
@@ -14234,9 +14517,11 @@ export function ProjectView({
               onAttachComment={attachPreviewComment}
               onDetachComment={detachPreviewComment}
               onDeleteComment={(commentId) => void removePreviewComment(commentId)}
-              onSend={handleComposerSend}
+              onSend={(prompt, attachments, comments, meta) => handleComposerSend(prompt, attachments, comments, documentSetupPending ? { ...meta, sessionMode: 'chat' } : meta)}
+              onBlockoutRequest={(request) => handleSend(request.text,request.attachments,[],{sessionMode:'blockout',clientRequestId:request.requestId,userMessageId:`${request.requestId}-user`,acceptDurableQueue:true})}
               onResendUserMessage={handleResendUserMessage}
               onRetry={handleRetry}
+              onRetryConversationRead={currentConversationAccessError === 'messages-unavailable' ? retryConversationRead : undefined}
               // 这一刻接不接得住恢复动作,以及接不住时该说哪句话(OPEND-2821)。
               recoveryActionsBlockedReason={currentConversationActionBlockReason}
               accessError={currentConversationAccessError}
@@ -14327,6 +14612,7 @@ export function ProjectView({
                 }
                 return handleSend(text, attachments, [], {
                   entryFrom: 'question_answer',
+                  ...(documentSetupPending ? { sessionMode: 'chat' as const } : {}),
                   ...questionFormAnswerIdentity(sourceAssistantMessageId, formId),
                   // The form owns the only copy of this answer (and of any
                   // file it uploaded). A send that parks in the conversation
@@ -14451,7 +14737,7 @@ export function ProjectView({
                 setProjectActionsToast({ message, details: null });
               }}
               onBack={onBack}
-              onCollapse={() => setWorkspaceFocused(true)}
+              onCollapse={documentSetupPending ? undefined : () => setWorkspaceFocused(true)}
               collapseControlLifted={!workspaceFocused}
               backLabel={t('project.backToProjects')}
               composerFooterAccessory={executionControls}
@@ -14502,10 +14788,10 @@ export function ProjectView({
           />
         ) : null}
         <FileWorkspace
-          headerActions={projectCollab.enabled && projectCollab.isOwner && projectCollab.requestContentUpdate ? (
+          headerActions={<>{workspaceFocused && !projectReadsHeld && <Button variant="ghost" onClick={() => setDocumentsPanelOpen(true)}><Icon name="folder" size={15} />{locale === 'it' ? 'Documenti' : 'Documents'}</Button>}{workspaceFocused && !projectReadsHeld && !projectMutationReadOnly && <ProjectHistoryButton projectId={project.id} />}{blockoutNavigationAvailable && !documentWorkspaceVisible && <Button variant="secondary" onClick={() => { setBlockoutComparisonPageId(undefined); setWorkspaceFocused(false); setDocumentWorkspaceVisible(true); }}>{t('chat.blockout.proposals')}</Button>}{projectCollab.enabled && projectCollab.isOwner && projectCollab.requestContentUpdate ? (
             <OwnedContentUpdate key={`${project.id}:${projectRunWorkspaceContext?.workspaceId}:${projectRunWorkspaceContext?.workspaceMemberId}`}
               update={projectCollab.ownedContentUpdate ?? null} request={projectCollab.requestContentUpdate} />
-          ) : null}
+          ) : null}</>}
           projectId={project.id}
           projectName={currentProject.name}
           viewerOnly={projectMutationReadOnly}
@@ -14920,7 +15206,10 @@ export function selectPrimaryProjectFile(
   const candidates = files
     .filter(
       (file) =>
-        !isProcessArtifactFile(file.name)
+        !isIntakeOwnedFile(file)
+        && !isHeaderFooterSupportFile(file)
+        && !isBlockoutBriefFile(file)
+        && !isProcessArtifactFile(file.name)
         && !normalizedExcludedFileNames.has(normalizeProjectFileName(file.name))
         && !(
           file.path
@@ -15282,7 +15571,7 @@ function latestDesignSystemActivityEvents(messages: ChatMessage[]): AgentEvent[]
 }
 
 function pluginWorkflowTitle(action: PluginFolderAgentAction): string {
-  return action === 'publish' ? 'Publish repo' : 'OpenDesign PR';
+  return action === 'publish' ? 'Publish repo' : 'MelilloDesign PR';
 }
 
 function pluginWorkflowCliCommand(action: PluginFolderAgentAction, relativePath: string): string {
@@ -15301,7 +15590,7 @@ function pluginWorkflowPlannedSteps(action: PluginFolderAgentAction): string[] {
     ];
   }
   return [
-    'Ensure the OpenDesign fork exists',
+    'Ensure the MelilloDesign fork exists',
     'Clone the fork and prepare a branch',
     'Copy the plugin into plugins/community',
     'Push the branch and open the PR form',
@@ -15422,7 +15711,7 @@ export function resolveSucceededRunStatus(status: ChatMessage['runStatus']): Cha
 const DESIGN_RESULT_MISSING_DETAIL =
   'The design run finished without producing a deliverable project file.';
 const DESIGN_RESULT_DELIVERY_FAILED_DETAIL =
-  'The design result was generated, but OpenDesign could not save it to the project.';
+  'The design result was generated, but MelilloDesign could not save it to the project.';
 
 function applyDesignDeliveryOutcome(
   message: ChatMessage,
@@ -15464,6 +15753,7 @@ function attributableRunFiles(
   }
   if (persistedArtifactName) provenNames.add(persistedArtifactName);
   return files.filter((file) => {
+    if (isIntakeOwnedFile(file)) return false;
     const manual = manualWrites.get(file.name);
     // Only an unchanged, explicit manual-write receipt is excluded. Unknown
     // later changes retain the existing fallback, without assigning an actor.
@@ -15521,7 +15811,7 @@ export function computeTraceObjectFiles(
   }
   for (const rawPath of touchedPaths) {
     const file = findTouchedProjectFile(rawPath, next, projectId, projectRoot);
-    if (!file) continue;
+    if (!file || isIntakeOwnedFile(file)) continue;
     byName.set(file.name, {
       ...file,
       traceObjectReason: set.has(file.name) ? 'modified' : 'new',

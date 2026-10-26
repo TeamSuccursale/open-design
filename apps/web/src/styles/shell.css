@@ -2200,7 +2200,7 @@ a.avatar-item:visited {
 .avatar-select {
   display: block;
   width: 100%;
-  min-width: min(340px, 100%);
+  min-width: 0;
   font-size: 12px;
   padding: 4px 6px;
   border-radius: var(--radius-sm);

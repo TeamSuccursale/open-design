@@ -1,4 +1,9 @@
+import { FAST_PROJECT_MODE_DIRECTIVE, isFastProject } from './fast-project.js';
 import { COMMENT_IDENTITY_EDIT_DIRECTIVE } from './comment-identity.js';
+import { BLOCKOUT_MODE_DIRECTIVE, BLOCKOUT_DESIGN_DIRECTIVE } from './blockout-mode.js';
+import { imageSpecialistsDirective } from './image-specialists.js';
+import { documentResearchSpecialistsDirective } from './document-research-specialists.js';
+import { headerFooterWorkflowDirective } from './header-footer.js';
 /**
  * Prompt composer. The base is the OD-adapted "expert designer" system
  * prompt (see ./official-system.ts) — a full identity, workflow, and
@@ -396,13 +401,25 @@ export function composeSystemPrompt({
     streamFormat === 'plain' ? 'text_artifact' : 'filesystem',
   );
 
-  if (sessionMode === 'plan') {
+  if (sessionMode === 'design') parts.push(BLOCKOUT_DESIGN_DIRECTIVE, '\n\n---\n\n');
+  if (sessionMode === 'blockout') {
+    // Image roles remain subject to the mode's structural stopping point.
+    parts.push(BLOCKOUT_MODE_DIRECTIVE, '\n\n---\n\n');
+  } else if (sessionMode === 'plan') {
     parts.push(PLAN_MODE_OVERRIDE);
     parts.push('\n\n---\n\n');
   } else if (sessionMode === 'chat') {
     parts.push(CHAT_MODE_OVERRIDE);
     parts.push('\n\n---\n\n');
   }
+
+  const imageSpecialists = imageSpecialistsDirective(agentId, sessionMode);
+  if (imageSpecialists) parts.push(imageSpecialists, '\n\n---\n\n');
+  const documentResearchers = isFastProject(metadata) ? '' : documentResearchSpecialistsDirective(agentId, sessionMode);
+  if (isFastProject(metadata)) parts.push(FAST_PROJECT_MODE_DIRECTIVE, '\n\n---\n\n');
+  if (documentResearchers) parts.push(documentResearchers, '\n\n---\n\n');
+  const headerFooterWorkflow = headerFooterWorkflowDirective(sessionMode);
+  if (headerFooterWorkflow) parts.push(headerFooterWorkflow, '\n\n---\n\n');
 
   if (metadata?.examplePrompt === true) {
     parts.push(buildExamplePromptOverride(metadata.examplePromptTitle, metadata.examplePromptBrief));
@@ -418,7 +435,7 @@ export function composeSystemPrompt({
     parts.push('\n\n---\n\n');
   }
 
-  if (!isMediaSurfaceEarly && !isAskMode) {
+  if (!isMediaSurfaceEarly && !isAskMode && !isFastProject(metadata)) {
     parts.push(DISCOVERY_AND_PHILOSOPHY, '\n\n---\n\n');
   }
 

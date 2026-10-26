@@ -1,0 +1,28 @@
+.root { flex: none; min-width: 0; margin: 4px 12px 0; color: var(--chat-text); font-size: 12px; line-height: 1.4; container-type: inline-size; }
+.root .toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; min-height: 30px; padding: 4px 6px; font-size: 12px; }
+.indicators { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.indicator { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
+.indicator > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.indicator > svg { flex: none; color: var(--chat-text-muted); }
+.indicator[data-state="ready"] > svg { color: var(--chat-green); }
+.indicator[data-state="working"] > svg { color: var(--chat-accent); }
+.indicator[data-state="attention"] > svg { color: var(--chat-red); }
+.state { color: var(--chat-text-muted); font-weight: 400; }
+.expanded { transform: rotate(180deg); }
+.details { max-height: min(42dvh, 360px); overflow: auto; padding: 6px 8px 10px; background: var(--chat-bg-subtle); border-radius: 10px; scrollbar-width: thin; scrollbar-color: var(--chat-border-strong) transparent; }
+.details[hidden] { display: none; }
+.detailHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.detailHeading strong { font-size: 12px; font-weight: 600; }
+.detailHeading button { width: 26px; height: 26px; padding: 4px; }
+.details > section { margin: 6px 0 0; }
+.sources { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
+.sources th, .sources td { padding: 9px 6px; border-bottom: 1px solid var(--chat-border-soft); text-align: left; vertical-align: top; }
+.sources thead th { color: var(--chat-text-muted); font-weight: 500; }
+.sources tbody th { font-weight: 500; }
+.sources tbody th > span { display: block; }
+.sources small { display: block; color: var(--chat-text-muted); font-size: 10px; overflow-wrap: anywhere; margin-top: 3px; }
+.sources td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sources .sourceWarning { display: flex; align-items: center; gap: 4px; color: var(--chat-red); font-size: 11px; margin-top: 4px; }
+.emptySources { color: var(--chat-text-muted); padding: 8px 0; }
+.root button:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }
+@container (max-width: 370px) { .indicators { gap: 10px; }.root .toggle { font-size: 11px; padding-inline: 3px; } }

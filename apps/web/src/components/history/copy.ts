@@ -1,0 +1,66 @@
+import { useI18n } from '../../i18n';
+import { useMemo } from 'react';
+
+const en = {
+  title: 'Project history', intro: 'Review saved versions, compare files and recover an earlier state.', close: 'Close history', refresh: 'Refresh', retry: 'Retry', loading: 'Loading history…',
+  private: 'Private project history', cadence: 'Every save keeps a version. Recovery checkpoints are created after 45 minutes of work or 10 minutes idle.',
+  organizationCadence: 'A file-organization review is prepared after 2 hours of work or 30 minutes idle. It never moves files automatically.',
+  work: 'Work since checkpoint', minutes: '{value} min', waitingCheckpoint: 'Saved changes are waiting for the next checkpoint.', upToDate: 'Checkpoint is up to date.',
+  exclusions: 'Technical exclusions', exclusionsHint: 'Recovery covers saved files inside this project folder. VCS internals, caches, dependencies, temporary files and linked folders are excluded.',
+  initializing: 'Preparing the first history entry…', statusError: 'History needs attention. Refresh to check again.', readOnly: 'Read-only access',
+  checkpoint: 'Create checkpoint', checkpointPending: 'Creating checkpoint…', checkpointDone: 'Checkpoint created.', checkpointEmpty: 'No new changes to checkpoint.',
+  listTitle: 'Timeline', saves: 'Show saved versions ({count})', hideSaves: 'Hide saved versions', more: 'Show more versions', empty: 'No checkpoints yet. Saved versions will appear as files change.',
+  newer: 'Newer versions', loadOlder: 'Load older versions', loadingOlder: 'Loading older versions…', olderError: 'Older versions could not load. Your current comparison is kept; retry below.', emptyRange: 'No checkpoints in the loaded range. Show saved versions or load older entries.',
+  select: 'Choose a version to compare it with the project as it is now.', selected: 'Selected version', saveVersion: 'Saved version', recoveryPoint: 'Recovery checkpoint', files: '{count} files',
+  reasonSave: 'File save', reasonInitial: 'First recorded state', reasonWork: '45 minutes of work', reasonIdle: '10 minutes idle', reasonManual: 'Manual checkpoint', reasonSafety: 'Safety copy before restore', reasonRestore: 'Restore',
+  compareTitle: 'Compared with the current project', compareLoading: 'Loading the files and comparison…', comparisonEmpty: 'This version matches the current project.',
+  compareTarget: 'Compare with', currentProject: 'Current project', historicalComparison: 'Comparison between saved versions', compareCurrentToRestore: 'Compare with the current project to restore',
+  differentModified: 'Different content', differentAdded: 'Only in the comparison version', differentDeleted: 'Only in the selected version', historicalMatch: 'These saved versions match.',
+  changeCount: '{count} changed files', versionFiles: 'All files in this version', view: 'View {path}', chooseFile: 'Select {path} for restore',
+  modified: 'Changed since this version', added: 'Added after this version', deleted: 'Missing from the current project',
+  textBefore: 'In the selected version', textAfter: 'In the current project', noFile: 'File absent', emptyText: 'Empty file', binary: 'Binary file · metadata only', bytes: '{value} bytes',
+  binaryHint: 'Images and other binary files are not downloaded into this comparison.', truncated: 'The displayed text is shortened. Restoring uses the complete saved file.',
+  restoreSelected: 'Restore selected files ({count})', restoreAll: 'Restore this version', restoreTitle: 'Review the restore', restoreCount: '{count} paths will return to the selected version.',
+  restoreAllHint: 'The project files return to this version. Files added later are removed; missing files are recovered.',
+  restoreSomeHint: 'Only the selected paths change. Other project files remain as they are.', removeHint: 'Will be removed: it did not exist in this version.',
+  safetyHint: 'A safety checkpoint of the current project is saved before restoring.', cancel: 'Cancel', confirmRestore: 'Confirm restore', restoring: 'Restoring…', restored: 'Restored {count} paths. The previous current state is preserved in a safety checkpoint.',
+  viewSafety: 'View the safety checkpoint', pending: 'Complete the current operation first.', errorLoad: 'History could not load. Retry to continue.', errorDetail: 'The comparison could not load. Retry without changing project files.',
+  errorAction: 'The operation did not finish. Project history is kept; refresh before retrying.', conflict: 'The project changed since this comparison. Refresh to review the latest changes before restoring.', agentRunning: 'The agent is still working. Wait for it to finish or stop it in chat before restoring files.', backgroundRunning: 'Images or documents are still being prepared. Wait for preparation to finish before restoring files.', unavailable: 'Project history is not available yet. Refresh to retry.',
+  organization: 'File organization', review: 'Review file organization', reviewing: 'Preparing the review…', noReview: 'No organization review is waiting.', acknowledged: 'Review read', acknowledge: 'Mark review as read',
+  candidates: 'Suggested checks', protected: 'Protected files', references: 'Referenced by', limitations: 'Dependencies and limits', noMoves: 'This is a review only. No files have been moved or deleted.',
+  keep: 'Keep', reviewCandidate: 'Review', archiveCandidate: 'Possible archive candidate', noCandidates: 'No organization changes suggested.',
+} as const;
+type Copy = { [Key in keyof typeof en]: string };
+const it: Copy = {
+  title: 'Cronologia del progetto', intro: 'Rivedi le versioni salvate, confronta i file e recupera uno stato precedente.', close: 'Chiudi la cronologia', refresh: 'Aggiorna', retry: 'Riprova', loading: 'Caricamento della cronologia…',
+  private: 'Cronologia privata del progetto', cadence: 'Ogni salvataggio conserva una versione. Un punto di ripristino viene creato dopo 45 minuti di lavoro o 10 minuti di inattività.',
+  organizationCadence: 'Dopo 2 ore di lavoro o 30 minuti di inattività viene preparata una revisione dei file. Non sposta nulla automaticamente.',
+  work: 'Lavoro dall’ultimo punto', minutes: '{value} min', waitingCheckpoint: 'Le modifiche sono salvate e attendono il prossimo punto di ripristino.', upToDate: 'Il punto di ripristino è aggiornato.',
+  exclusions: 'Esclusioni tecniche', exclusionsHint: 'Il recupero riguarda i file salvati nella cartella del progetto. Sono esclusi dati interni dei sistemi di versionamento, cache, dipendenze, file temporanei e cartelle collegate.',
+  initializing: 'Preparazione della prima versione…', statusError: 'La cronologia richiede attenzione. Aggiorna per ricontrollare.', readOnly: 'Accesso in sola lettura',
+  checkpoint: 'Crea punto di ripristino', checkpointPending: 'Creazione del punto…', checkpointDone: 'Punto di ripristino creato.', checkpointEmpty: 'Non ci sono nuove modifiche da registrare.',
+  listTitle: 'Versioni', saves: 'Mostra i salvataggi ({count})', hideSaves: 'Nascondi i salvataggi', more: 'Mostra altre versioni', empty: 'Non ci sono ancora punti di ripristino. Le versioni compariranno quando i file cambiano.',
+  newer: 'Versioni più recenti', loadOlder: 'Carica versioni precedenti', loadingOlder: 'Caricamento delle versioni precedenti…', olderError: 'Non è stato possibile caricare le versioni precedenti. Il confronto attuale resta disponibile: riprova qui sotto.', emptyRange: 'Non ci sono punti di ripristino nell’intervallo caricato. Mostra i salvataggi oppure carica versioni precedenti.',
+  select: 'Scegli una versione per confrontarla con il progetto attuale.', selected: 'Versione scelta', saveVersion: 'Salvataggio', recoveryPoint: 'Punto di ripristino', files: '{count} file',
+  reasonSave: 'Salvataggio di un file', reasonInitial: 'Primo stato registrato', reasonWork: '45 minuti di lavoro', reasonIdle: '10 minuti di inattività', reasonManual: 'Punto creato manualmente', reasonSafety: 'Copia di sicurezza prima del ripristino', reasonRestore: 'Ripristino',
+  compareTitle: 'Confronto con il progetto attuale', compareLoading: 'Caricamento dei file e del confronto…', comparisonEmpty: 'Questa versione coincide con il progetto attuale.',
+  compareTarget: 'Confronta con', currentProject: 'Progetto attuale', historicalComparison: 'Confronto fra versioni salvate', compareCurrentToRestore: 'Confronta con il progetto attuale per ripristinare',
+  differentModified: 'Contenuto diverso', differentAdded: 'Solo nella versione di confronto', differentDeleted: 'Solo nella versione scelta', historicalMatch: 'Queste versioni salvate coincidono.',
+  changeCount: 'File con differenze: {count}', versionFiles: 'Tutti i file di questa versione', view: 'Vedi {path}', chooseFile: 'Seleziona {path} per il ripristino',
+  modified: 'Modificato dopo questa versione', added: 'Aggiunto dopo questa versione', deleted: 'Manca nel progetto attuale',
+  textBefore: 'Nella versione scelta', textAfter: 'Nel progetto attuale', noFile: 'File assente', emptyText: 'File vuoto', binary: 'File binario · solo metadati', bytes: '{value} byte',
+  binaryHint: 'Immagini e altri file binari non vengono caricati nel confronto.', truncated: 'Il testo mostrato è abbreviato. Il ripristino usa il file salvato completo.',
+  restoreSelected: 'Ripristina i file selezionati ({count})', restoreAll: 'Ripristina questa versione', restoreTitle: 'Controlla il ripristino', restoreCount: 'Percorsi da ripristinare: {count}.',
+  restoreAllHint: 'I file del progetto tornano a questa versione. I file aggiunti dopo vengono rimossi; quelli mancanti vengono recuperati.',
+  restoreSomeHint: 'Cambiano solo i percorsi selezionati. Gli altri file restano come sono.', removeHint: 'Verrà rimosso: non esisteva in questa versione.',
+  safetyHint: 'Prima del ripristino viene salvata una copia di sicurezza del progetto attuale.', cancel: 'Annulla', confirmRestore: 'Conferma ripristino', restoring: 'Ripristino in corso…', restored: 'Ripristino completato. File recuperati: {count}. Lo stato precedente resta disponibile nel punto di sicurezza.',
+  viewSafety: 'Vedi il punto di sicurezza', pending: 'Attendi il termine dell’operazione in corso.', errorLoad: 'Non è stato possibile caricare la cronologia. Riprova.', errorDetail: 'Non è stato possibile caricare il confronto. Riprova senza modificare i file.',
+  errorAction: 'L’operazione non è terminata. La cronologia è conservata: aggiorna prima di riprovare.', conflict: 'Il progetto è cambiato dopo questo confronto. Aggiorna e controlla le ultime modifiche prima di ripristinare.', agentRunning: 'L’agente sta ancora lavorando. Attendi che finisca oppure fermalo nella chat prima di ripristinare i file.', backgroundRunning: 'La preparazione delle immagini o dei documenti è ancora in corso. Attendi che finisca prima di ripristinare i file.', unavailable: 'La cronologia non è ancora disponibile. Aggiorna per riprovare.',
+  organization: 'Organizzazione dei file', review: 'Rivedi l’organizzazione dei file', reviewing: 'Preparazione della revisione…', noReview: 'Non ci sono revisioni da leggere.', acknowledged: 'Revisione letta', acknowledge: 'Segna la revisione come letta',
+  candidates: 'Controlli proposti', protected: 'File protetti', references: 'Richiamato da', limitations: 'Dipendenze e limiti', noMoves: 'È una revisione: nessun file è stato spostato o eliminato.',
+  keep: 'Conservare', reviewCandidate: 'Da controllare', archiveCandidate: 'Possibile candidato all’archivio', noCandidates: 'Non sono proposte modifiche all’organizzazione.',
+};
+export function useHistoryCopy() {
+  const { locale } = useI18n(), dict = locale === 'it' ? it : en;
+  return useMemo(() => ({ locale, t: (key: keyof Copy, variables?: Record<string, string | number>) => dict[key].replace(/\{(\w+)\}/g, (match, name: string) => variables?.[name] === undefined ? match : String(variables[name])) }), [locale, dict]);
+}

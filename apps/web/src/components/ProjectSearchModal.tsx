@@ -41,7 +41,7 @@ export function buildProjectSearchCatalog(
   const projectsById = new Map<string, Project>();
   for (const project of draftProjects) projectsById.set(project.id, project);
   for (const project of sharedProjects) projectsById.set(project.id, project);
-  return [...projectsById.values()];
+  return [...projectsById.values()].filter((project) => !project.metadata?.collectionProjectId);
 }
 
 export function ProjectSearchModal({
@@ -73,7 +73,7 @@ export function ProjectSearchModal({
   }, [onClose]);
 
   const filtered = useMemo(() => {
-    const sorted = [...projects].sort((a, b) => b.updatedAt - a.updatedAt);
+    const sorted = projects.filter((project) => !project.metadata?.collectionProjectId).sort((a, b) => b.updatedAt - a.updatedAt);
     const q = query.trim().toLowerCase();
     if (q.length === 0) return sorted;
     return sorted.filter((p) => (p.name || '').toLowerCase().includes(q));
@@ -150,6 +150,10 @@ export function ProjectSearchModal({
           ) : (
             filtered.map((project, index) => {
               const cover = projectCover(project, null, workspaceContext);
+              const documentKind = project.metadata?.documentSetupIntent?.kind;
+              const documentLabel = documentKind && documentKind !== 'other'
+                ? t(`documentStart.kind.${documentKind}`)
+                : documentKind || project.metadata?.intent === 'document' ? t('homeHero.chip.document') : null;
               const showImage =
                 (cover.kind === 'image' || cover.kind === 'logo') && Boolean(cover.src);
               const active = index === activeIndex;
@@ -180,7 +184,9 @@ export function ProjectSearchModal({
                     {project.name || t('chat.untitledConversation')}
                   </span>
                   <span className="project-search-item-tag">
-                    <ProjectTag category={projectCategory(project)} />
+                    {documentLabel ? <span className="design-card-tag tag-document" title={project.metadata?.documentSetupIntent?.subtype || undefined}>
+                      <Icon name="file-text" size={12} className="design-card-tag__icon" />{documentLabel}
+                    </span> : <ProjectTag category={projectCategory(project)} />}
                   </span>
                   <span className="project-search-item-meta">
                     {relativeTimeLong(project.updatedAt, t)}

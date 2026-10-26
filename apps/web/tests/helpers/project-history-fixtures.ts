@@ -1,0 +1,14 @@
+import type { ProjectHistoryCompareResponse, ProjectHistoryEntry, ProjectHistoryResponse, ProjectHistoryRestoreResponse, ProjectHistoryVersionResponse, ProjectOrganizationReview } from '@open-design/contracts';
+
+export const historyEntry = (id = 'checkpoint-1', patch: Partial<ProjectHistoryEntry> = {}): ProjectHistoryEntry => ({ id, kind: 'commit', reason: 'work', createdAt: '2026-10-24T12:00:00Z', title: 'Report structure saved', summary: 'Adjusted the document structure.', changedPaths: ['report.html', 'figure.png'], fileCount: 3, totalBytes: 256, parentId: 'initial-1', ...patch });
+export const historyReview = (): ProjectOrganizationReview => ({ id: 'review-1', createdAt: '2026-10-24T12:00:00Z', reason: 'work', status: 'ready', summary: 'One old draft needs a check.', fileCount: 3, totalBytes: 256,
+  candidates: [{ path: 'draft-old.html', reason: 'An earlier draft exists.', suggestedAction: 'archive-candidate', referencedBy: ['report.html'] }], protectedPaths: ['report.html'], limitations: ['References must be checked before any move.'] });
+export const projectHistory = (revision = 'revision-current'): ProjectHistoryResponse => ({ status: { state: 'ready', revision, dirty: true, activeWorkMs: 20 * 60_000, organizationWorkMs: 40 * 60_000, lastActivityAt: '2026-10-24T12:10:00Z', lastCommitAt: '2026-10-24T12:00:00Z', organizationReview: null, excluded: ['.git'] }, entries: [historyEntry('save-2', { kind: 'save', reason: 'save', title: 'Saved report', createdAt: '2026-10-24T12:10:00Z' }), historyEntry(), historyEntry('initial-1', { reason: 'initial', title: 'First recorded state', createdAt: '2026-10-24T11:00:00Z', parentId: null })] });
+export const historyVersion = (id = 'checkpoint-1'): ProjectHistoryVersionResponse => ({ entry: historyEntry(id), files: [{ path: 'report.html', hash: 'hash-report', size: 56 }, { path: 'figure.png', hash: 'hash-figure', size: 100 }, { path: 'missing.txt', hash: 'hash-missing', size: 20 }] });
+export const historyComparison = (fromId = 'checkpoint-1'): ProjectHistoryCompareResponse => ({ fromId, toId: null, changes: [
+  { path: 'report.html', kind: 'modified', binary: false, beforeSize: 56, afterSize: 60, beforeText: '<h1>Earlier report</h1>', afterText: '<h1>Current report</h1>' },
+  { path: 'figure.png', kind: 'modified', binary: true, beforeSize: 100, afterSize: 120 },
+  { path: 'new.txt', kind: 'added', binary: false, beforeSize: 0, afterSize: 10, afterText: 'A new file' },
+  { path: 'missing.txt', kind: 'deleted', binary: false, beforeSize: 20, afterSize: 0, beforeText: 'Missing file content' },
+] });
+export const historyRestored = (): ProjectHistoryRestoreResponse => ({ entry: historyEntry('restored-1', { reason: 'restore', title: 'Restored report', createdAt: '2026-10-24T12:20:00Z' }), restoredPaths: ['report.html'], safetyEntryId: 'safety-1' });

@@ -2562,12 +2562,6 @@
   min-height: 56px;
   max-height: min(184px, 34vh);
 }
-.app .composer.composer-active-file-mode textarea,
-.chat-skin .composer.composer-active-file-mode textarea,
-.chat-composer-fixed-layer .composer.composer-active-file-mode textarea {
-  min-height: clamp(150px, 20vh, 210px);
-  max-height: min(300px, 32vh);
-}
 .app .composer-row,
 .chat-skin .composer-row {
   min-height: 30px;

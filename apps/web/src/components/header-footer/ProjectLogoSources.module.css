@@ -1,0 +1,8 @@
+.sources { margin-block: 14px; font-size: 12px; line-height: 1.5; }
+.sources summary { cursor: pointer; font-weight: 600; min-height: 28px; padding-block: 4px; }
+.sources summary span { margin-inline-start: 6px; font-weight: 400; }
+.sources ul { list-style: none; margin: 8px 0; padding: 0; max-height: 160px; overflow-y: auto; }
+.sources li { display: flex; justify-content: space-between; gap: 12px; padding-block: 5px; }
+.sources li span { overflow-wrap: anywhere; }
+.sources p { margin: 6px 0; }
+.sources :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

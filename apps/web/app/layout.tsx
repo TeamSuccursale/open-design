@@ -4,17 +4,12 @@ import { I18nProvider } from '../src/i18n';
 import { AnalyticsProvider } from '../src/analytics/provider';
 import '@excalidraw/excalidraw/index.css';
 import '../src/index.css';
+import '../src/components/ProjectGalleryDrawer.module.css';
 import '../src/styles/home/index.css';
-// These hosts render from the client-only App entry. Keep their layout CSS in
-// the root route stylesheet so Turbopack does not leave the lazy chunk as a
-// preload-only resource after the host mounts.
-import '../src/components/TestCampaignModal.module.css';
-import '../src/components/HoverTouchpointOverlay.module.css';
-import '../src/components/ProductionCampaignBadge.module.css';
-import '../src/components/OnboardingWelcome.module.css';
+import './ui-styles';
 
 export const metadata: Metadata = {
-  title: 'OpenDesign',
+  title: 'MelilloDesign',
   icons: {
     icon: '/app-icon.png',
     apple: '/app-icon.png',

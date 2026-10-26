@@ -97,6 +97,10 @@ export function bindStreamVisibility(
   // Browsers commonly pair `visibilitychange` with `focus` for one foreground
   // transition; both are harmless here because the transition is idempotent.
   window.addEventListener('focus', onTransition);
+  // Background tabs can mount after their visibility transition already fired.
+  // Apply the same grace policy to that initial state instead of waiting forever
+  // for another event while the unseen page retains its socket.
+  onTransition();
 
   return {
     dispose(): void {

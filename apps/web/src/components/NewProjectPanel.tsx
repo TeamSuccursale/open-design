@@ -63,6 +63,7 @@ import { Icon } from './Icon';
 import { Skeleton } from './Loading';
 import { Toast } from './Toast';
 import { useOpenFolderImport } from './useOpenFolderImport';
+import { DocumentStartDialog, type DocumentStartDraft } from './document-setup/DocumentStartDialog';
 
 // Snapshot of a curated prompt template, captured at New Project time and
 // folded into ProjectMetadata.promptTemplate. The user may have edited the
@@ -302,6 +303,7 @@ export function NewProjectPanel({
   >(null);
   const [workingDir, setWorkingDir] = useState<string | null>(null);
   const [workingDirToken, setWorkingDirToken] = useState<string | null>(null);
+  const [documentStartOpen, setDocumentStartOpen] = useState(false);
   const [workingDirPicking, setWorkingDirPicking] = useState(false);
   const [workingDirError, setWorkingDirError] = useState<
     { message: string; details?: string } | null
@@ -719,6 +721,11 @@ export function NewProjectPanel({
 
   function handleCreate() {
     if (!canCreate) return;
+    if (tab === 'other') { setDocumentStartOpen(true); return; }
+    finishCreate();
+  }
+
+  function finishCreate(documentStart?: DocumentStartDraft) {
     // Media surfaces don't carry a design system pick. Force the primary
     // and inspiration ids to empty there so the New Project panel can't
     // accidentally bind a stale DS that the user can no longer see in the
@@ -733,7 +740,7 @@ export function NewProjectPanel({
             ? videoPromptTemplate
             : null
         : null;
-    const trimmedName = name.trim();
+    const trimmedName = documentStart?.projectName.trim() || name.trim();
     const metadata = buildMetadata({
       tab,
       mediaSurface,
@@ -781,10 +788,11 @@ export function NewProjectPanel({
       designSystemId: primaryDs,
       metadata: {
         ...metadata,
+        ...(documentStart ? { kind: 'other' as const, intent: 'document' as const, documentSetupIntent: documentStart.intent, linkedDirs: documentStart.intent.contextRoots } : {}),
         nameSource: trimmedName ? 'user' : 'generated',
-        ...(workingDir ? { userWorkingDir: workingDir } : {}),
+        ...((documentStart ? documentStart.workingDir : workingDir) ? { userWorkingDir: (documentStart ? documentStart.workingDir : workingDir)! } : {}),
       },
-      ...(workingDirToken ? { userWorkingDirToken: workingDirToken } : {}),
+      ...((documentStart ? documentStart.workingDirToken : workingDirToken) ? { userWorkingDirToken: (documentStart ? documentStart.workingDirToken : workingDirToken)! } : {}),
       requestId,
     });
   }
@@ -803,7 +811,7 @@ export function NewProjectPanel({
         }
         if ('canceled' in result && result.canceled) return;
         setWorkingDirError({
-          message: `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update OpenDesign and try again.`,
+          message: `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update MelilloDesign and try again.`,
         });
         return;
       }
@@ -1175,6 +1183,7 @@ export function NewProjectPanel({
         ) : null}
       </div>
       <div className="newproj-footer">{t('newproj.privacyFooter')}</div>
+      {documentStartOpen ? <DocumentStartDialog purpose={name.trim()} initialProjectName={name.trim()} initialFolder={workingDir} initialWorkingDirToken={workingDirToken ?? undefined} onCancel={() => setDocumentStartOpen(false)} onConfirm={(draft) => { setDocumentStartOpen(false); finishCreate(draft); }} /> : null}
       {importZipError ? (
         <Toast
           message={importZipError.message}

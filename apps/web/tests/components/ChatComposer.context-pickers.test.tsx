@@ -318,6 +318,13 @@ afterEach(() => {
 });
 
 describe('ChatComposer context pickers', () => {
+  it('shows Proposals only after the parent observes a real saved Blockout, including an existing legacy workspace during setup', async () => {
+    const { rerender } = renderComposer({ blockoutNavigationAvailable: false }, { locale: 'en' }); await flushMounts();
+    expect(screen.queryByRole('button', { name: 'Proposals' })).toBeNull();
+    rerender(<I18nProvider initial="en">{composerElement({ blockoutNavigationAvailable: true, documentPreparationPending: true })}</I18nProvider>);
+    const open = screen.getByRole('button', { name: 'Proposals' }); const listener = vi.fn(); window.addEventListener('melillodesign:blockout-proposals-open', listener);
+    fireEvent.click(open); expect(listener).toHaveBeenCalledOnce(); window.removeEventListener('melillodesign:blockout-proposals-open', listener);
+  });
   it('auto-stages the active workspace context and re-stages after a tab change', async () => {
     const onSend = vi.fn();
     const fileContext = {
@@ -1498,4 +1505,36 @@ describe('ChatComposer context pickers', () => {
     expect(screen.queryByRole('button', { name: 'Pets — wake, tuck, or pick one' })).toBeNull();
     expect(screen.queryByText('Buddy')).toBeNull();
   });
+});
+
+it('exposes project-document references without requiring the user to know the at-sign shortcut', async () => {
+  const onSend = vi.fn();
+  renderComposer({ onSend, projectFiles: [{name:'unrelated.html',path:'unrelated.html',kind:'html',mime:'text/html',size:20,mtime:0}], projectDocuments: [{ id:'doc-other',projectId:'project-1',workspaceProjectId:'other-workspace',name:'Technical Report',kind:'document',workingDirectory:'another/folder',folderMode:'managed',availability:'available',conversationIds:['other-chat'],createdAt:'',updatedAt:'',archivedAt:null }] });await flushMounts();
+  fireEvent.click(screen.getByRole('button',{name:/Reference a project document/}));
+  await waitFor(() => expect(screen.getByRole('option',{name:/^Technical Report/})).toBeTruthy());
+  expect(screen.getByRole('tab',{name:'Project documents'}).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getAllByRole('option')).toHaveLength(1);
+  await pressEnter();
+  await waitFor(() => expect(composerText()).toBe('@Technical Report '));
+  fireEvent.click(screen.getByTestId('chat-send'));
+  await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+  expect(onSend.mock.calls[0]?.[3]?.documentReferences).toEqual(['doc-other']);
+  expect(onSend.mock.calls[0]?.[1]).toEqual([]);
+});
+it('selects a named document by keyboard and sends its ID without folder attachments', async () => {
+  const onSend = vi.fn();
+  renderComposer({ onSend, projectDocuments: [{ id: 'doc-other', projectId: 'project-1', workspaceProjectId: 'project-1', name: 'Technical Report', kind: 'document', workingDirectory: 'another/folder', folderMode: 'managed', availability: 'available', conversationIds: [], createdAt: '', updatedAt: '', archivedAt: null }] }); await flushMounts();
+  await typeAndSettle('@Technical'); expect(screen.getByRole('tab', { name: 'Project documents' })).toBeTruthy(); expect(screen.getByRole('tab', { name: 'All' }).getAttribute('aria-selected')).toBe('true'); expect(screen.getByText('Read-only reference')).toBeTruthy(); expect(screen.getByRole('option', { name: /^Technical Report/ })).toBeTruthy(); await pressEnter();
+  await waitFor(() => expect(composerText()).toBe('@Technical Report '));
+  expect(screen.getByTestId('chat-composer-input').querySelector('[data-mention-kind="document"]')).toBeTruthy();
+  fireEvent.click(screen.getByTestId('chat-send')); await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+  expect(onSend.mock.calls[0]?.[3]?.documentReferences).toEqual(['doc-other']); expect(onSend.mock.calls[0]?.[1]).toEqual([]);
+  expect(onSend.mock.calls[0]?.[3]?.context?.documentReferences).toEqual(['doc-other']);
+});
+it('removes a document reference when its token is removed', async () => {
+  const onSend = vi.fn();
+  renderComposer({ onSend, projectDocuments: [{ id: 'doc-other', projectId: 'project-1', workspaceProjectId: 'project-1', name: 'Report', kind: 'document', workingDirectory: 'another/folder', folderMode: 'managed', availability: 'available', conversationIds: [], createdAt: '', updatedAt: '', archivedAt: null }] }); await flushMounts();
+  await typeAndSettle('@Report'); fireEvent.click(screen.getByRole('option', { name: /^Report/ })); await waitFor(() => expect(composerText()).toBe('@Report '));
+  await typeAndSettle('Continue without reference'); fireEvent.click(screen.getByTestId('chat-send'));
+  await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1)); expect(onSend.mock.calls[0]?.[3]?.documentReferences).toBeUndefined();
 });

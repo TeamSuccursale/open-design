@@ -1,3 +1,4 @@
+import { FastProjectDialog, type FastProjectDraft } from './FastProjectDialog';
 // Composed Home view — the top-down layout the entry view renders
 // when the left nav rail's "Home" tab is active.
 //
@@ -8,7 +9,7 @@
 // textarea can live centered in the hero.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Dialog, DialogFooter, DialogTitle } from '@open-design/components';
+import { Button, Dialog, DialogFooter, DialogTitle } from '@open-design/components';
 import type {
   ApplyResult,
   ChatSessionMode,
@@ -59,6 +60,9 @@ import {
   peekHomeComposerAttachments,
 } from '../state/home-composer-stash';
 import { FigmaImportModal } from './FigmaImportModal';
+import { DocumentStartDialog, type DocumentStartDraft } from './document-setup/DocumentStartDialog';
+import documentEntryStyles from './HomeDocumentEntry.module.css';
+import { Icon } from './Icon';
 import { fetchMcpServers } from '../state/mcp';
 import { takeHomeComposerAssetSeed } from '../state/libraryHandoff';
 import { useI18n, useT } from '../i18n';
@@ -261,9 +265,9 @@ interface PendingPluginUseHandoff {
 }
 
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
-  artifactKind: 'OpenDesign plugin',
-  audience: 'OpenDesign plugin authors',
-  topic: 'packaging a reusable workflow as an OpenDesign plugin',
+  artifactKind: 'MelilloDesign plugin',
+  audience: 'MelilloDesign plugin authors',
+  topic: 'packaging a reusable workflow as an MelilloDesign plugin',
 };
 
 
@@ -280,6 +284,7 @@ interface Props {
     payload: PluginLoopSubmit,
   ) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
   onOpenProject: (id: string, fileName?: string) => void;
+  onOpenExistingProjects?: () => void;
   onBrowseRegistry?: () => void;
   onOpenIntegrations?: () => void;
   onOpenMcp?: () => void;
@@ -504,6 +509,7 @@ export function HomeView({
   defaultDesignSystemId = null,
   onSubmit,
   onOpenProject,
+  onOpenExistingProjects,
   onBrowseRegistry,
   onOpenIntegrations,
   onOpenMcp,
@@ -623,14 +629,12 @@ export function HomeView({
     text: string;
     chipId: string | null;
   } | null>(null);
-  // The Home composer no longer exposes a mode picker (the 「设计」 pill was
-  // removed), so every Home create runs in the default design mode; the
-  // per-conversation picker still lives in the project chat composer.
-  const sessionMode: ChatSessionMode = 'design';
+  // New projects begin with editable page structure and require acceptance
+  // before the agent proceeds to graphic design.
+  const sessionMode: ChatSessionMode = 'blockout';
   // Automatic task routes do not apply the placeholder plugin. Its legacy
   // required fields must not block the free-form brief that the route owns.
-  const activeAutomaticStrategyTaskProfile = sessionMode === 'design'
-    && !pinsPluginOverAutomaticRoute(active, active?.chipId ?? null)
+  const activeAutomaticStrategyTaskProfile = !pinsPluginOverAutomaticRoute(active, active?.chipId ?? null)
     ? automaticStrategyTaskProfileForRouteId(active?.chipId ?? null)
     : null;
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
@@ -656,6 +660,10 @@ export function HomeView({
   // native dialog. Spent on the post-creation working-dir POST so the
   // daemon's desktop-auth gate accepts the path. Null for web picks.
   const [workingDirToken, setWorkingDirToken] = useState<string | null>(null);
+  const [fastProjectOpen, setFastProjectOpen] = useState(false);
+  const [documentStartOpen, setDocumentStartOpen] = useState(false);
+  const [documentStartPurpose, setDocumentStartPurpose] = useState('');
+  const [otherCreations, setOtherCreations] = useState(variant === 'dock' || Boolean(promptHandoff));
   // Global design-system selection for the home composer. Persistent and
   // independent of the active plugin / type chip so EVERY product kind (not
   // just prototype/deck) can pick a design system; the choice is forwarded as
@@ -784,6 +792,7 @@ export function HomeView({
       // Home's, an unaddressed seed would land the same text in both.
       if ((detail?.target ?? 'page') !== variant) return;
       if (typeof detail?.prompt !== 'string') return;
+      setOtherCreations(true);
       setPrompt(detail.prompt);
       setPromptEditedByUser(detail.prompt.trim().length > 0);
     }
@@ -1136,6 +1145,7 @@ export function HomeView({
 
   useEffect(() => {
     if (!promptHandoff || consumedHandoffIdRef.current === promptHandoff.id) return;
+    setOtherCreations(true);
     consumedHandoffIdRef.current = promptHandoff.id;
     setError(null);
     if (promptHandoff.source === 'plugin-use') {
@@ -2180,7 +2190,7 @@ export function HomeView({
       // auth gate and surface as a confusing late create-time failure.
       // Surface the host error instead and keep the existing working dir.
       setError(
-        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update OpenDesign and try again.`,
+        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update MelilloDesign and try again.`,
       );
       return null;
     }
@@ -2205,7 +2215,7 @@ export function HomeView({
       }
       if ('canceled' in result && result.canceled) return null;
       setError(
-        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update OpenDesign and try again.`,
+        `Couldn't open the folder picker (${'reason' in result ? result.reason : 'host unavailable'}). Please update MelilloDesign and try again.`,
       );
       return null;
     }
@@ -2704,6 +2714,7 @@ export function HomeView({
     // dock, the Brands tab addresses the page.
     const chipId = consumePendingHomeChip(variant);
     if (!chipId) return;
+    setOtherCreations(true);
     // Docked only: Home's composer IS its page's subject, so a chip routed
     // there (the Brands tab's "use in new chat") still earns the caret.
     hostChipApplyRef.current = variant === 'dock';
@@ -2787,12 +2798,20 @@ export function HomeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCarouselSubmit, prompt, active, sending]);
 
-  async function submit() {
+  async function submit(documentStart?: DocumentStartDraft): Promise<boolean> {
     // The send button disables itself while sending, but the Enter-to-send
     // path lands here directly — swallow re-entry during the in-flight window.
-    if (sending || defaultTypePending) return;
-    const trimmed = prompt.trim();
-    if (!trimmed && stagedFiles.length === 0) return;
+    if (sending || (!documentStart && defaultTypePending)) return false;
+    const trimmed = documentStart?.intent.purpose.trim() || prompt.trim();
+    if (!trimmed && stagedFiles.length === 0) return false;
+    const requestedKind = active?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
+    const explicitSpecializedFlow = Boolean(active?.mediaSurface)
+      || ['image', 'video', 'audio', 'prototype', 'deck'].includes(requestedKind);
+    if (!documentStart && !explicitSpecializedFlow) {
+      setDocumentStartPurpose(trimmed || stagedFiles[0]?.name || '');
+      setDocumentStartOpen(true);
+      return false;
+    }
     // P0 ui_click area=chat_composer element=send_button. Fires before the
     // async plugin-apply roundtrip so the click count reflects user intent
     // even when the run is rejected (missing inputs, apply failure). The
@@ -2802,14 +2821,14 @@ export function HomeView({
       area: 'chat_composer',
       element: 'send_button',
     });
-    let submittedActive = active;
+    let submittedActive = documentStart ? null : active;
     // The OD Next automatic route is owned by the first-level task type, and
     // `chipId` IS that task type: a second-level scene refines the brief it
     // hands the agent — platform targets, lo-fi fidelity, both of which the
     // Prototype task profile already branches on — and carries no chip id of
     // its own, so it has nothing to swap the route its parent chose for.
     const submittedRouteChipId = submittedActive?.chipId ?? null;
-    const automaticStrategyTaskProfile = activeAutomaticStrategyTaskProfile;
+    const automaticStrategyTaskProfile = documentStart ? null : activeAutomaticStrategyTaskProfile;
     // The example's identity, sent in place of a plugin pin. Non-null only on
     // the same picks the gate above releases to the automatic route, so it can
     // never accompany a pinned plugin.
@@ -2831,7 +2850,7 @@ export function HomeView({
           missingRequiredInputs(submittedActive.inputFields, submittedActive.inputs),
         ),
       );
-      return;
+      return false;
     }
     setError(null);
     // Sending covers the whole async tail — a pending plugin apply (when one
@@ -2882,7 +2901,7 @@ export function HomeView({
               ? missingRequiredInputsMessage(missing)
               : `Failed to apply ${submittedActive.record.title}. Check the plugin parameters and try again.`,
           );
-          return;
+          return false;
         }
         submittedActive = { ...submittedActive, result, inputs: submittedPluginInputs };
         setActive(submittedActive);
@@ -2925,9 +2944,11 @@ export function HomeView({
       // Referenced project / local-code folders are required user-selected
       // inputs. If one disappears before submit, fail loudly instead of sending
       // workspace text the daemon cannot back with `--add-dir` access.
-      const contextLinkedDirCandidates = workspaceContextLinkedDirs(contextWorkspaceItems);
+      const contextLinkedDirCandidates = documentStart?.intent.contextRoots ?? workspaceContextLinkedDirs(contextWorkspaceItems);
       const missingContextLinkedDirs =
-        contextLinkedDirCandidates.length === 0
+        // DocumentStartDialog already performs a bounded, strict folder check.
+        // Repeating its read here would reintroduce an unbounded pre-create wait.
+        documentStart || contextLinkedDirCandidates.length === 0
           ? []
           : (
               await Promise.all(
@@ -2936,12 +2957,14 @@ export function HomeView({
             ).filter((dir): dir is string => Boolean(dir));
       if (missingContextLinkedDirs.length > 0) {
         setError('A selected reference folder is no longer available. Remove or re-pick it before starting the run.');
-        return;
+        return false;
       }
       const contextLinkedDirs = contextLinkedDirCandidates;
-      const submittedProjectKind =
+      const submittedProjectKind = documentStart ? 'other' :
         submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
-      const submittedProjectMetadata = submittedActive?.mediaSurface
+      const submittedProjectMetadata = documentStart
+        ? { kind: 'other' as const, intent: 'document' as const, documentSetupIntent: documentStart.intent }
+        : submittedActive?.mediaSurface
         ? metadataForHomeMediaComposer(submittedActive.mediaSurface, submittedActive.inputs, promptTemplates)
         : homeCreateProjectMetadata(
             submittedProjectKind,
@@ -2961,13 +2984,10 @@ export function HomeView({
         && submittedChip.action.automaticDefault === true
         && !pinsPluginOverAutomaticRoute(submittedActive, submittedRouteChipId);
       const routedPluginId =
-        automaticStrategyTaskProfile
+        documentStart || automaticStrategyTaskProfile
           ? null
-          : sessionMode === 'design'
-          ? submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID
-          : submittedActive?.record.id ?? null;
-      const pluginSelectionProvenance = sessionMode === 'design'
-        && (!submittedActive || productAutomaticScenario)
+          : submittedActive?.record.id ?? DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID;
+      const pluginSelectionProvenance = (!submittedActive || productAutomaticScenario)
         ? 'automatic-default' as const
         : null;
       // The example-prompt override is a one-shot marker. Decide whether to
@@ -2979,7 +2999,8 @@ export function HomeView({
           ? examplePromptInfoRef.current
           : null;
       const accepted = await onSubmit({
-        prompt: trimmed,
+        prompt: documentStart?.intent.purpose ?? trimmed,
+        ...(documentStart ? { projectName: documentStart.projectName } : {}),
         pluginId: routedPluginId,
         ...(pluginSelectionProvenance ? { pluginSelectionProvenance } : {}),
         ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
@@ -3023,19 +3044,19 @@ export function HomeView({
           ? { initialRunContext: { workspaceItems: contextWorkspaceItems } }
           : {}),
         attachments: stagedFiles,
-        ...(workingDir ? { workingDir } : {}),
-        ...(workingDirToken ? { workingDirToken } : {}),
+        ...((documentStart ? documentStart.workingDir : workingDir) ? { workingDir: documentStart ? documentStart.workingDir : workingDir } : {}),
+        ...((documentStart ? documentStart.workingDirToken : workingDirToken) ? { workingDirToken: documentStart ? documentStart.workingDirToken : workingDirToken } : {}),
         ...(contextLinkedDirs.length > 0 ? { linkedDirs: contextLinkedDirs } : {}),
-        conversationMode: sessionMode,
+        conversationMode: documentStart ? 'blockout' : sessionMode,
         ...(examplePromptToSend ? { examplePromptContext: examplePromptToSend } : {}),
       });
       if (accepted === false) {
         setError(t('home.createFailed'));
-        return;
+        return false;
       }
       // Blocked-and-handled (AMR balance gate): the shell already shows its
       // dialog. Keep the composer draft and staged contexts for the retry.
-      if (accepted === 'blocked') return;
+      if (accepted === 'blocked') return false;
       // Create accepted — now it is safe to spend the one-shot marker.
       if (examplePromptToSend) localStorage.setItem(examplePromptKey, '1');
       // The draft has become a real run; drop it synchronously (before the
@@ -3048,6 +3069,7 @@ export function HomeView({
       setSelectedMcpContexts([]);
       setSelectedConnectorContexts([]);
       setContextWorkspaceItems([]);
+      return true;
     } catch (err) {
       // A submit handler that throws (instead of resolving false) lands on
       // the same recovery path as a rejected creation.
@@ -3085,6 +3107,7 @@ export function HomeView({
             : t('home.createFailed'));
         }
       }
+      return false;
     } finally {
       setSending(false);
     }
@@ -3093,6 +3116,57 @@ export function HomeView({
   // #5517: with no projects yet the home (logo + heading + composer) centers
   // vertically instead of hugging the top.
   const recentProjectsEmpty = !projectsLoading && projects.length === 0;
+
+  async function startFastProject(draft: FastProjectDraft): Promise<boolean> {
+    if (sending) return false;
+    setSending(true); setError(null);
+    try {
+      const accepted = await onSubmit({ projectName: draft.name, prompt: draft.prompt, pluginId: null, appliedPluginSnapshotId: null,
+        pluginTitle: null, taskKind: null, skillId: null, designSystemId: null,
+        projectKind: 'other', projectMetadata: { kind: 'other', projectMode: 'fast' },
+        conversationMode: 'design', attachments: draft.files });
+      if (accepted === false || accepted === 'blocked') return false;
+      setFastProjectOpen(false); return true;
+    } finally { setSending(false); }
+  }
+  const fastProjectDialog = fastProjectOpen ? <FastProjectDialog onCancel={() => setFastProjectOpen(false)} onConfirm={startFastProject} /> : null;
+
+  const documentStartDialog = documentStartOpen ? <DocumentStartDialog
+    purpose={documentStartPurpose}
+    initialFolder={workingDir}
+    initialWorkingDirToken={workingDirToken ?? undefined}
+    initialContextRoots={workspaceContextLinkedDirs(contextWorkspaceItems)}
+    onCancel={() => setDocumentStartOpen(false)}
+    onConfirm={async (draft) => {
+      const accepted = await submit(draft);
+      if (accepted) setDocumentStartOpen(false);
+      return accepted;
+    }}
+  /> : null;
+
+  if (variant === 'page' && !otherCreations) return (
+    <div className={documentEntryStyles.entry} data-testid="home-view" data-variant={variant} ref={homeViewRef}>
+      <section className={documentEntryStyles.content} data-testid="document-project-entry" aria-labelledby="document-project-entry-title">
+        <h1 id="document-project-entry-title">{t('documentEntry.title')}</h1>
+        <p className={documentEntryStyles.intro}>{t('documentEntry.intro')}</p>
+        <div className={documentEntryStyles.actions}>
+          <div className={documentEntryStyles.entryOption}><Button variant="primary" aria-describedby="document-entry-folders" disabled={sending} onClick={() => { setDocumentStartPurpose(''); setDocumentStartOpen(true); }}><Icon name="plus" size={19} />{t('documentEntry.newProject')}</Button><small id="document-entry-folders">{t('documentEntry.folderSource')}</small></div>
+          <Button variant="secondary" onClick={onOpenExistingProjects ?? (() => navigate({ kind: 'home', view: 'drafts' }))}><Icon name="folder" size={19} />{t('documentEntry.existingProject')}</Button>
+          <div className={documentEntryStyles.entryOption}><Button variant="secondary" aria-describedby="document-entry-uploads" disabled={sending} onClick={() => setFastProjectOpen(true)}><Icon name="arrow-right" size={19} />{t('fastProject.title')}</Button><small id="document-entry-uploads">{t('documentEntry.uploadSource')}</small></div>
+        </div>
+        <ol className={documentEntryStyles.workflow}>
+          <li><Icon name="comment" size={19} /><span>{t('documentEntry.stepBrief')}</span></li>
+          <li><Icon name="grid" size={19} /><span>{t('documentEntry.stepBlocks')}</span></li>
+          <li><Icon name="file-text" size={19} /><span>{t('documentEntry.stepDesign')}</span></li>
+        </ol>
+        {sending ? <p role="status" className={documentEntryStyles.status}>{t('documentEntry.creating')}</p> : null}
+        {error ? <p role="alert" className={documentEntryStyles.error}>{error}</p> : null}
+        <div className={documentEntryStyles.other}><span>{t('documentEntry.otherHint')}</span><Button variant="ghost" data-testid="home-other-creations" onClick={() => setOtherCreations(true)}>{t('documentEntry.otherCreations')}<Icon name="arrow-right" size={15} /></Button></div>
+      </section>
+      {documentStartDialog}
+      {fastProjectDialog}
+    </div>
+  );
 
   return (
     <div
@@ -3103,6 +3177,9 @@ export function HomeView({
       data-variant={variant}
       ref={homeViewRef}
     >
+      {documentStartDialog}
+      {fastProjectDialog}
+      {variant === 'page' ? <Button variant="ghost" className={documentEntryStyles.back} onClick={() => setOtherCreations(false)}><Icon name="arrow-left" size={15} />{t('documentEntry.back')}</Button> : null}
       {/* `active` gates the portal-escaping campaign dialog to the ACTIVE home
           view: EntryShell only hides inactive views with display:none, which a
           document.body portal ignores. A docked composer never runs it at all —

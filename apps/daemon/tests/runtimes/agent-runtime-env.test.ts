@@ -20,10 +20,11 @@ describe('agent runtime tool environment', () => {
       daemonUrl: 'http://127.0.0.1:7456', runId: 'run-current', conversationId: 'conversation-current',
       analyticsContext: { deviceId: 'device-current', sessionId: 'session-current', clientType: 'web', locale: 'zh-CN', requestId: null },
     });
-    expect(current).toMatchObject({ OD_STOCK_RUN_ID: 'run-current', OD_STOCK_SESSION_ID: 'conversation-current',
+    expect(current).toMatchObject({ OD_RUN_ID: 'run-current', OD_STOCK_RUN_ID: 'run-current', OD_STOCK_SESSION_ID: 'conversation-current',
       OD_STOCK_ANALYTICS_DEVICE_ID: 'device-current', OD_STOCK_ANALYTICS_SESSION_ID: 'session-current' });
     const standalone = { ...current, ...createOpenDesignToolEnv({ daemonUrl: 'http://127.0.0.1:7456' }) };
     expect(standalone.OD_STOCK_RUN_ID).toBe('');
+    expect(standalone.OD_RUN_ID).toBe('');
     expect(standalone.OD_STOCK_ANALYTICS_DEVICE_ID).toBe('');
   });
   it('passes the pinned Workspace pair to dynamic Skill wrappers, clearing ambient identity for unbound runs', () => {

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPane } from '../../src/components/ChatPane';
-import type { Conversation, ProjectFile, ProjectMetadata } from '../../src/types';
+import type { Conversation, ProjectFile } from '../../src/types';
 
 const composerMocks = vi.hoisted(() => ({
   focus: vi.fn(),
@@ -78,6 +78,13 @@ function file(name: string, kind: ProjectFile['kind'], mtime: number): ProjectFi
 }
 
 describe('ChatPane starter prompts', () => {
+  it('places document preparation in the chat transcript above the composer without a dialog', () => {
+    renderPane({ documentPreparationPending: true, documentSetupContent: <section aria-label="Document preparation"><h2>Read the context</h2><button>Skip image intake</button></section> });
+    const preparation = screen.getByRole('region', { name: 'Document preparation' });
+    expect(screen.getByTestId('chat-log').contains(preparation)).toBe(true);
+    expect(screen.getByTestId('composer').contains(preparation)).toBe(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
   // #5517: an empty conversation renders a clean pane — no 开始一个对话 title
   // and no starter template cards.
   it('renders no starter title or example cards in an empty conversation', () => {
@@ -91,86 +98,18 @@ describe('ChatPane starter prompts', () => {
   });
 });
 
-describe('ChatPane imported folder artifacts', () => {
-  it('replaces empty starter prompts with design artifact previews', () => {
+describe('ChatPane imported folder workspace', () => {
+  it('keeps the chat clean while imported and extracted files stay in the explorer', () => {
     const onRequestOpenFile = vi.fn();
-    const metadata: ProjectMetadata = {
-      kind: 'prototype',
-      importedFrom: 'folder',
-      entryFile: 'site/index.html',
-    };
-
     renderPane({
-      projectMetadata: metadata,
-      projectFiles: [
-        file('README.md', 'text', 30),
-        file('site/index.html', 'html', 20),
-        file('assets/hero-mockup.jpg', 'image', 10),
-        file('bundle.js.map', 'code', 40),
-      ],
+      projectMetadata: { kind: 'prototype', importedFrom: 'folder', entryFile: 'site/index.html' },
+      projectFiles: [file('site/index.html', 'html', 20), file('intake-assets/doc/figure.png', 'image', 30)],
       onRequestOpenFile,
     });
-
-    expect(screen.queryByText('chat.startTitle')).toBeNull();
-    expect(screen.queryByText('chat.example1Title')).toBeNull();
-
-    const artifactGrid = screen.getByTestId('chat-design-artifacts');
-    expect(within(artifactGrid).getByText('site/index.html')).toBeTruthy();
-    expect(within(artifactGrid).getByText('assets/hero-mockup.jpg')).toBeTruthy();
-    expect(within(artifactGrid).queryByText('README.md')).toBeNull();
-    expect(within(artifactGrid).queryByText('bundle.js.map')).toBeNull();
-
-    const firstCard = screen.getByTestId('chat-design-artifact-0');
-    expect(firstCard.querySelector('iframe')?.getAttribute('src')).toBe(
-      '/api/projects/project-1/raw/site/index.html?v=20',
-    );
-
-    fireEvent.doubleClick(firstCard);
-    expect(onRequestOpenFile).toHaveBeenCalledTimes(1);
-    expect(onRequestOpenFile).toHaveBeenCalledWith('site/index.html');
-  });
-
-  it('shows the five most recently modified artifacts before revealing more', () => {
-    const metadata: ProjectMetadata = {
-      kind: 'prototype',
-      importedFrom: 'folder',
-      entryFile: 'site/index.html',
-    };
-
-    renderPane({
-      projectMetadata: metadata,
-      projectFiles: [
-        file('site/index.html', 'html', 10),
-        file('site/about.html', 'html', 80),
-        file('assets/latest-screenshot.jpg', 'image', 70),
-        file('site/styleguide.html', 'html', 60),
-        file('assets/hero-mockup.jpg', 'image', 50),
-        file('docs/pitch.pdf', 'pdf', 40),
-        file('docs/report.docx', 'document', 30),
-        file('README.md', 'text', 90),
-        file('bundle.js.map', 'code', 100),
-      ],
-      onRequestOpenFile: vi.fn(),
-    });
-
-    const artifactGrid = screen.getByTestId('chat-design-artifacts');
-    expect(screen.getAllByTestId(/chat-design-artifact-\d+/)).toHaveLength(5);
-    expect(within(artifactGrid).getByText('site/about.html')).toBeTruthy();
-    expect(within(artifactGrid).getByText('assets/latest-screenshot.jpg')).toBeTruthy();
-    expect(within(artifactGrid).getByText('site/styleguide.html')).toBeTruthy();
-    expect(within(artifactGrid).getByText('assets/hero-mockup.jpg')).toBeTruthy();
-    expect(within(artifactGrid).getByText('docs/pitch.pdf')).toBeTruthy();
-    expect(within(artifactGrid).queryByText('docs/report.docx')).toBeNull();
-    expect(within(artifactGrid).queryByText('site/index.html')).toBeNull();
-    expect(within(artifactGrid).queryByText('README.md')).toBeNull();
-
-    const moreButton = screen.getByTestId('chat-design-artifacts-more');
-    expect(moreButton.textContent).toContain('Show 2 more design files');
-    fireEvent.click(moreButton);
-
-    expect(screen.getAllByTestId(/chat-design-artifact-\d+/)).toHaveLength(7);
-    expect(within(artifactGrid).getByText('docs/report.docx')).toBeTruthy();
-    expect(within(artifactGrid).getByText('site/index.html')).toBeTruthy();
-    expect(screen.queryByTestId('chat-design-artifacts-more')).toBeNull();
+    expect(screen.queryByTestId('chat-design-artifacts')).toBeNull();
+    expect(screen.queryByText('site/index.html')).toBeNull();
+    expect(screen.queryByText('intake-assets/doc/figure.png')).toBeNull();
+    expect(screen.getByTestId('composer')).toBeTruthy();
+    expect(onRequestOpenFile).not.toHaveBeenCalled();
   });
 });

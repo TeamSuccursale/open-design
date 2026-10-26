@@ -6,6 +6,18 @@ import {
 } from '../../src/runtime/design-delivery';
 
 describe('resolveDesignDeliveryOutcome', () => {
+  it('recognizes host-confirmed library saves, while claims or incomplete receipts still fail', () => {
+    const write = { kind: 'tool_use' as const, id: 'write', name: 'Write', input: { file_path: 'scratch.txt' } };
+    const input = { sessionMode: 'design' as const, runStatus: 'succeeded' as const, content: 'Bozza salvata', producedFileCount: 0, traceObjectFileCount: 0 };
+    const receipt = { kind: 'diagnostic' as const, name: 'header_footer_draft_saved', source: 'daemon-header-footer', shape: {
+      projectId: 'project', setId: 'model', draftVersion: 2, stage: 'graphic',
+    } };
+    expect(resolveDesignDeliveryOutcome({ ...input, events: [write, receipt] })).toBe('delivered');
+    for (const bad of [{ ...receipt, source: 'model' }, { ...receipt, shape: {} }, { ...receipt, shape: { ...receipt.shape, draftVersion: 0 } }]) {
+      expect(resolveDesignDeliveryOutcome({ ...input, events: [write, bad] })).toBe('no_result');
+    }
+    expect(resolveDesignDeliveryOutcome({ ...input, runStatus: 'failed', events: [write, receipt] })).toBe('not_required');
+  });
   it('treats a text answer without any file-write attempt as a report-only result', () => {
     // Image analysis / report-only audits legitimately end with prose and no
     // new project file (#5714, #5718). Only fail delivery when the agent
@@ -296,6 +308,16 @@ describe('resolveDesignDeliveryOutcome', () => {
         traceObjectFileCount: 0,
       }),
     ).toBe('awaiting_input');
+  });
+
+  it('recognizes a Blockout comparison and detects a missing result', () => {
+    const input = {
+      sessionMode: 'blockout' as const,
+      runStatus: 'succeeded' as const,
+      content: '', events: [], producedFileCount: 0, traceObjectFileCount: 0,
+    };
+    expect(resolveDesignDeliveryOutcome(input)).toBe('no_result');
+    expect(resolveDesignDeliveryOutcome({ ...input, producedFileCount: 1 })).toBe('delivered');
   });
 
   it('does not impose artifact delivery on Chat/Plan or already-failed runs', () => {

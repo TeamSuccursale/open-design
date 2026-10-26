@@ -105,6 +105,11 @@ async function startProjectStubServer(deleteResponse: unknown = { ok: true }, sh
         res.end(JSON.stringify({ files: [] }));
         return;
       }
+      if (captured.method === 'POST' && captured.url === '/api/projects/project-1/files') {
+        res.statusCode = 201;
+        res.end(JSON.stringify({ file: { name: 'sources/large.pdf' } }));
+        return;
+      }
       if (
         captured.method === 'DELETE'
         && captured.url === '/api/projects/project-1/files/nested%2Findex.html/publish-public'
@@ -261,6 +266,36 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe('od project CLI', () => {
+  it('uploads a large local file as multipart with its destination and workspace identity', async () => {
+    stub = await startProjectStubServer();
+    tempRoot = mkdtempSync(join(tmpdir(), 'project-upload-cli-'));
+    const localFile = join(tempRoot, 'large.pdf');
+    const content = '%PDF-1.7\n' + 'a'.repeat(4_600_000) + '\n%%EOF';
+    writeFileSync(localFile, content);
+    const result = await runCli(['files', 'upload', 'project-1', localFile, '--as', 'sources/large.pdf', '--workspace', 'ws-1', '--workspace-member', 'member-1', '--json', '--daemon-url', stub.baseUrl]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).file.name).toBe('sources/large.pdf');
+    const sent = stub.requests.find(request => request.method === 'POST' && request.url === '/api/projects/project-1/files')!;
+    expect(sent.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/);
+    expect(sent.headers['x-od-workspace-id']).toBe('ws-1');
+    expect(sent.headers['x-od-workspace-member-id']).toBe('member-1');
+    expect(sent.body).toContain('name="name"\r\n\r\nsources/large.pdf');
+    expect(sent.body).toContain('name="file"; filename="large.pdf"');
+    expect(sent.body).toContain(content);
+    expect(sent.body.length).toBeLessThan(content.length + 1_000);
+  });
+
+  it('creates a fast managed project through the shared API with prompt-file input', async () => {
+    stub = await startProjectStubServer();
+    tempRoot = mkdtempSync(join(tmpdir(), 'fast-project-cli-'));
+    const prompt = join(tempRoot, 'prompt.txt'); writeFileSync(prompt, 'Inspect my package and ask useful questions.');
+    const result = await runCli(['project', 'create', '--fast', '--name', 'Fast test', '--prompt-file', prompt, '--json', '--daemon-url', stub.baseUrl]);
+    expect(result.code).toBe(0);
+    const sent = stub.requests.find((request) => request.method === 'POST' && request.url === '/api/projects');
+    expect(JSON.parse(sent!.body)).toMatchObject({ name: 'Fast test', metadata: { kind: 'other', projectMode: 'fast' }, conversationMode: 'design', pendingPrompt: 'Inspect my package and ask useful questions.' });
+    expect(JSON.parse(result.stdout).project.id).toBe('created-project');
+  });
+
   describe.each([false, true])('share error classification, json=%s', json => {
     const args = ['project', 'share', 'publish', 'project-1', '--path', 'nested/index.html', ...(json ? ['--json'] : [])];
 

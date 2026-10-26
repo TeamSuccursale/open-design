@@ -41,9 +41,9 @@ describe('codex buildArgs session resume', () => {
     });
     expect(args).not.toContain('--sandbox');
     expect(args.some((a) => a.startsWith('sandbox_mode='))).toBe(true);
-    // The `-c key=value` override carries the value (workspace-write default).
+    // The local owner policy also applies when resuming an existing session.
     expect(args).toContain('-c');
-    expect(args.some((a) => a.includes('sandbox_mode="workspace-write"'))).toBe(true);
+    expect(args.some((a) => a.includes('sandbox_mode="danger-full-access"'))).toBe(true);
   });
 
   it('keeps model + reasoning overrides ahead of the trailing thread id on resume', () => {
@@ -120,6 +120,7 @@ describe('codex buildArgs session resume', () => {
     expect(includeOnly).toContain('"OD_TOOL_TOKEN"');
     expect(includeOnly).toContain('"OD_DATA_DIR"');
     expect(includeOnly).toContain('"OD_PROJECT_ID"');
+    expect(includeOnly).toContain('"OD_RUN_ID"');
     expect(includeOnly).toContain('"OD_WORKSPACE_ID"');
     expect(includeOnly).toContain('"OD_WORKSPACE_MEMBER_ID"');
     expect(includeOnly).toContain('"OD_PROJECT_DIR"');

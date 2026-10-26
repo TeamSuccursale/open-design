@@ -235,6 +235,9 @@ export function attachCodexAppServerSession(
     if (fatalReported || aborted) return;
     fatalReported = true;
     onAgentEvent({ type: 'error', message });
+    // app-server remains alive after a rejected initialize/resume/start RPC.
+    // Closing stdin lets the run owner settle the visible failure immediately.
+    shutdown();
   }
 
   function startTurn(): void {
@@ -371,6 +374,16 @@ export function attachCodexAppServerSession(
       });
       return;
     }
+    // app-server broadcasts native subagent notifications on the parent's
+    // connection. A worker's completed turn must not close the coordinator,
+    // replace its rollout path, or render its messages as the final answer.
+    const notification = isRecord(frame.params) ? frame.params : {};
+    const notificationThread = isRecord(notification.thread) ? notification.thread : null;
+    const originThreadId = typeof notification.threadId === 'string' ? notification.threadId
+      : typeof notification.thread_id === 'string' ? notification.thread_id
+      : typeof notificationThread?.id === 'string' ? notificationThread.id : null;
+    const rootThreadId = threadId ?? resumeSessionId;
+    if (originThreadId && rootThreadId && originThreadId !== rootThreadId) return;
     if (frame.method === 'thread/started') {
       const params = isRecord(frame.params) ? frame.params : {};
       const thread = isRecord(params.thread) ? params.thread : null;

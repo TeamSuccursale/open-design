@@ -7,6 +7,11 @@ import { I18nProvider } from '../../src/i18n';
 import { DesignFilesBuildingState } from '../../src/components/design-files/DesignFilesBuildingState';
 import type { ProjectFile } from '../../src/types';
 import type { RunProgressStep } from '../../src/runtime/run-progress';
+const blockoutPreview = vi.hoisted(() => ({ comparison:vi.fn(),file:vi.fn() }));
+vi.mock('../../src/components/blockout/BlockoutFilePreview', () => ({
+  BlockoutComparisonPreview: (props: { path:string; onOpenComparison?:(path:string)=>void }) => { blockoutPreview.comparison(props); return <button onClick={() => props.onOpenComparison?.('documents/report/blockout-comparison.html')}>Canonical blockout comparison</button>; },
+  BlockoutFilePreview: (props: unknown) => { blockoutPreview.file(props); return <div>Canonical blockout page</div>; },
+}));
 
 function file(overrides: Partial<ProjectFile> = {}): ProjectFile {
   return {
@@ -88,9 +93,25 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
+  blockoutPreview.comparison.mockClear(); blockoutPreview.file.mockClear();
 });
 
 describe('DesignFilesBuildingState', () => {
+  it('uses the canonical editable host for a nested registered Blockout comparison during generation', () => {
+    const path = 'documents/registered/documents/report/blockout-comparison.html', onOpenFile = vi.fn();
+    renderState({ file:file({name:path,path}),onOpenFile });
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(blockoutPreview.comparison).toHaveBeenCalledWith(expect.objectContaining({ projectId:'p1',path,revision:1_756_000_000_130 }));
+    fireEvent.click(screen.getByRole('button', {name:'Canonical blockout comparison'}));
+    expect(onOpenFile).toHaveBeenCalledWith('documents/report/blockout-comparison.html');
+  });
+  it('keeps recognized Blockout page files out of the generated raw iframe', () => {
+    const path = 'blockouts/report/page-2.blockout.json';
+    renderState({file:file({name:path,path,kind:'code'})});
+    expect(screen.getByText('Canonical blockout page')).toBeTruthy();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(blockoutPreview.file).toHaveBeenCalledWith(expect.objectContaining({projectId:'p1',path}));
+  });
   it('previews the real file, busting on BOTH the mtime and the refresh key', () => {
     const { container } = renderState();
     const frame = container.querySelector('iframe');

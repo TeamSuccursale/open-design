@@ -41,11 +41,11 @@ export interface RegisterProjectConversationRoutesDeps extends RouteDeps<'db' | 
 }
 
 function normalizeChatSessionMode(value: unknown): ChatSessionMode {
-  return value === 'chat' || value === 'plan' ? value : 'design';
+  return value === 'chat' || value === 'plan' || value === 'blockout' ? value : 'design';
 }
 
 function isChatSessionMode(value: unknown): value is ChatSessionMode {
-  return value === 'chat' || value === 'design' || value === 'plan';
+  return value === 'chat' || value === 'design' || value === 'plan' || value === 'blockout';
 }
 
 /**
@@ -156,7 +156,7 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       req.body && Object.prototype.hasOwnProperty.call(req.body, 'sessionMode'),
     );
     if (hasExplicitSessionMode && !isChatSessionMode(req.body.sessionMode)) {
-      return sendApiError(res, 400, 'BAD_REQUEST', 'sessionMode must be one of design, chat, or plan');
+      return sendApiError(res, 400, 'BAD_REQUEST', 'sessionMode must be one of design, chat, plan, or blockout');
     }
     const requestedForkMessageId =
       typeof forkAfterMessageId === 'string' && forkAfterMessageId
@@ -237,7 +237,7 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
         ? req.body.sessionMode
         : sourceConversation && sourceConversation.projectId === req.params.id
           ? normalizeChatSessionMode(sourceConversation.sessionMode)
-          : 'design';
+          : 'blockout';
     const explicitTitle = typeof title === 'string' ? title.trim() || null : null;
     /*
      * 从一条回复新开的会话由 **daemon** 起名(「{源标题} (n)」,见
@@ -333,7 +333,7 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       Object.prototype.hasOwnProperty.call(req.body, 'sessionMode') &&
       !isChatSessionMode(req.body.sessionMode)
     ) {
-      return sendApiError(res, 400, 'BAD_REQUEST', 'sessionMode must be one of design, chat, or plan');
+      return sendApiError(res, 400, 'BAD_REQUEST', 'sessionMode must be one of design, chat, plan, or blockout');
     }
     const updated = updateConversation(db, req.params.cid, req.body || {});
     res.json({ conversation: updated });

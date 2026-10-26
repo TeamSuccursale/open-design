@@ -31,6 +31,7 @@ import { navigate } from '../router';
 import { useWorkspaceContext } from '../collab/useWorkspaceContext';
 
 export interface PluginLoopSubmit {
+  projectName?: string;
   prompt: string;
   pluginId: string | null;
   pluginSelectionProvenance?: 'automatic-default';

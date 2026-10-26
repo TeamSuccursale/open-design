@@ -4,10 +4,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { trackedCommentFilePaths } from '../../collab/local-comment-files.js';
 import { CommentPreparationError, prepareCommentIdentity } from '../../services/comment-preparation.js';
 import { ProjectPublicFileStopPendingError } from '../../collab/project-public-file-stop.js';
-import type { ProjectDeleteResponse } from '@open-design/contracts';
+import { blockoutDesignBridge, type ProjectDeleteResponse } from '@open-design/contracts';
 import { publicFileMutationHandler } from '../public-file-mutation-handler.js';
 import { createPublicFileMutations, type PublicFileMutations } from '../../collab/public-file-mutations.js';
-import { rm } from 'node:fs/promises';
+import { lstat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
 import {
@@ -1874,6 +1874,7 @@ function applyUrlPreviewBridgesToHtml(
   }
 
   let html = Buffer.isBuffer(transformed) ? transformed.toString('utf8') : transformed;
+  if (/\bdata-blockout-page-id\b/.test(html)) html = injectBeforeBodyClose(html, 'data-od-blockout-design-bridge', blockoutDesignBridge());
   html = injectAfterHeadOpen(html, 'data-od-preview-hidden-guard', buildPreviewVisibilityGuard());
   // Sanitize the <title> so Cmd+P -> "Save as PDF" produces a Teams-safe
   // filename. URL-load iframes cannot rely on the host rewriting the document
@@ -2056,7 +2057,7 @@ export function daemonSanitizeTitleInDoc(html: string): string {
 }
 
 function normalizeChatSessionMode(value: unknown): ChatSessionMode {
-  return value === 'chat' || value === 'plan' ? value : 'design';
+  return value === 'chat' || value === 'plan' || value === 'blockout' ? value : 'design';
 }
 
 function isDesignSystemLikeProject(project: any): boolean {
@@ -2102,6 +2103,9 @@ function cloneProjectMetadataForDuplicate(sourceProject: any): Record<string, un
       ? { ...sourceProject.metadata }
       : {};
   delete sourceMetadata._commentFiles;
+  delete sourceMetadata.collectionProjectId;
+  delete sourceMetadata.collectionDocumentId;
+  delete sourceMetadata.collectionProjectName;
   delete sourceMetadata.baseDir;
   delete sourceMetadata.projectLocationId;
   delete sourceMetadata.fromTrustedPicker;
@@ -3984,7 +3988,11 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // originalBaseDir / importedFrom='folder' — only the import path
       // owns those state fields.
       if (metadata && typeof metadata === 'object') {
+        if (metadata.projectMode === 'fast' && (req.body?.pluginId || req.body?.appliedPluginSnapshotId || req.body?.automaticStrategyTaskProfile)) return sendApiError(res, 400, 'BAD_REQUEST', 'Fast projects use the direct chat without a scenario pipeline');
+        if ('projectMode' in metadata && metadata.projectMode !== 'fast') return sendApiError(res, 400, 'BAD_REQUEST', 'Invalid projectMode');
+        if (metadata.projectMode === 'fast' && (metadata.kind !== 'other' || metadata.documentSetupIntent || metadata.userWorkingDir || metadata.linkedDirs?.length)) return sendApiError(res, 400, 'BAD_REQUEST', 'Fast projects start in managed storage without guided setup or linked source folders');
         if ('_commentFiles' in metadata) return sendApiError(res, 400, 'BAD_REQUEST', '_commentFiles is daemon-owned');
+        if (['collectionProjectId', 'collectionDocumentId', 'collectionProjectName'].some((key) => key in metadata)) return sendApiError(res, 400, 'BAD_REQUEST', 'Document collection ownership is daemon-owned');
         if ('baseDir' in metadata) {
           return sendApiError(
             res, 400, 'BAD_REQUEST',
@@ -4223,7 +4231,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const now = Date.now();
       const cid = requestedConversationId ?? randomId();
       const initialSessionMode = normalizeChatSessionMode(
-        req.body?.conversationMode ?? req.body?.sessionMode,
+        req.body?.conversationMode ?? req.body?.sessionMode ?? (metadata?.projectMode === 'fast' ? 'design' : 'blockout'),
       );
       const requestedAutomaticStrategyTaskProfile =
         req.body?.automaticStrategyTaskProfile === 'prototype'
@@ -4356,7 +4364,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             ...(exampleBinding ? { exampleBinding } : {}),
           }
         : baseProjectMetadata;
-      const defaultScenarioPluginId = defaultScenarioPluginIdForProjectMetadata(
+      const defaultScenarioPluginId = metadata?.projectMode === 'fast' ? null : defaultScenarioPluginIdForProjectMetadata(
         projectMetadata && typeof projectMetadata.kind === 'string'
           ? projectMetadata as Parameters<
               typeof defaultScenarioPluginIdForProjectMetadata
@@ -4369,13 +4377,13 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         && !automaticStrategyBinding;
       let resolveBody =
         explicitPlugin ? (req.body as Record<string, unknown>) : null;
-      if (!resolveBody && initialSessionMode === 'design' && !automaticStrategyBinding) {
+      if (!resolveBody && metadata?.projectMode !== 'fast' && initialSessionMode === 'design' && !automaticStrategyBinding) {
         if (defaultScenarioPluginId && getInstalledPlugin(db, defaultScenarioPluginId)) {
           resolveBody = { ...(req.body || {}), pluginId: defaultScenarioPluginId };
         }
       }
       let project;
-      let managedTemplateDirPrepared = false;
+      let managedProjectDirPrepared = false;
       const pluginResolutionState: {
         snapshot: ResolveSnapshotOk | null;
         failure: ResolveSnapshotError | null;
@@ -4425,6 +4433,23 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
             return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
           }
         }
+        // Guided document projects read their context before the first agent
+        // run. Materialize every managed working directory before committing
+        // its project row, rather than relying on a later file write/run.
+        // Imported roots remain owned by the existing location/import flow.
+        const baseDir = projectMetadata?.baseDir;
+        const managedRoot = !(typeof baseDir === 'string' && path.isAbsolute(baseDir));
+        if (managedRoot) {
+          const workingDirectory = resolveProjectDir(PROJECTS_DIR, id, projectMetadata);
+          let directoryExisted = true;
+          try { await lstat(workingDirectory); } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            directoryExisted = false;
+          }
+          await ensureProject(PROJECTS_DIR, id, projectMetadata);
+          // Compensation must never remove an existing folder or its files.
+          managedProjectDirPrepared = !directoryExisted;
+        }
         // Seed saved-template files before the atomic database commit. The
         // first Chat turn must never race a project row whose initial files are
         // still being copied. Managed directories are compensated below if a
@@ -4441,7 +4466,6 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
               projectCreatePreparationDeadline,
               'preparing template files',
             );
-            managedTemplateDirPrepared = externalProjectDir == null;
             await ensureProject(PROJECTS_DIR, id, projectMetadata);
             for (const f of tpl.files) {
               if (
@@ -4481,7 +4505,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         if (req.aborted || res.destroyed) {
           if (externalProjectDir) {
             await rm(externalProjectDir, { recursive: true, force: true }).catch(() => {});
-          } else if (managedTemplateDirPrepared) {
+          } else if (managedProjectDirPrepared) {
             await removeProjectDir(PROJECTS_DIR, id).catch(() => {});
           }
           return;
@@ -4560,11 +4584,11 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         })();
       } catch (err) {
         // Filesystem preparation cannot participate in SQLite's transaction.
-        // Compensate external locations and managed template staging on any
+        // Compensate external locations and newly prepared managed roots on any
         // deadline, disconnect, or database transaction failure.
         if (externalProjectDir) {
           await rm(externalProjectDir, { recursive: true, force: true }).catch(() => {});
-        } else if (managedTemplateDirPrepared) {
+        } else if (managedProjectDirPrepared) {
           await removeProjectDir(PROJECTS_DIR, id).catch(() => {});
         }
         if (pluginResolutionState.failure) {
@@ -5260,6 +5284,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       // patching other metadata without ever losing their import root.
       if (patch.metadata === null) {
         const existing = getProject(db, req.params.id);
+        if (existing?.metadata?.collectionProjectId) return sendApiError(res, 400, 'BAD_REQUEST', 'Document collection ownership cannot be cleared');
         if (existing?.metadata?._commentFiles) return sendApiError(res, 400, 'BAD_REQUEST', '_commentFiles is daemon-owned');
         if (existing?.metadata?.strategyBinding) {
           return sendApiError(
@@ -5289,6 +5314,10 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       if (patch.metadata && typeof patch.metadata === 'object') {
         const existing = getProject(db, req.params.id);
         const existingMeta = existing?.metadata;
+        for (const key of ['collectionProjectId', 'collectionDocumentId', 'collectionProjectName']) {
+          if (key in patch.metadata && patch.metadata[key] !== existingMeta?.[key]) return sendApiError(res, 400, 'BAD_REQUEST', 'Document collection ownership is daemon-owned');
+          if (existingMeta?.[key] !== undefined) patch.metadata[key] = existingMeta[key];
+        }
         if ('_commentFiles' in patch.metadata) return sendApiError(res, 400, 'BAD_REQUEST', '_commentFiles is daemon-owned');
         if (existingMeta?._commentFiles) patch.metadata._commentFiles = existingMeta._commentFiles;
         if (
@@ -8105,6 +8134,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
 }
 
 export interface RegisterProjectUploadRoutesDeps extends RouteDeps<'db' | 'http' | 'uploads' | 'node' | 'paths' | 'projectStore' | 'projectFiles'> {
+  history?: { store(projectId: string, root: string): Promise<{ capture(paths?: string[]): Promise<unknown> }> };
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Durable first-open placeholder stamp lookup. */
@@ -8117,7 +8147,7 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
   const { handleProjectUpload } = ctx.uploads;
   const { PROJECTS_DIR } = ctx.paths;
   const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId } = ctx.projectStore;
-  const { readProjectFile } = ctx.projectFiles;
+  const { readProjectFile, resolveProjectDir } = ctx.projectFiles;
   const { fs } = ctx.node;
   const authorizeProjectRequest =
     ctx.authorizeProjectRequest ??
@@ -8140,6 +8170,16 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
 
   app.post(
     '/api/projects/:id/upload',
+    async (req, res, next) => {
+      if (!ctx.history) { next(); return; }
+      try {
+        if (!await authorizeProjectRequest(req, res, String(req.params.id), { mode: 'write', capability: 'writeFiles' })) return;
+        const project = getProject(db, req.params.id);
+        if (!project) { sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'Project not found'); return; }
+        await ctx.history.store(project.id, resolveProjectDir(PROJECTS_DIR, project.id, project.metadata));
+        next();
+      } catch { sendApiError(res, 503, 'HISTORY_FAILED', 'Project recovery is unavailable'); }
+    },
     handleProjectUpload,
     async (req, res) => {
       try {
@@ -8196,6 +8236,10 @@ export function registerProjectUploadRoutes(app: Express, ctx: RegisterProjectUp
         }
         /** @type {import('@open-design/contracts').UploadProjectFilesResponse} */
         const body = { files: out };
+        if (ctx.history && project && out.length) {
+          const history = await ctx.history.store(project.id, resolveProjectDir(PROJECTS_DIR, project.id, project.metadata));
+          await history.capture(out.map((file) => file.path));
+        }
         res.json(body);
       } catch {
         sendApiError(res, 500, 'INTERNAL_ERROR', 'upload failed');

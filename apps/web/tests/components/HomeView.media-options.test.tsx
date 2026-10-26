@@ -630,7 +630,10 @@ describe('HomeView media composer options', () => {
 });
 
 function renderHome(overrides: Partial<React.ComponentProps<typeof HomeView>> = {}) {
-  return render(<HomeView {...homeProps(overrides)} />);
+  const rendered = render(<HomeView {...homeProps(overrides)} />);
+  // Specialized media creation is reached deliberately from the document entry.
+  fireEvent.click(screen.getByTestId('home-other-creations'));
+  return rendered;
 }
 
 function homeProps(overrides: Partial<React.ComponentProps<typeof HomeView>> = {}): React.ComponentProps<typeof HomeView> {

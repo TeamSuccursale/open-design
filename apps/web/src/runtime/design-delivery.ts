@@ -1,4 +1,5 @@
 import type { ChatSessionMode } from '@open-design/contracts';
+import { isHeaderFooterDraftDeliveryReceipt } from '@open-design/contracts';
 import {
   containsQuestionFormAsk,
   containsUnrenderableQuestionForm,
@@ -87,7 +88,7 @@ function hasLiveArtifactDelivery(events: AgentEvent[] | undefined): boolean {
 export function resolveDesignDeliveryOutcome(
   input: DesignDeliveryInput,
 ): DesignDeliveryOutcome {
-  if (input.sessionMode !== 'design' || input.runStatus !== 'succeeded') {
+  if ((input.sessionMode !== 'design' && input.sessionMode !== 'blockout') || input.runStatus !== 'succeeded') {
     return 'not_required';
   }
   if (isIntermediateDesignTurn(input.content, input.events)) {
@@ -98,6 +99,7 @@ export function resolveDesignDeliveryOutcome(
     input.traceObjectFileCount > 0 ||
     (input.artifactCount ?? 0) > 0 ||
     input.persistenceSucceeded ||
+    input.events?.some((event) => event.kind === 'diagnostic' && isHeaderFooterDraftDeliveryReceipt(event)) ||
     hasLiveArtifactDelivery(input.events)
   ) {
     return 'delivered';
@@ -127,7 +129,7 @@ export function designDeliveryVerificationPending(
     | 'traceObjectFiles'
   >,
 ): boolean {
-  if (message.sessionMode !== 'design' || message.runStatus !== 'succeeded') return false;
+  if ((message.sessionMode !== 'design' && message.sessionMode !== 'blockout') || message.runStatus !== 'succeeded') return false;
   if (message.resultDeliveryState) return false;
   if (isIntermediateDesignTurn(message.content, message.events)) return false;
   return message.producedFiles === undefined || message.traceObjectFiles === undefined;
@@ -158,7 +160,7 @@ export function designDeliveryReconciliationStale(
   >,
   now: number = Date.now(),
 ): boolean {
-  if (message.sessionMode !== 'design' || message.runStatus !== 'succeeded') return false;
+  if ((message.sessionMode !== 'design' && message.sessionMode !== 'blockout') || message.runStatus !== 'succeeded') return false;
   if (message.resultDeliveryState) return false;
   // The #6505 legacy shape can lack `endedAt` entirely (rows persisted before
   // `endedAt` existed), so bound the reconciliation age from any persisted

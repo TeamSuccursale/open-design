@@ -163,7 +163,7 @@ async function startRun(): Promise<DaemonStreamOptions> {
 
 async function createPersonalDocument() {
   fireEvent.click(screen.getByTestId('workspace-add-tab'));
-  fireEvent.click(await screen.findByRole('button', { name: /New document/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /New Markdown note/i }));
   await waitFor(() => {
     expect(fileRequests.some((request) => request.method === 'POST' && request.names[0] === 'document.md'))
       .toBe(true);
@@ -259,6 +259,8 @@ beforeEach(() => {
     if (url.pathname === `/api/projects/${project.id}`) {
       return Response.json({ project, resolvedDir: '/workspace/owner-test' });
     }
+    if (url.pathname === `/api/projects/${project.id}/intake/settings`) return Response.json({ version: 1, sourceDirs: [], outputDir: 'prepared-images', projectDir: '/workspace/owner-test', configPath: '/workspace/owner-test/intake.config.json', catalogPath: '/workspace/owner-test/intake-assets/catalog.json', outputPath: '/workspace/owner-test/prepared-images', uploadPath: '/workspace/owner-test/sources' });
+    if (url.pathname === `/api/projects/${project.id}/intake`) return Response.json({ version: 1, documents: [], assets: [{ imagePath: 'prepared-images/doc/page-0001.png' }, { imagePath: 'prepared-images/doc/crop.png', tableDataPath: 'prepared-images/doc/crop.table.json' }] });
     return Response.json({});
   }));
 });
@@ -271,6 +273,20 @@ afterEach(() => {
 });
 
 describe('ProjectView run-produced file ownership (OPEND-2928)', () => {
+  it.each([false, true])('keeps concurrent background intake out of outputs and auto-open while retaining real deliverables: %s', async (hasOutput) => {
+    const options = await startRun();
+    const intakeNames = ['intake.config.json', 'intake-assets/catalog.json', 'prepared-images/doc/page-0001.png', 'prepared-images/doc/crop.png', 'prepared-images/doc/crop.table.json'];
+    files = [...files, ...intakeNames.map((name) => ({ ...projectFile(name), kind: name.endsWith('.png') ? 'image' as const : 'code' as const, mime: name.endsWith('.png') ? 'image/png' : 'application/json' }))];
+    const outputs = hasOutput ? ['generated.png', 'outputs/report.json'] : [];
+    if (hasOutput) files.push({ ...projectFile('generated.png'), kind: 'image', mime: 'image/png' }, { ...projectFile('outputs/report.json'), kind: 'code', mime: 'application/json' });
+    await finishRun(options, [...intakeNames, ...outputs]);
+    for (const name of intakeNames) {
+      expect(screen.getByTestId('project-files').textContent).toContain(name);
+      expect(screen.queryByRole('tab', { name: new RegExp(name.replaceAll('.', '\\.'), 'i') })).toBeNull();
+    }
+    if (hasOutput) await waitFor(() => expect(screen.getByRole('tab', { name: /generated\.png/i })).toHaveAttribute('aria-selected', 'true'));
+    await expectAttribution(outputs);
+  });
   it('keeps a concurrent user-created document in the project but out of the Agent message and trace', async () => {
     const options = await startRun();
     await createPersonalDocument();

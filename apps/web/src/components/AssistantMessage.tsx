@@ -82,6 +82,8 @@ import {
   type QuestionFormInteraction,
 } from "./QuestionForm";
 import type { VisualStyleContext } from "../runtime/visual-style-catalog";
+import { BlockoutQuestionBridge } from './blockout/BlockoutQuestionBridge';
+import { HeaderFooterQuestionBridge } from './header-footer/HeaderFooterQuestionBridge';
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
 import { stripInternalControlMarkers } from "../artifacts/internal-markers";
 import {
@@ -105,6 +107,7 @@ import type { Dict } from "../i18n/types";
 import { agentDisplayName, agentIconId, exactAgentDisplayName } from "../utils/agentLabels";
 import { AgentIcon } from "./AgentIcon";
 import { filterImplicitProducedFiles } from "../produced-files";
+import { filterIntakeOwnedFiles } from '../intake-owned-files';
 import type {
   AgentEvent,
   ChatAttachment,
@@ -219,6 +222,8 @@ interface Props {
   nextUserContent?: string;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled?: boolean;
+  /** Document preparation waits for a real answer; ordinary chats keep their existing timeout. */
+  questionFormAutoContinueAfterTimeout?: boolean;
   /**
    * 更早轮次已经出现过的那份清单(ChatPane 用 `previousTodosByAssistantMessageId` 算)。
    *
@@ -313,6 +318,7 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'errorCardOwnerId',
   'nextUserContent',
   'questionFormSubmitDisabled',
+  'questionFormAutoContinueAfterTimeout',
   'forking',
   'shareToOpenDesignBusy',
   'suppressDirectionForms',
@@ -423,6 +429,7 @@ function AssistantMessageImpl({
   nextUserContent,
   onSubmitQuestionForm,
   questionFormSubmitDisabled = false,
+  questionFormAutoContinueAfterTimeout = true,
   previousTodos,
   onContinueRemainingTasks,
   onForkFromMessage,
@@ -731,7 +738,7 @@ function AssistantMessageImpl({
     () => deriveFileOps(displayEvents, fileOpScope),
     [displayEvents, fileOpScope],
   );
-  const rawProduced = message.producedFiles ?? [];
+  const rawProduced = useMemo(() => filterIntakeOwnedFiles(message.producedFiles ?? [], projectFiles), [message.producedFiles, projectFiles]);
   const liveDeliveries = useMemo(() => liveArtifactDeliveries(message.events), [message.events]);
   /**
    * 这一轮 agent 自己声明的「显示什么」—— `<od-focus …/>` 的 `show`。
@@ -802,7 +809,7 @@ function AssistantMessageImpl({
        * 下一步锚点和插件目录扫描,它们在没声明的回合里必须还有目标。产物卡那条
        * 相反的规则挂在 `declaredArtifactFiles` 上。
        */
-      const merged = mergeProjectFiles(baseFiles, linkedFiles);
+      const merged = filterIntakeOwnedFiles(mergeProjectFiles(baseFiles, linkedFiles), projectFiles);
       const narrowed = narrowProducedFilesToFocus(merged, artifactFocus.show);
       return narrowed === merged ? merged : [...narrowed];
     },
@@ -843,15 +850,15 @@ function AssistantMessageImpl({
   // 卡片精简了、汇总行还写着 6 个文件,同一块面板自己跟自己不一致。
   const summaryArtifactOps = useMemo(
     () => summaryArtifactOpsForProducedFiles(
-      fileOps,
+      filterIntakeOwnedFiles(fileOps, projectFiles),
       message.producedFiles === undefined
         ? undefined
         : artifactFocus.show
-          ? [...declaredArtifactCards(message.producedFiles, artifactFocus.show)]
-          : message.producedFiles,
+          ? [...declaredArtifactCards(produced, artifactFocus.show)]
+          : produced,
       artifactFocus.show,
     ),
-    [artifactFocus.show, fileOps, message.producedFiles],
+    [artifactFocus.show, fileOps, message.producedFiles, produced, projectFiles],
   );
   /**
    * 这一轮的产物面板喂什么 —— **一条消息只算一次**,交给唯一那个组件。
@@ -1274,6 +1281,7 @@ function AssistantMessageImpl({
           questionFormSubmitDisabled={
             questionFormSubmitDisabled || strategyBlockedNotice !== null
           }
+          questionFormAutoContinueAfterTimeout={questionFormAutoContinueAfterTimeout}
           strategyBlockedNotice={strategyBlockedNotice}
           visualStyleContext={visualStyleContextForProjectKind(projectKind)}
           projectId={projectId}
@@ -2941,6 +2949,7 @@ function ProseBlock({
   suppressDirectionForms,
   onSubmitQuestionForm,
   questionFormSubmitDisabled,
+  questionFormAutoContinueAfterTimeout,
   strategyBlockedNotice = null,
   visualStyleContext,
   projectId,
@@ -2965,6 +2974,7 @@ function ProseBlock({
   projectResolvedDir?: string | null;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled: boolean;
+  questionFormAutoContinueAfterTimeout: boolean;
   /** Localized blocked-task notice; non-null terminates form interaction. */
   strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
@@ -3131,6 +3141,7 @@ function ProseBlock({
             interactive={questionFormAnswerable}
             onSubmit={onSubmitQuestionForm}
             submitDisabled={questionFormSubmitDisabled}
+            autoContinueAfterTimeout={questionFormAutoContinueAfterTimeout}
             strategyBlockedNotice={strategyBlockedNotice}
             visualStyleContext={visualStyleContext}
           />
@@ -3156,6 +3167,7 @@ function FormBlock({
   interactive,
   onSubmit,
   submitDisabled,
+  autoContinueAfterTimeout,
   strategyBlockedNotice = null,
   visualStyleContext,
 }: {
@@ -3167,6 +3179,7 @@ function FormBlock({
   interactive: boolean;
   onSubmit?: QuestionFormSubmitHandler;
   submitDisabled: boolean;
+  autoContinueAfterTimeout: boolean;
   /** Localized blocked-task notice rendered under the disabled form. */
   strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
@@ -3529,7 +3542,37 @@ function FormBlock({
 
   return (
     <>
-      <QuestionFormView
+      {form.headerFooterTarget && projectId ? <HeaderFooterQuestionBridge
+        projectId={projectId}
+        conversationId={conversationId}
+        occurrenceKey={formKey ?? `${assistantMessageId}:${form.id}`}
+        form={form}
+        interactive={interactive}
+        unanswered={nextUserContent !== undefined && !submittedFromHistory}
+        draftAnswers={draftAnswers}
+        onDraftChange={updateDraftAnswers}
+        onAnswerChange={handleAnswerChange}
+        onInteraction={handleInteraction}
+        onSubmit={onSubmit ? (...args) => handleSubmit(...args) : undefined}
+        submitDisabled={submitDisabled}
+        submitting={submitting}
+        visualStyleContext={visualStyleContext}
+      /> : form.blockoutTarget && projectId ? <BlockoutQuestionBridge
+        projectId={projectId}
+        conversationId={conversationId}
+        occurrenceKey={formKey ?? `${assistantMessageId}:${form.id}`}
+        form={form}
+        interactive={interactive}
+        unanswered={nextUserContent !== undefined && !submittedFromHistory}
+        draftAnswers={draftAnswers}
+        onDraftChange={updateDraftAnswers}
+        onAnswerChange={handleAnswerChange}
+        onInteraction={handleInteraction}
+        onSubmit={onSubmit ? (...args) => handleSubmit(...args) : undefined}
+        submitDisabled={submitDisabled}
+        submitting={submitting}
+        visualStyleContext={visualStyleContext}
+      /> : <QuestionFormView
         form={form}
         interactive={interactive}
         unanswered={nextUserContent !== undefined && !submittedFromHistory}
@@ -3538,10 +3581,11 @@ function FormBlock({
         onAnswerChange={handleAnswerChange}
         onInteraction={handleInteraction}
         onSubmit={onSubmit ? (...args) => void handleSubmit(...args) : undefined}
-        submitDisabled={submitDisabled || submitting}
+        submitDisabled={submitDisabled}
+        submitting={submitting}
         visualStyleContext={visualStyleContext}
-        autoContinueAfterTimeout
-      />
+        autoContinueAfterTimeout={autoContinueAfterTimeout}
+      />}
       {strategyBlockedNotice ? (
         <div
           className="qf-blocked-notice"

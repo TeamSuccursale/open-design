@@ -56,6 +56,7 @@ import { resolve } from 'node:path';
 import type { ReactElement } from 'react';
 import type { ChatMessage, PersistedAgentEvent } from '@open-design/contracts';
 import { I18nProvider } from '../../../src/i18n';
+import { openExecutionDetails } from '../../helpers/open-execution-details';
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
 import type {
@@ -311,7 +312,7 @@ describe('接线 · 数会自己数上去,但不从零涨上来', () => {
   });
 
   it('整条真实链路:帧一批批到,同一个槽跟着数到新读数', () => {
-    const { container, rerender } = render(live(eventsUpTo([50])));
+    const { container, rerender } = render(live(eventsUpTo([50]))); openExecutionDetails(container);
     expect(thoughtsSlot(container)).toEqual(['50 tokens']);
 
     /*
@@ -335,7 +336,7 @@ describe('接线 · 数会自己数上去,但不从零涨上来', () => {
    * —— 和入场动画每次重挂都重放是同一类毛病,一页几轮跑完的对话会同时抖起来。
    */
   it('刷新:整批事件一次性到,首帧就是落定的数,不从零涨', () => {
-    const { container } = render(live(eventsUpTo([50, 1_240, 3_278])));
+    const { container } = render(live(eventsUpTo([50, 1_240, 3_278]))); openExecutionDetails(container);
     // 这一行**在任何 effect / timer 跑之前**执行
     expect(thoughtsSlot(container)).toEqual(['3.3k tokens']);
     // 时间往前推也不会再涨 —— 挂载没有一段可数的间,自增压根没启动

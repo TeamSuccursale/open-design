@@ -1443,7 +1443,7 @@ export interface ConnectorActionResult {
 }
 
 function popupBlockedMessage(): string {
-  return 'Popup blocked. Allow popups for OpenDesign and try again.';
+  return 'Popup blocked. Allow popups for MelilloDesign and try again.';
 }
 
 export async function openExternalUrl(url: string): Promise<boolean> {
@@ -3500,17 +3500,22 @@ export async function openFolderDialog(options: { throwOnError?: boolean } = {})
 
 // Probe whether a local directory still exists on disk. Used by the composer
 // to flag a working directory in red the moment its folder is deleted.
-export async function dirExists(path: string): Promise<boolean> {
+export async function dirExists(path: string, options: { signal?: AbortSignal; throwOnError?: boolean } = {}): Promise<boolean> {
   try {
     const resp = await fetch('/api/dir-exists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
+      signal: options.signal,
     });
-    if (!resp.ok) return true; // can't tell → don't false-flag
+    if (!resp.ok) {
+      if (options.throwOnError) throw new Error('Could not check the selected folder');
+      return true; // can't tell → don't false-flag
+    }
     const data = await resp.json();
     return data?.exists !== false;
-  } catch {
+  } catch (error) {
+    if (options.throwOnError) throw error;
     return true; // daemon unreachable → don't false-flag
   }
 }

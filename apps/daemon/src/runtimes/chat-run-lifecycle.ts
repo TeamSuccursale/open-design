@@ -194,6 +194,56 @@ export function runtimeEmissionCountsAsAgentProgress(
   return true;
 }
 
+/**
+ * Claude's raw stdout, status updates, token accounting, and thinking can all
+ * keep arriving while a provider is stuck before its first real action. They
+ * remain visible to the user, but must not reset the bounded inactivity clock.
+ * A separate first-output clock may still accept thinking as evidence that the
+ * initial request reached the model. This predicate governs useful progress
+ * after startup, not whether extended thinking is displayed or permitted.
+ */
+export function claudeEventCountsAsActionableProgress(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const event = payload as { type?: unknown; delta?: unknown; text?: unknown };
+  switch (event.type) {
+    case 'text_delta': {
+      const text = typeof event.delta === 'string' ? event.delta : event.text;
+      return typeof text === 'string' && text.trim().length > 0;
+    }
+    case 'tool_use':
+    case 'tool_result':
+    case 'artifact':
+    case 'turn_end':
+    case 'usage': // The parser emits usage for the terminal native result frame.
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Process success is insufficient for an explicitly requested production turn.
+ * Keep the expectation host-owned: a conversational answer, context scan, or
+ * clarifying question is allowed to finish without writing a file. Existing
+ * files and reads are not delivery evidence; the caller passes artifacts
+ * actually produced by this attempt after resolving the filesystem outcome.
+ */
+export function claudeProductionEndedWithoutArtifact(params: {
+  agentId: string;
+  exitCode: number | null;
+  cancelRequested: boolean;
+  expectsArtifact: boolean;
+  artifactProducedThisRun: boolean;
+  awaitingUserInput: boolean;
+}): boolean {
+  return params.agentId === 'claude'
+    && params.exitCode === 0
+    && !params.cancelRequested
+    && params.expectsArtifact
+    && !params.artifactProducedThisRun
+    && !params.awaitingUserInput;
+}
+
 export function resolveChatRunShutdownGraceMs() {
   const raw = Number(process.env.OD_CHAT_RUN_SHUTDOWN_GRACE_MS);
   if (!Number.isFinite(raw)) return 3_000;

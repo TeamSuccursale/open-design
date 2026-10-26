@@ -17,6 +17,7 @@ import { injectMotionSourcePlayer, markMotionHostedPreview } from '@open-design/
  * render its own counter / dots. Persisted legacy decks remain supported by
  * the injected keyboard/hash/DOM adapters below.
  */
+import { blockoutDesignBridge } from '@open-design/contracts';
 import {
   DECK_EXPLICIT_SLIDE_SELECTOR,
   DECK_LEGACY_SCREEN_LABEL_RE_SOURCE,
@@ -432,7 +433,7 @@ export function buildSrcdoc(
   // toggles a `.tw-panel`'s visibility in response to host postMessage. Tying
   // it to a per-call option would force iframe srcdoc regeneration (and a
   // visible flash) every time the host toggle flips.
-  const withTweaks = injectTweaksBridge(withEdit);
+  const withTweaks = injectTweaksBridge(/\bdata-blockout-page-id\b/.test(withEdit) ? injectBeforeBodyEnd(withEdit, blockoutDesignBridge()) : withEdit);
   const withTransport = injectSrcdocTransportActivationBridge(
     injectExportCaptureBridge(injectSnapshotBridge(injectPreviewContentSizeBridge(
       withTweaks,

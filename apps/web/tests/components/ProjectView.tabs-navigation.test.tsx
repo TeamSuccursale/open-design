@@ -22,6 +22,9 @@ import {
   loadTabs,
 } from '../../src/state/projects';
 import { fetchPreviewComments, fetchProjectFiles } from '../../src/providers/registry';
+const documentNavigation = vi.hoisted(() => ({ document: null as unknown, refresh: vi.fn() }));
+vi.mock('../../src/components/project-documents/useProjectDocuments', () => ({ useProjectDocuments: () => ({ documents: documentNavigation.document ? [documentNavigation.document] : [], selectedDocumentId: null, loading: false, error: false, refresh: documentNavigation.refresh }) }));
+vi.mock('../../src/components/project-documents/ProjectDocumentsPanel', () => ({ ProjectDocumentsPanel: ({ onOpen }: { onOpen: (document: unknown) => Promise<void> }) => <button onClick={() => void onOpen(documentNavigation.document)}>Open registered document</button> }));
 
 vi.mock('../../src/i18n', () => ({
   useI18n: () => ({
@@ -103,11 +106,13 @@ vi.mock('../../src/components/AvatarMenu', () => ({
 
 vi.mock('../../src/components/FileWorkspace', () => ({
   DESIGN_SYSTEM_TAB: '__design_system__',
-  FileWorkspace: ({ tabsState, onTabsStateChange, designSystemProject, openRequest }: {
+  FileWorkspace: ({ tabsState, onTabsStateChange, designSystemProject, openRequest, focusMode, onFocusModeChange }: {
     tabsState: { tabs: string[]; active: string | null };
     onTabsStateChange: (state: { tabs: string[]; active: string | null }) => void;
     designSystemProject?: DesignSystemSummary | null;
     openRequest?: { name: string; nonce: number } | null;
+    focusMode?: boolean;
+    onFocusModeChange?: (focused: boolean) => void;
   }) => {
     useEffect(() => {
       if (!openRequest?.name) return;
@@ -118,7 +123,9 @@ vi.mock('../../src/components/FileWorkspace', () => ({
       onTabsStateChange({ tabs, active: openRequest.name });
     }, [onTabsStateChange, openRequest?.name, openRequest?.nonce, tabsState.tabs]);
     return (
-      <div data-testid="file-workspace">
+      <div className="workspace" data-testid="file-workspace">
+        <output data-testid="workspace-focus-mode">{String(Boolean(focusMode))}</output>
+        <button onClick={() => onFocusModeChange?.(true)}>Focus files</button>
         <output data-testid="workspace-active-tab">{tabsState.active ?? ''}</output>
         <output data-testid="workspace-design-system-id">{designSystemProject?.id ?? ''}</output>
         <button
@@ -210,6 +217,7 @@ function renderProjectView(props?: {
 
 describe('ProjectView tab URL hydration', () => {
   beforeEach(() => {
+    documentNavigation.document = null;
     mockedListConversations.mockResolvedValue([conversation]);
     mockedCreateConversation.mockResolvedValue(conversation);
     mockedListMessages.mockResolvedValue([]);
@@ -221,6 +229,36 @@ describe('ProjectView tab URL hydration', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it('opens and closes preparation files without hiding the preparation chat', async () => {
+    renderProjectView({ project: { ...project, metadata: { kind: 'other', intent: 'document', documentSetupIntent: { kind: 'report', subtype: 'Survey report', purpose: '', contextRoots: [], imageIntakeConsent: false } } } });
+    await screen.findByTestId('chat-pane');
+    const toggle = screen.getByTestId('chat-collapse-toggle');
+    const split = toggle.closest('[data-preparation-files-open]')!;
+    const chatSlot = screen.getByTestId('chat-pane').parentElement!;
+    expect(split.getAttribute('data-preparation-files-open')).toBe('false');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(chatSlot.getAttribute('aria-hidden')).not.toBe('true');
+    fireEvent.click(toggle);
+    expect(split.getAttribute('data-preparation-files-open')).toBe('true');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByTestId('workspace-focus-mode').textContent).toBe('false');
+    expect(chatSlot.getAttribute('aria-hidden')).not.toBe('true');
+    fireEvent.click(toggle);
+    expect(split.getAttribute('data-preparation-files-open')).toBe('false');
+    expect(chatSlot.getAttribute('aria-hidden')).not.toBe('true');
+  });
+
+  it('turns a file-focus request during preparation into a split view and never collapses chat', async () => {
+    renderProjectView({ project: { ...project, metadata: { kind: 'other', intent: 'document', documentSetupIntent: { kind: 'report', subtype: 'Survey report', purpose: '', contextRoots: [], imageIntakeConsent: false } } } });
+    await screen.findByTestId('chat-pane');
+    fireEvent.click(screen.getByRole('button', { name: 'Focus files' }));
+    const toggle = screen.getByTestId('chat-collapse-toggle');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.closest('[data-preparation-files-open]')?.getAttribute('data-preparation-files-open')).toBe('true');
+    expect(screen.getByTestId('workspace-focus-mode').textContent).toBe('false');
+    expect(screen.getByTestId('chat-pane').parentElement?.getAttribute('aria-hidden')).not.toBe('true');
   });
 
   it('syncs a persisted active tab to the URL before the file list has hydrated', async () => {
@@ -241,6 +279,18 @@ describe('ProjectView tab URL hydration', () => {
         { replace: true },
       );
     });
+  });
+  it('opens a registered document entry without carrying the previous image into its new conversation', async () => {
+    const entry = 'documents/booklet/blockout-comparison.html';
+    documentNavigation.document = { id: 'booklet', projectId: project.id, workspaceProjectId: project.id, name: 'Booklet', kind: 'document', workingDirectory: '/booklet', folderMode: 'managed', availability: 'available', conversationIds: ['conv-booklet'], entryFile: entry, archivedAt: null, createdAt: '', updatedAt: '' };
+    mockedLoadTabs.mockResolvedValue({ tabs: ['assets/mozilla-preview.png'], active: 'assets/mozilla-preview.png' });
+    mockedListConversations.mockResolvedValue([conversation, { ...conversation, id: 'conv-booklet' }]);
+    renderProjectView(); await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe('assets/mozilla-preview.png'));
+    fireEvent.click(screen.getByRole('button', { name: 'Documents' })); mockedNavigate.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Open registered document' }));
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe(entry));
+    await waitFor(() => expect(mockedNavigate).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'conv-booklet', fileName: entry }), expect.anything()));
+    expect(mockedNavigate.mock.calls.filter(([route]) => route.kind === 'project' && route.conversationId === 'conv-booklet').every(([route]) => route.kind === 'project' && route.fileName === entry)).toBe(true);
   });
 
   it('passes brand-extracted backing systems to the in-project Design System tab', async () => {

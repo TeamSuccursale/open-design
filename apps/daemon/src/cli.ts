@@ -16,10 +16,16 @@ import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { runDeliverableSyntaxToolCli } from './tools-deliverable-syntax-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
+import { runProjectIntakeCli } from './services/project-intake-cli.js';
+import { runDocumentSetupCli } from './services/document-setup-cli.js';
+import { runBlockoutCli } from './services/blockout-cli.js';
+import { handleProjectHistoryCli } from './services/project-history-cli.js';
+import { runDocumentOverviewReadingCli } from './services/document-overview-reading-cli.js';
 import { byokProviderFromCliOptions } from './runtimes/byok-cli.js';
 import { BYOK_OPENCODE_AGENT_ID } from './runtimes/byok-opencode.js';
 import { redactSecrets } from './connectionTest.js';
 import { SidecarFactory } from '@open-design/sidecar';
+import { Agent as HttpAgent } from 'undici';
 import { APP_KEYS, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
 import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, mediaFailureNextStep, parseApiFailureDetail } from '@open-design/contracts';
 import type { ArtifactLintFinding, LintArtifactCliResultEnvelope, LintArtifactResponse, LintFailOn } from '@open-design/contracts';
@@ -254,7 +260,7 @@ const PROJECT_STRING_FLAGS = new Set([
   'pending-prompt', 'project', 'conversation', 'message', 'prompt',
   'prompt-file', 'task-execution', 'path', 'dir', 'as', 'url',
   'client-request-id',
-  'agent', 'model', 'service-tier', 'snapshot-id', 'inputs', 'grant-caps', 'editor',
+  'agent', 'model', 'reasoning', 'service-tier', 'snapshot-id', 'inputs', 'grant-caps', 'editor',
   'title', 'label', 'against', 'seed-from', 'fork-after', 'mode',
   'source', 'out',
 ]);
@@ -263,7 +269,7 @@ const PROJECT_RESOURCE_STRING_FLAGS = new Set([
   'workspace',
   'workspace-member',
 ]);
-const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow', 'thumbnail']);
+const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow', 'thumbnail', 'fast']);
 const RUN_START_STRING_FLAGS = new Set([
   ...PROJECT_RESOURCE_STRING_FLAGS,
   'byok-protocol', 'byok-base-url', 'byok-api-version', 'byok-key-env',
@@ -402,6 +408,15 @@ const PLUGIN_LIST_BOOLEAN_FLAGS = new Set([
 ]);
 
 const SUBCOMMAND_MAP = {
+  blockout: runBlockoutCli,
+  history: handleProjectHistoryCli,
+  documents: async (args: string[]) => (await import('./services/project-documents-cli.js')).runProjectDocumentsCli(args),
+  'header-footer': async (args: string[]) => (await import('./header-footer-cli.js')).runHeaderFooterCli(args),
+  'document-overview-reading': runDocumentOverviewReadingCli,
+  'document-research': async (args: string[]) => (await import('./services/document-research-cli.js')).runDocumentResearchCli(args),
+  'custodian': async (args: string[]) => (await import('./services/project-custodians-cli.js')).runProjectCustodiansCli(args),
+  'document-setup': runDocumentSetupCli,
+  intake: runProjectIntakeCli,
   agent: runAgent,
   artifacts: runArtifacts,
   media: runMedia,
@@ -1046,10 +1061,11 @@ if (first && SUBCOMMAND_MAP[first]) {
   await SUBCOMMAND_MAP[first](rest);
   // Respect a non-zero exit code a handler set via process.exitCode (e.g. a
   // failed `od resource get`); default to 0 when it left it unset.
-  process.exit(process.exitCode ?? 0);
-}
-
-if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
+  // Intake and run streaming drain their HTTP clients and let Windows finish
+  // libuv close callbacks and flush stdout naturally. Forcing process.exit
+  // while those callbacks are pending can abort an otherwise successful run.
+  if (first !== 'intake' && first !== 'run') process.exit(process.exitCode ?? 0);
+} else if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
   runLiveArtifactsToolCli(argv.slice(2))
     .then(({ exitCode }) => {
       process.exitCode = exitCode;
@@ -1191,6 +1207,8 @@ function printRootHelp() {
 
   od research search --query <text> [--max-sources 5] [--daemon-url <url>]
       Run agent-callable Tavily research through the local daemon.
+  od intake <scan|list|search|folders|configure|propose-svg|vectors|register-svg|prefer-svg> --project <id> [--json]
+      Extract and search project PDF figures through the local daemon.
 
   od plugin <list|info|install|uninstall|apply|doctor|replay|trust> [args]
       Discover, install, and apply plugins through the local daemon.
@@ -7259,8 +7277,8 @@ async function runBrandDelete(rest) {
 function normalizeChatSessionModeFlag(value) {
   if (value == null) return undefined;
   const mode = String(value).trim().toLowerCase();
-  if (mode === 'design' || mode === 'chat' || mode === 'plan') return mode;
-  console.error('--mode must be one of: design, chat, plan');
+  if (mode === 'design' || mode === 'chat' || mode === 'plan' || mode === 'blockout') return mode;
+  console.error('--mode must be one of: design, chat, plan, blockout');
   process.exit(2);
 }
 
@@ -7531,8 +7549,9 @@ async function runProject(args) {
     console.log(`Usage:
   od project create [--name "<title>"] [--skill <id>] [--design-system <id>]
                     [--plugin <id>] [--inputs <json>] [--metadata-json <path|->]
-                    [--mode design|chat|plan] [--task-type motion-design]
-                    [--prompt-file <path|->] [--json]
+                    [--mode design|chat|plan|blockout] [--task-type motion-design]
+                    [--fast] [--prompt-file <path|->] [--json]
+                    --fast: managed folder, direct material-first chat, no research setup.
   od project create-design-system <id> [--name "<title>"]
                     [--prompt "<text>" | --prompt-file <path|->] [--json]
                     Duplicate a project as a design-system workspace and seed
@@ -7754,6 +7773,11 @@ Common options:
       }
       const prompt = await readPromptFromFlags(flags);
       if (prompt) body.pendingPrompt = prompt;
+      if (flags.fast) {
+        if (flags.plugin || flags['task-type']) { console.error('--fast cannot be combined with a scenario plugin or task type'); process.exit(2); }
+        body.metadata = { ...body.metadata, kind: 'other', projectMode: 'fast' };
+        body.conversationMode = conversationMode ?? 'design';
+      }
       if (flags['task-type']) {
         if (flags['task-type'] !== 'motion-design') {
           console.error('--task-type currently supports motion-design');
@@ -8378,12 +8402,12 @@ async function runRun(args) {
                [--prompt-file <path|->] [--task-execution <id>]
                [--client-request-id <id>]
                [--skill <id>[,<id>]] [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
-               [--agent <id>] [--model <id>] [--service-tier <id>]
+               [--agent <id>] [--model <id>] [--reasoning <level>] [--service-tier <id>]
                [--byok-protocol <protocol>] [--byok-base-url <url>]
                [--byok-api-version <version>] [--byok-key-env <env>] [--byok-keyless]
                [--workspace <id> --workspace-member <id>] [--follow] [--json]
   od run redesign [--path <folder>] [--message "<text>" | --prompt-file <path|->]
-               [--agent claude] [--model <id>] [--service-tier <id>] [--follow] [--json]
+               [--agent claude] [--model <id>] [--reasoning <level>] [--service-tier <id>] [--follow] [--json]
   od run watch  <runId>                     ND-JSON event stream on stdout.
   od run cancel <runId>                     Request cancellation.
   od run steer  <runId> [--message "<text>" | --prompt-file <path|->] [--json]
@@ -8645,6 +8669,7 @@ Common options:
         designSystemId,
         ...(flags.agent ? { agentId: flags.agent } : {}),
         ...(flags.model ? { model: flags.model } : {}),
+        ...(flags.reasoning ? { reasoning: flags.reasoning } : {}),
         ...(flags['service-tier'] ? { serviceTier: flags['service-tier'] } : {}),
       };
       const data = await postJsonToDaemon(base, '/api/runs', body, workspaceHeaders);
@@ -8695,6 +8720,7 @@ Common options:
       if (flags.agent) body.agentId = flags.agent;
       else if (byokProvider) body.agentId = BYOK_OPENCODE_AGENT_ID;
       if (flags.model) body.model = flags.model;
+      if (flags.reasoning) body.reasoning = flags.reasoning;
       if (flags['service-tier']) body.serviceTier = flags['service-tier'];
       if (flags.inputs) {
         try { body.pluginInputs = JSON.parse(flags.inputs); } catch (err) {
@@ -8757,59 +8783,76 @@ function serializeRunCliJson(value, byokApiKey, indentation) {
 // Each line is one event: { event, data } so a code agent can parse it
 // without needing an SSE library.
 async function streamRunEvents(base, initialRunId, workspaceHeaders = {}, byokApiKey) {
+  // Own and drain the SSE transport before the command dispatcher exits.
+  // Exiting with a live global-fetch stream can double-close a Windows libuv
+  // handle; it also leaves the previous stream open when following Run chains.
+  const dispatcher = new HttpAgent();
   let runId = initialRunId;
   const visited = new Set();
-  while (true) {
-    if (visited.has(runId)) {
-      console.error(redactSecrets(`run watch failed: cyclic strategy task chain at ${runId}`, [byokApiKey]));
-      process.exit(1);
-    }
-    visited.add(runId);
-    const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
-      headers: { accept: 'text/event-stream', ...workspaceHeaders },
-    });
-    if (!resp.ok || !resp.body) {
-      console.error(`run watch failed: ${resp.status}`);
-      process.exit(1);
-    }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let nextRunId = null;
-    let ended = false;
-    while (!ended) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
-      for (const block of blocks) {
-        const lines = block.split('\n');
-        const eventLine = lines.find((l) => l.startsWith('event: '));
-        const dataLines = lines
-          .filter((line) => line.startsWith('data: '))
-          .map((line) => line.slice('data: '.length));
-        const event = eventLine ? eventLine.slice('event: '.length) : 'message';
-        const dataRaw = dataLines.join('\n');
-        let parsed;
-        try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
-        process.stdout.write(serializeRunCliJson({ event, data: parsed }, byokApiKey) + '\n');
-        if (event !== 'end') continue;
-        const task = parsed?.strategyTask;
-        if (task && task.terminal !== true) {
-          const candidate = task.activeRunId !== runId
-            ? task.activeRunId
-            : task.nextRunId;
-          if (typeof candidate === 'string' && candidate.length > 0 && candidate !== runId) {
-            nextRunId = candidate;
+  try {
+    while (true) {
+      if (visited.has(runId)) {
+        console.error(redactSecrets(`run watch failed: cyclic strategy task chain at ${runId}`, [byokApiKey]));
+        process.exitCode = 1;
+        return;
+      }
+      visited.add(runId);
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
+        headers: { accept: 'text/event-stream', ...workspaceHeaders },
+        dispatcher,
+      });
+      if (!resp.ok || !resp.body) {
+        console.error(`run watch failed: ${resp.status}`);
+        await resp.body?.cancel();
+        process.exitCode = 1;
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let nextRunId = null;
+      let ended = false;
+      try {
+        while (!ended) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split('\n\n');
+          buffer = blocks.pop() ?? '';
+          for (const block of blocks) {
+            const lines = block.split('\n');
+            const eventLine = lines.find((l) => l.startsWith('event: '));
+            const dataLines = lines
+              .filter((line) => line.startsWith('data: '))
+              .map((line) => line.slice('data: '.length));
+            const event = eventLine ? eventLine.slice('event: '.length) : 'message';
+            const dataRaw = dataLines.join('\n');
+            let parsed;
+            try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
+            process.stdout.write(serializeRunCliJson({ event, data: parsed }, byokApiKey) + '\n');
+            if (event !== 'end') continue;
+            const task = parsed?.strategyTask;
+            if (task && task.terminal !== true) {
+              const candidate = task.activeRunId !== runId
+                ? task.activeRunId
+                : task.nextRunId;
+              if (typeof candidate === 'string' && candidate.length > 0 && candidate !== runId) {
+                nextRunId = candidate;
+              }
+            }
+            ended = true;
+            break;
           }
         }
-        ended = true;
-        break;
+      } finally {
+        await reader.cancel();
+        reader.releaseLock();
       }
+      if (!nextRunId) return;
+      runId = nextRunId;
     }
-    if (!nextRunId) return;
-    runId = nextRunId;
+  } finally {
+    await dispatcher.close();
   }
 }
 
@@ -9034,14 +9077,13 @@ Common options:
       const desiredName = typeof flags.as === 'string' && flags.as.length > 0
         ? flags.as
         : basename(localPath);
+      const form = new FormData();
+      form.append('name', desiredName);
+      form.append('file', new Blob([buf]), basename(localPath));
       const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files`, {
         method:  'POST',
-        headers: { 'content-type': 'application/json', ...workspaceHeaders },
-        body:    JSON.stringify({
-          name: desiredName,
-          content: buf.toString('base64'),
-          encoding: 'base64',
-        }),
+        headers: workspaceHeaders,
+        body: form,
       });
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
@@ -9544,7 +9586,9 @@ Common options:
 async function runConversation(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
-  od conversation new  <projectId> [--title "<title>"] [--seed-from <cid>] [--fork-after <mid>] [--mode design|chat|plan]
+  od history <list|status|read|compare|restore|checkpoint|organization> --project <id> [--json] [--prompt-file <path|->]
+  od header-footer <list|create|draft|validate|publish|apply|detach|disable|history|restore|restore-draft|archive|unarchive|assets|source-files|import|upload|remove-logo|export-logo|search|choose-logo|retry-search|cancel-search|retry> --project <id> [--document <id>] [--json] [--prompt-file <path|->]
+  od conversation new  <projectId> [--title "<title>"] [--seed-from <cid>] [--fork-after <mid>] [--mode design|chat|plan|blockout]
                                            Create a conversation in a project.
                                            --seed-from copies another
                                            conversation's messages in (Side Chat).
@@ -9654,7 +9698,7 @@ Common options:
 async function runChat(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
-  od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<title>"] [--mode design|chat|plan] [--json]
+  od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<title>"] [--mode design|chat|plan|blockout] [--json]
                                            Create a Side Chat — a new conversation
                                            that copies in another conversation's
                                            context (--seed-from). Use

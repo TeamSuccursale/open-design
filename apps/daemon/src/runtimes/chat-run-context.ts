@@ -23,6 +23,7 @@ export interface WorkspaceContextItem {
 }
 
 export interface RunContextSelection {
+  editTargetFile?: string;
   skillIds?: string[];
   pluginIds?: string[];
   mcpServerIds?: string[];
@@ -101,7 +102,11 @@ export function normalizeRunContextSelection(value: unknown): RunContextSelectio
     }
     return out;
   };
+  const target = cleanString(value.editTargetFile, 2001).replaceAll('\\', '/');
+  const editTargetFile = target && target.length <= 2000 && !/^(?:[a-z]+:|\/)/i.test(target)
+    && !target.split('/').some((part) => !part || part === '.' || part === '..') && !/[\x00-\x1f\x7f]/.test(target) ? target : undefined;
   return {
+    ...(editTargetFile ? { editTargetFile } : {}),
     skillIds: stringList(value.skillIds),
     pluginIds: stringList(value.pluginIds),
     mcpServerIds: stringList(value.mcpServerIds),
@@ -112,6 +117,7 @@ export function normalizeRunContextSelection(value: unknown): RunContextSelectio
 
 export function mergeRunContextSelections(...contexts: unknown[]): RunContextSelection {
   const merged: Required<RunContextSelection> = {
+    editTargetFile: '',
     skillIds: [],
     pluginIds: [],
     mcpServerIds: [],
@@ -122,6 +128,7 @@ export function mergeRunContextSelections(...contexts: unknown[]): RunContextSel
   const workspaceSeen = new Set<string>();
   for (const context of contexts) {
     const normalized = normalizeRunContextSelection(context);
+    if (normalized.editTargetFile) merged.editTargetFile = normalized.editTargetFile;
     for (const key of listKeys) {
       const seen = new Set(merged[key]);
       for (const id of normalized[key] ?? []) {
@@ -246,6 +253,10 @@ export function renderRunContextPrompt(selection: unknown, metadata: unknown) {
   const context = mergeRunContextSelections(projectMetadataContextSelection(metadata), selection);
   const metadataRecord = isRecord(metadata) ? metadata : {};
   const lines: string[] = [];
+  if (context.editTargetFile) {
+    lines.push('### Explicit editing target');
+    lines.push(`The user explicitly selected this project-relative file for editing: ${JSON.stringify(context.editTargetFile)}. Referenced tabs, attachments and @documents do not replace this target. Use the authorized Blockout owner identity and frozen saved structure supplied below when this file belongs to a Blockout document.`);
+  }
   if (Array.isArray(context.workspaceItems) && context.workspaceItems.length > 0) {
     lines.push('### Active workspace context');
     lines.push(

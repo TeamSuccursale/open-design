@@ -43,7 +43,7 @@
 
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -121,6 +121,7 @@ describe('claude sub-agent assistant error false failure', () => {
       privacyDecisionAt: Date.now(),
     });
     const controlRun = await createAndWaitForRun(started.url);
+    await assertFixtureUsed(controlRun);
     // Baseline: without the sub-agent error field the recovered run succeeds.
     expect(controlRun.status).toBe('succeeded');
     expect(controlRun.exitCode).toBe(0);
@@ -135,12 +136,13 @@ describe('claude sub-agent assistant error false failure', () => {
       privacyDecisionAt: Date.now(),
     });
     const sidechainRun = await createAndWaitForRun(started.url);
+    await assertFixtureUsed(sidechainRun);
     // INVARIANT: a sub-agent (parent_tool_use_id != null) in-stream error must
     // not condemn the main turn. A clean result frame (is_error:false) plus a
     // zero exit code is a success regardless of any sub-agent's internal error.
     // (toMatchObject so a violation prints the full misclassified run body.)
     expect(sidechainRun).toMatchObject({ status: 'succeeded', exitCode: 0 });
-  });
+  }, 30_000);
 
 });
 
@@ -149,7 +151,7 @@ async function writeRecoveringClaude(
   name: string,
   opts: { withSubagentError: boolean },
 ): Promise<string> {
-  const bin = path.join(dir, name);
+  const source = path.join(dir, `${name}.cjs`);
   // Frames written synchronously (fs.writeSync) so nothing is lost on exit.
   // The main turn delegates to a Task sub-agent; the sub-agent's assistant
   // frame optionally carries `error:"unknown"` (the shape server.ts:7133-7139
@@ -159,12 +161,17 @@ async function writeRecoveringClaude(
   const subagentErrorField = opts.withSubagentError
     ? `\n        error: 'unknown',`
     : '';
-  await writeFile(bin, `#!/usr/bin/env node
+  await writeFile(source, `
 const fs = require('node:fs');
 function w(s) { fs.writeSync(1, s); }
 if (process.argv.includes('--version')) { w('claude-code 1.0.0-sidechain-error-test\\n'); process.exit(0); }
 if (process.argv.includes('--help')) { w('Usage: claude -p [--include-partial-messages] [--add-dir DIR]\\n'); process.exit(0); }
+if (process.argv[2] === 'auth' && process.argv[3] === 'status') { w(JSON.stringify({ loggedIn: true, authMethod: 'test' }) + '\\n'); process.exit(0); }
+if (process.argv.includes('--thinking-display')) { console.error('unknown option --thinking-display'); process.exit(2); }
+const outputFormat = process.argv.indexOf('--output-format');
+if (outputFormat < 0 || process.argv[outputFormat + 1] !== 'stream-json') { console.error('Unsupported fixture probe'); process.exit(2); }
 
+process.stdin.once('data', () => {
 w(JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sidechain-error-test', session_id: 's-sidechain-error' }) + '\\n');
 // Main turn delegates to a Task sub-agent (stop_reason 'tool_use' keeps stdin open).
 w(JSON.stringify({
@@ -207,9 +214,26 @@ w(JSON.stringify({
   duration_ms: 1000,
 }) + '\\n');
 setTimeout(() => process.exit(0), 30);
+});
+process.stdin.resume();
+setTimeout(() => process.exit(9), 5000).unref();
 `, 'utf8');
+  if (process.platform === 'win32') {
+    const bin = path.join(dir, `${name}.cmd`);
+    await writeFile(bin, `@echo off\r\n"${process.execPath}" "${source}" %*\r\n`, 'utf8');
+    return bin;
+  }
+  const bin = path.join(dir, name);
+  await writeFile(bin, `#!/bin/sh\nexec '${process.execPath.replace(/'/g, "'\\''")}' '${source.replace(/'/g, "'\\''")}' "$@"\n`, 'utf8');
   await chmod(bin, 0o755);
   return bin;
+}
+
+async function assertFixtureUsed(run: RunStatus): Promise<void> {
+  const events = (await readFile(run.eventsLogPath, 'utf8')).trim().split('\n')
+    .filter(Boolean).map((line) => JSON.parse(line) as { event: string; data?: { type?: string; model?: string } });
+  expect(events.some((event) => event.event === 'agent' && event.data?.type === 'status'
+    && event.data.model === 'claude-sidechain-error-test')).toBe(true);
 }
 
 async function putConfig(url: string, patch: Record<string, unknown>): Promise<void> {
@@ -249,6 +273,7 @@ async function createAndWaitForRun(url: string): Promise<RunStatus> {
       assistantMessageId: `assistant_sidechain_error_${randomUUID()}`,
       clientRequestId: `client_sidechain_error_${randomUUID()}`,
       agentId: 'claude',
+      reasoning: 'default',
       message: 'reproduce sub-agent assistant error false failure',
       currentPrompt: 'reproduce sub-agent assistant error false failure',
     }),

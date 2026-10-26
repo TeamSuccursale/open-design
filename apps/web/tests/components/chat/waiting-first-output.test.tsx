@@ -68,6 +68,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import type { ChatMessage } from '@open-design/contracts';
 
+import { openExecutionDetails } from '../../helpers/open-execution-details';
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
 import { WAITING_FIRST_OUTPUT_AFTER_MS } from '../../../src/components/chat/ExecutionShell';
 import { I18nProvider } from '../../../src/i18n';
@@ -136,7 +137,10 @@ function streamResponse(reader: { read: () => Promise<ReadResult>; cancel: () =>
 const sseEvent = (id: number, event: string, data: Record<string, unknown>): string =>
   `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-const show = (ui: ReactElement) => render(<I18nProvider initial="zh-CN">{ui}</I18nProvider>);
+const show = (ui: ReactElement) => {
+  const view = render(<I18nProvider initial="zh-CN">{ui}</I18nProvider>); openExecutionDetails(view.container);
+  return { ...view, rerender: (next: ReactElement) => { view.rerender(next); openExecutionDetails(view.container); } };
+};
 
 /**
  * 壳**内**那一行的耗时槽 —— 不是壳头那个。
@@ -233,6 +237,7 @@ describe('等首个 token:壳里那一行读「思考中」(文案撤回,判据�
 
     show(<AssistantMessage message={turnOf('m-acp', captured)} streaming projectId="p1" />);
     await idle(67_000);
+    openExecutionDetails(document.body);
 
     /*
      * **保留那一半**:壳里一个事件都没有、模型也没在想,这一行「思考中」只可能由

@@ -1,3 +1,4 @@
+import { FAST_PROJECT_MODE_DIRECTIVE, isFastProject } from './fast-project.js';
 import { COMMENT_IDENTITY_EDIT_DIRECTIVE } from './comment-identity.js';
 import { OD_NEXT_PLAN_OUTPUT_INSTRUCTIONS } from './od-next-production-marker.js';
 import {
@@ -8,6 +9,10 @@ import {
 } from '../plugins/strategy-v2.js';
 
 import type { ChatSessionMode } from '../api/chat.js';
+import { BLOCKOUT_MODE_DIRECTIVE, BLOCKOUT_DESIGN_DIRECTIVE } from './blockout-mode.js';
+import { imageSpecialistsDirective } from './image-specialists.js';
+import { documentResearchSpecialistsDirective } from './document-research-specialists.js';
+import { headerFooterWorkflowDirective } from './header-footer.js';
 import {
   renderDeckFrameworkDirective,
   renderLegacyDeckCompatibilityDirective,
@@ -532,6 +537,23 @@ export function composeOdNextStrategyStableRequestContextV2(
   if (Object.keys(runtimeSelection).length > 0) {
     factualStructured('runtime-selection', runtimeSelection);
   }
+  const imageSpecialists = imageSpecialistsDirective(context.agentId, context.sessionMode);
+  const documentResearchers = isFastProject(context.metadata) ? '' : documentResearchSpecialistsDirective(context.agentId, context.sessionMode);
+  if (isFastProject(context.metadata)) blocks.push(`<od-next-context kind="instruction" name="fast-project">\n${escaped(FAST_PROJECT_MODE_DIRECTIVE)}\n</od-next-context>`);
+  if (documentResearchers) {
+    blocks.push(`<od-next-context kind="instruction" name="document-research-specialists">\n${escaped(documentResearchers)}\n</od-next-context>`);
+  }
+  if (imageSpecialists) {
+    // Host-owned production capability, with an explicit no-spawn planning rule.
+    blocks.push(`<od-next-context kind="instruction" name="image-specialists">\n${escaped(imageSpecialists)}\n</od-next-context>`);
+  }
+  const headerFooterWorkflow = headerFooterWorkflowDirective(context.sessionMode);
+  if (headerFooterWorkflow) blocks.push(`<od-next-context kind="instruction" name="header-footer-workflow">\n${escaped(headerFooterWorkflow)}\n</od-next-context>`);
+  if (context.sessionMode === 'blockout') {
+    // Host-owned mode contract: also used by the legacy/BYOK composers.
+    blocks.push(`<od-next-context kind="instruction" name="blockout-mode">\n${escaped(BLOCKOUT_MODE_DIRECTIVE)}\n</od-next-context>`);
+  }
+  if (context.sessionMode === 'design') blocks.push(`<od-next-context kind="instruction" name="blockout-design">\n${escaped(BLOCKOUT_DESIGN_DIRECTIVE)}\n</od-next-context>`);
   // Sits next to the runtime identity it is derived from, and inside this
   // per-run block rather than the Bundle head: the head is byte-identical
   // across every task sharing a strategy version, task type, and execution

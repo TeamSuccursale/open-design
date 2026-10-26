@@ -58,9 +58,12 @@ type SnapshotManifest = {
   taskConfiguration: OdNextTaskConfigurationV1;
   requestInputFacts: OdNextRequestInputFactsV1;
   files: SnapshotFile[];
+  /** Authorized host-only document identity/reference inventory; never asset bytes. */
+  documentReferenceContext?: string;
 };
 
 export interface LoadedOdNextTaskInputSnapshot {
+  documentReferenceContext?: string;
   taskConfigText: string;
   requestInputText: string;
   taskType: string;
@@ -74,6 +77,7 @@ export interface LoadedOdNextTaskInputSnapshot {
 }
 
 export interface OdNextRunInputProjection {
+  documentReferenceContext?: string;
   taskConfigText: string;
   requestInputText: string;
   attachmentReferences: string[];
@@ -533,7 +537,7 @@ export function buildOdNextTaskConfigurationV1(input: {
   if (!selectedAgentId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(selectedAgentId)) {
     throw new OdNextTaskInputSnapshotError('OD Next selected agent id is invalid.');
   }
-  const sessionMode = input.sessionMode === 'chat' || input.sessionMode === 'plan'
+  const sessionMode = input.sessionMode === 'chat' || input.sessionMode === 'plan' || input.sessionMode === 'blockout'
     ? input.sessionMode
     : 'design';
   const allowedSurfaces = input.mediaExecution.allowedSurfaces
@@ -569,6 +573,7 @@ export function buildOdNextTaskConfigurationV1(input: {
 }
 
 export function createOdNextTaskInputSnapshot(input: {
+  documentReferenceContext?: string;
   snapshotsRoot: string;
   taskExecutionId: string;
   taskConfiguration: OdNextTaskConfigurationV1;
@@ -591,6 +596,10 @@ export function createOdNextTaskInputSnapshot(input: {
   const inherited = input.inheritedSnapshot
     ? loadOdNextTaskInputSnapshot(input.inheritedSnapshot, input.snapshotsRoot)
     : null;
+  const documentReferenceContext = input.documentReferenceContext ?? inherited?.documentReferenceContext ?? '';
+  if (typeof documentReferenceContext !== 'string' || Buffer.byteLength(documentReferenceContext) > 64 * 1024) {
+    throw new OdNextTaskInputSnapshotError('Document reference context exceeds the immutable task limit.', 'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE');
+  }
   const sources: Array<SnapshotSource | (SnapshotFile & { content: Buffer })> = [
     ...(input.projectAttachments ?? []).map((sourcePath) => ({
       kind: 'file' as const,
@@ -745,6 +754,7 @@ export function createOdNextTaskInputSnapshot(input: {
       taskConfiguration: input.taskConfiguration,
       requestInputFacts,
       files,
+      ...(documentReferenceContext ? { documentReferenceContext } : {}),
     };
     const manifestBytes = Buffer.from(JSON.stringify(manifest));
     const manifestPath = path.join(snapshotDir, 'manifest.json');
@@ -773,6 +783,7 @@ function parseManifest(bytes: Buffer): SnapshotManifest {
     parsed?.schema !== SNAPSHOT_SCHEMA
     || typeof parsed.taskExecutionId !== 'string'
     || !Array.isArray(parsed.files)
+    || (parsed.documentReferenceContext !== undefined && (typeof parsed.documentReferenceContext !== 'string' || Buffer.byteLength(parsed.documentReferenceContext) > 64 * 1024))
     || parsed.taskConfiguration?.schema !== OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1
     || parsed.requestInputFacts?.schema !== OD_NEXT_REQUEST_INPUT_FACTS_SCHEMA_V1
     || parsed.requestInputFacts.attachmentTransport?.scheme !== 'task-input'
@@ -978,10 +989,13 @@ export function loadOdNextTaskInputSnapshot(
   }
   const attachmentPaths = manifest.requestInputFacts.attachments.map((fact) => pathsById.get(fact.id)!);
   const imagePaths = manifest.requestInputFacts.attachments
-    .filter((fact) => fact.kind === 'image')
+    // Project-relative raster attachments also need native vision transport;
+    // their selection kind stays "file" in the immutable input facts.
+    .filter((fact) => fact.kind === 'image' || /^image\/(png|jpeg|gif|webp)$/.test(fact.mediaType))
     .map((fact) => pathsById.get(fact.id)!);
   return {
     taskConfigText: serializeOdNextTaskConfigurationV1(manifest.taskConfiguration),
+    documentReferenceContext: manifest.documentReferenceContext ?? '',
     requestInputText: serializeOdNextRequestInputFactsV1(manifest.requestInputFacts),
     taskType: manifest.taskConfiguration.taskType,
     attachmentFactsText: serializeOdNextAttachmentFactsV1(manifest.requestInputFacts),
@@ -1069,12 +1083,13 @@ export function createOdNextRunInputProjection(input: {
     ));
     return {
       taskConfigText: loaded.taskConfigText,
+      documentReferenceContext: loaded.documentReferenceContext ?? '',
       requestInputText: loaded.requestInputText,
       attachmentReferences: loaded.attachmentReferences,
       attachmentPaths: projectedPaths,
       imagePaths: loaded.files
         .map((file, index) => ({ file, projectedPath: projectedPaths[index]! }))
-        .filter(({ file }) => file.kind === 'image')
+        .filter(({ file }) => file.kind === 'image' || /^image\/(png|jpeg|gif|webp)$/.test(file.mediaType))
         .map(({ projectedPath }) => projectedPath),
       projectionDir,
       projectionAccessRoot: taskProjectionRoot,

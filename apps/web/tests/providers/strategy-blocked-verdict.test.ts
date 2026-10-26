@@ -100,6 +100,23 @@ async function runBlockedTurn(frame: string) {
 }
 
 describe('a blocked strategy task reaches the message as the daemon\'s own verdict', () => {
+  it('finishes a text-only reference comparison without claiming artifact delivery or starting production', async () => {
+    const reply = 'The report uses eight A4 portrait pages. A emphasizes the main view, B compares paired figures, and C follows a sequence.';
+    const task = {
+      taskExecutionId: 'reference-comparison', strategy: { id: 'od-next-strategy', version: '3.3.8', packageHash: 'a'.repeat(64), snapshotId: 'snapshot-1' },
+      inputStage: 'request', settlementReason: 'ended', settlementFacts: { physicalStatus: 'succeeded', deliverableValid: false,
+        truncated: false, todoUnfinished: false, askedUserQuestion: false, productionReady: false, emptyReply: false, executionIntent: 'produce' },
+      deliverableValid: false, outcome: 'completed', route: 'full_plan', executionMode: null, activeRunId: 'run-1', terminal: true,
+      runMappings: [{ runId: 'run-1', taskRunIndex: 0 }],
+    };
+    const frame = `event: agent\ndata: ${JSON.stringify({ type: 'text_delta', delta: reply })}\n\nevent: end\ndata: ${JSON.stringify({
+      code: 0, status: 'succeeded', artifactCount: 0, artifactPaths: [], strategyTask: task,
+    })}\n\n`;
+    const settled = await runBlockedTurn(frame);
+    expect(settled).toMatchObject({ outcome: 'completed', terminal: true, deliverableValid: false, settlementReason: 'ended' });
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(['/api/runs', '/api/runs/run-1/events']);
+  });
+
   // The turn the user sees is the one right after they answered a question
   // form: their answers went in, the agent answered, and the task still landed
   // terminal-`blocked` because the reply carried no Runtime State block. The

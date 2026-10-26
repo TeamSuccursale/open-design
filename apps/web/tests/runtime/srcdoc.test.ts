@@ -13,6 +13,11 @@ const deckHtml = `<!doctype html>
   </body>
 </html>`;
 
+it('adds a read-only composition locator only to documents with stable page markers', () => {
+  expect(buildSrcdoc('<html><body><article data-blockout-page-id="page-3"></article></body></html>')).toContain('data-od-blockout-design-bridge');
+  expect(buildSrcdoc('<html><body>Ordinary content</body></html>')).not.toContain('data-od-blockout-design-bridge');
+});
+
 const brokenDeckStageHtml = `<!doctype html>
 <html>
   <body>

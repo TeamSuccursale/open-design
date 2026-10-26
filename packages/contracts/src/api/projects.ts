@@ -193,6 +193,10 @@ export interface DesignSystemReviewEntry {
 }
 
 export interface ProjectMetadata {
+  /** Direct material-first work in an app-managed folder, without guided research. */
+  projectMode?: 'fast';
+  /** Explicit guided document start; ordinary projects remain unaffected. */
+  documentSetupIntent?: import('./document-setup.js').DocumentSetupIntent;
   /** Reserved admitted facts; installed only with the matching local content receipt. */
   _commentFiles?: import('./comments.js').CommentFileState;
   kind: ProjectKind;
@@ -245,6 +249,10 @@ export interface ProjectMetadata {
   // directly inside the user's folder. Stored as the realpath() result so
   // symlinks can't redirect writes after import time.
   baseDir?: string;
+  /** Daemon-owned logical collection binding for a document's working project. */
+  collectionProjectId?: string;
+  collectionDocumentId?: string;
+  collectionProjectName?: string;
   // Project library location that owns baseDir when the project was created
   // under a configured project location root.
   projectLocationId?: string;

@@ -1,4 +1,7 @@
 export interface RunContextSelection {
+  /** Explicit active edit target; independent from reference files/documents. */
+  editTargetFile?: string;
+  documentReferences?: string[];
   skillIds?: string[];
   pluginIds?: string[];
   mcpServerIds?: string[];

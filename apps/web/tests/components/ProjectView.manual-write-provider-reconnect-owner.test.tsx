@@ -195,7 +195,7 @@ async function startRun(): Promise<DaemonStreamOptions> {
 
 async function createPersonalDocument() {
   fireEvent.click(screen.getByTestId('workspace-add-tab'));
-  fireEvent.click(await screen.findByRole('button', { name: /New document/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /New Markdown note/i }));
   await waitFor(() => {
     expect(fileRequests.some((request) => request.method === 'POST' && request.names[0] === 'document.md'))
       .toBe(true);

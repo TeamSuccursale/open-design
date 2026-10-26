@@ -79,7 +79,8 @@ describe.each(['one persisted text', 'separate text events'] as const)('%s', (sh
       });
     }
     const blocks = project(chunks(`Working on the request.\n${protocol}\n`));
-    expect(shellText(blocks)).toContain('Working on the request.');
+    if (protocol === FORM) expect(proseText(blocks)).toContain('Working on the request.');
+    else expect(shellText(blocks)).toContain('Working on the request.');
     expect(shellText(blocks)).not.toContain(protocol);
     expect(proseText(blocks)).toContain(protocol);
     expect(proseText(blocks)).toContain(AFTER);

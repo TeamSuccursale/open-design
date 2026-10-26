@@ -136,7 +136,7 @@ export function IframeKeepAliveProvider({
       }
       entry.lastUsedAt = Date.now();
       activeKeysRef.current.add(key);
-      host.appendChild(entry.element);
+      if (entry.element.parentNode !== host) host.appendChild(entry.element);
       // A project switch can leave parked entries behind immediately before
       // the next project's viewers attach. Enforce the bound here as well as
       // on release so a newly attached frame cannot temporarily push the pool
@@ -148,11 +148,17 @@ export function IframeKeepAliveProvider({
       const entry = entriesRef.current.get(key);
       const parkedHost = parkedHostRef.current;
       activeKeysRef.current.delete(key);
-      if (entry && parkedHost) {
-        parkIframeElement(entry.element);
-        parkedHost.appendChild(entry.element);
-      }
-      enforceLimit();
+      // React can release and reattach the same host in one commit (notably
+      // StrictMode's mount replay). Moving its iframe in between aborts an
+      // in-flight navigation. Park only if it is still released after commit.
+      queueMicrotask(() => {
+        if (activeKeysRef.current.has(key) || entriesRef.current.get(key) !== entry) return;
+        if (entry && parkedHost) {
+          parkIframeElement(entry.element);
+          parkedHost.appendChild(entry.element);
+        }
+        enforceLimit();
+      });
     },
     evict(key) {
       removeEntry(key);

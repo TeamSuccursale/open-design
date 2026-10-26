@@ -448,7 +448,7 @@ async function reachPendingArtifactRecovery() {
   // A fresh Home project has the actual Design Files empty-state action.
   // Opening the plus menu as well would create a second New document button.
   const newDocument = await screen.findByTestId('design-files-empty-new-document');
-  expect(newDocument).toHaveAccessibleName('New document');
+  expect(newDocument).toHaveAccessibleName('New Markdown note');
   fireEvent.click(newDocument);
   const editor = await screen.findByRole('textbox', { name: /markdown editor/i });
   await waitFor(() => expect(editor).toHaveValue(fileContents.get('document.md')));

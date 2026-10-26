@@ -75,7 +75,7 @@ describe('传输层把 run_retry_attempted 转成 UI 读数', () => {
   beforeEach(() => { originalFetch = globalThis.fetch; });
   afterEach(() => { globalThis.fetch = originalFetch; });
 
-  async function runStream(frames: string[]): Promise<DaemonAgentRetryState[]> {
+  async function runStream(frames: string[], executionSettings: Array<{ model?: string | null; reasoning?: string | null }> = []): Promise<DaemonAgentRetryState[]> {
     const reader = makeFiniteReader(frames.map(enc));
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const u = typeof url === 'string' ? url : url.toString();
@@ -92,11 +92,24 @@ describe('传输层把 run_retry_attempted 转成 UI 读数', () => {
         onDone: () => {},
         onError: () => {},
         onAgentEvent: () => {},
+        onExecutionSettings: (settings) => { executionSettings.push(settings); },
         onAgentRetry: (state) => { seen.push(state); },
       },
     });
     return seen;
   }
+
+  it('reports authoritative execution settings for SVG follow-ups and resumed attempts', async () => {
+    const settings: Array<{ model?: string | null; reasoning?: string | null }> = [];
+    await runStream([
+      sseEvent(1, 'start', { bin: 'codex', agentId: 'codex', model: 'gpt-6.1-sol', reasoning: 'max' }),
+      sseEvent(2, 'start', { bin: 'codex', agentId: 'codex', model: 'gpt-6-astra', reasoning: 'ultra' }),
+      sseEvent(3, 'end', { status: 'succeeded', code: 0 }),
+    ], settings);
+    expect(settings.map(({ model, reasoning }) => ({ model, reasoning }))).toEqual([
+      { model: 'gpt-6.1-sol', reasoning: 'max' }, { model: 'gpt-6-astra', reasoning: 'ultra' },
+    ]);
+  });
 
   it('这一帧变成一条 retrying 读数,带上第几次 / 共几次', async () => {
     const seen = await runStream([

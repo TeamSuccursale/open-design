@@ -852,7 +852,18 @@ describe('GET /api/projects/:id resolvedDir', () => {
     expect(detail.project?.metadata?.linkedDirs).toEqual([await realpath(secondDir)]);
   });
 
-  it('persists project and conversation session modes through create and patch routes', async () => {
+  it('starts new projects and unseeded chats in Blockout', async () => {
+    const projectId = `proj-default-blockout-${Date.now()}`;
+    const created = await fetch(`${baseUrl}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: projectId, name: 'Default Blockout' }) });
+    expect(created.status).toBe(200);
+    const body = await created.json() as { conversationId: string };
+    const conversations = await fetch(`${baseUrl}/api/projects/${projectId}/conversations`);
+    const listing = await conversations.json() as { conversations: { id: string; sessionMode: string }[] };
+    expect(listing.conversations.find((item) => item.id === body.conversationId)?.sessionMode).toBe('blockout');
+    const next = await fetch(`${baseUrl}/api/projects/${projectId}/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect((await next.json() as { conversation: { sessionMode: string } }).conversation.sessionMode).toBe('blockout');
+  });
+  it.each(['plan', 'blockout'] as const)('persists %s mode through project and conversation create/patch routes', async (mode) => {
     const projectId = `proj-session-mode-${Date.now()}`;
     const createResp = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -860,7 +871,7 @@ describe('GET /api/projects/:id resolvedDir', () => {
       body: JSON.stringify({
         id: projectId,
         name: 'Session mode fixture',
-        sessionMode: 'plan',
+        sessionMode: mode,
       }),
     });
     expect(createResp.status).toBe(200);
@@ -872,7 +883,7 @@ describe('GET /api/projects/:id resolvedDir', () => {
       conversations: Array<{ id: string; sessionMode: string }>;
     };
     expect(listed.conversations.find((conversation) => conversation.id === createBody.conversationId)?.sessionMode)
-      .toBe('plan');
+      .toBe(mode);
 
     const chatResp = await fetch(`${baseUrl}/api/projects/${projectId}/conversations`, {
       method: 'POST',
@@ -888,12 +899,12 @@ describe('GET /api/projects/:id resolvedDir', () => {
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionMode: 'plan' }),
+        body: JSON.stringify({ sessionMode: mode }),
       },
     );
     expect(patchResp.status).toBe(200);
     const patched = (await patchResp.json()) as { conversation: { sessionMode: string } };
-    expect(patched.conversation.sessionMode).toBe('plan');
+    expect(patched.conversation.sessionMode).toBe(mode);
 
     const invalidPatchResp = await fetch(
       `${baseUrl}/api/projects/${projectId}/conversations/${chatBody.conversation.id}`,

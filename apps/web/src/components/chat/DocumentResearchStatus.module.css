@@ -1,0 +1,20 @@
+.root { min-width: 0; color: var(--chat-text); font-size: 12px; line-height: 1.5; }
+.header, .error { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.header button, .error button, .details > button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.status, .scope, .citation { color: var(--chat-text-muted); }
+.status { font-variant-numeric: tabular-nums; }
+.details { margin-top: 8px; padding: 10px 8px; max-height: 400px; overflow: auto; scrollbar-color: var(--chat-text-muted) var(--chat-bg-subtle); overflow-wrap: anywhere; }
+.details[hidden] { display: none; }
+.details h3 { margin: 18px 0 8px; font-size: 12px; font-weight: 600; }
+.details h3:first-of-type { margin-top: 12px; }
+.scope, .findings p { margin: 0; }
+.findings { display: grid; gap: 12px; max-width: 75ch; margin: 0; padding: 0; list-style: none; }
+.citation { display: block; margin-top: 3px; font-size: 11px; }
+.coverage { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.coverage li { display: grid; gap: 2px; }
+.coverage span { color: var(--chat-text-muted); }
+.warnings { margin: 16px 0 0; padding-inline-start: 18px; color: var(--chat-text-muted); }
+.warnings li + li { margin-top: 4px; }
+.error { color: var(--chat-red); margin-top: 6px; }
+.root button:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }
+.details::selection, .details ::selection { background: var(--chat-accent); color: var(--chat-bg); }

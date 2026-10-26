@@ -15,6 +15,16 @@ const VALID_BODY = `{
   ]
 }`;
 
+describe('blockout question targets', () => {
+  it('keeps page/block identity through parsing and answer formatting', () => {
+    const segments = splitOnQuestionForms(`<question-form id="figure-question" blockout-variant="brief" blockout-page="page-1" blockout-block="figure-1">${VALID_BODY}</question-form>`);
+    const segment = segments.find((item) => item.kind === 'form');
+    if (segment?.kind !== 'form') throw new Error('Expected a question form');
+    expect(segment.form.blockoutTarget).toEqual({ variantId: 'brief', pageId: 'page-1', blockId: 'figure-1' });
+    expect(formatFormAnswers(segment.form, { platform: 'Desktop' })).toContain('[blockout target]');
+  });
+});
+
 describe('unterminated question-form detection', () => {
   // Production repro (OD Next strategy turn, no clarification needed): the
   // model narrated its decision *into* an open tag instead of emitting a form.

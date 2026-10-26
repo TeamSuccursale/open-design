@@ -92,10 +92,11 @@ describe('run deliverable validation', () => {
 
   it('does not accept an independent output symlink outside the project', async () => {
     const fixture = await projectFixture({});
-    await fs.writeFile(path.join(fixture.projectsRoot, 'outside.png'), 'external');
-    await fs.symlink('../outside.png', path.join(fixture.projectsRoot, fixture.projectId, 'dog.png'));
+    const outside = path.join(fixture.projectsRoot, 'outside');
+    await fs.mkdir(outside); await fs.writeFile(path.join(outside, 'dog.png'), 'external');
+    await fs.symlink(outside, path.join(fixture.projectsRoot, fixture.projectId, 'escaped'), process.platform === 'win32' ? 'junction' : 'dir');
     expect((await validateRunDeliverable({ ...fixture, runStatus: 'succeeded', artifactCount: 1,
-      projectMetadata: { kind: 'prototype' }, touchedPaths: ['dog.png'], allowIndependentOutput: true,
+      projectMetadata: { kind: 'prototype' }, touchedPaths: ['escaped/dog.png'], allowIndependentOutput: true,
     })).valid).toBe(false);
   });
   it('accepts a readable entry whose file kind matches the project kind', async () => {

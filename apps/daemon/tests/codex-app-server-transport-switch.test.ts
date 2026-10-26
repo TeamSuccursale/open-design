@@ -155,13 +155,20 @@ describe('codex transport switch', () => {
       for (const arg of shellPolicyArgs) expect(args).toContain(arg);
     });
 
-    it('reproduces --sandbox network access and --add-dir as config overrides', () => {
+    it('launches with full access, no approval prompts and no automatic reviewer', () => {
       const overridden = withCodexTransport(codexAgentDef, 'app-server');
       const args = overridden.buildArgs('p', [], ['/extra/one', '/extra/two'], {}, { cwd: '/w' });
-      expect(args).toContain('sandbox_workspace_write.network_access=true');
-      expect(args).toContain(
-        'sandbox_workspace_write.writable_roots=["/extra/one","/extra/two"]',
-      );
+      expect(args).toContain('sandbox_mode="danger-full-access"');
+      expect(args).toContain('approval_policy="never"');
+      expect(args).toContain('approvals_reviewer="user"');
+      expect(args.some(arg => arg.startsWith('sandbox_workspace_write.'))).toBe(false);
+    });
+
+    it.each([null, 'thread-existing'])('uses the same no-approval policy for exec session %s', resumeSessionId => {
+      const args = codexAgentDef.buildArgs('p', [], [], {}, { cwd: '/w', resumeSessionId });
+      expect(args).toContain('approval_policy="never"');
+      expect(args).toContain('approvals_reviewer="user"');
+      expect(args).toContain(resumeSessionId ? 'sandbox_mode="danger-full-access"' : 'danger-full-access');
     });
 
     it('omits the writable-roots override when no extra dirs were granted', () => {

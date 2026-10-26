@@ -1,3 +1,10 @@
+import { prepareIntakeContextFiles } from '../services/project-intake-context.js';
+import { DocumentReferenceError, parseDocumentReferences, resolveConversationDocument, resolveRunDocumentReferenceContext, setRunDocumentReferenceContext } from '../services/document-reference-context.js';
+import { blockoutHandoffDisplayName, isBlockoutHandoffAttachment, loadBlockoutContext, prepareBlockoutContextFiles, setRunBlockoutContext } from '../services/blockout-context.js';
+import type { BlockoutDesignRunTarget } from '../services/blockout-design.js';
+import { normalizeRunContextSelection } from '../runtimes/chat-run-context.js';
+import { documentSetupRunGate, prepareDocumentSetupContextFiles, readDocumentSetup } from '../services/document-setup.js';
+import { readDocumentProjectReferences, resolveDocumentProjectReferences } from '../services/document-project-contexts.js';
 import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
@@ -5,6 +12,8 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   defaultScenarioPluginIdForProjectMetadata,
+  isFastProject,
+  resolveSvgExecutionPolicy,
   InstalledPluginRecordSchema,
   RUN_RESULT_PACKAGE_SCHEMA,
   type AppliedPluginSnapshot,
@@ -210,6 +219,7 @@ import {
   toJsonRecord,
   toProjectRecord,
   validateChatRunDeliverable,
+  revalidateMissingChatRunBlockout,
   type ChatRun,
   type JsonRecord,
   type RunArtifactBaselines,
@@ -297,7 +307,7 @@ function seededAttachmentSize(projectRoot: string | null | undefined, attachment
   }
 }
 
-function seededUserMessageAttachmentFields(meta: JsonRecord, projectRoot?: string | null): {
+function seededUserMessageAttachmentFields(meta: JsonRecord, projectRoot?: string | null, trustedNames?: ReadonlyMap<string, string>): {
   attachments?: Array<{ path: string; name: string; kind: 'image' | 'file'; order: number }>;
   commentAttachments?: SeededCommentAttachment[];
 } {
@@ -305,8 +315,8 @@ function seededUserMessageAttachmentFields(meta: JsonRecord, projectRoot?: strin
     ? meta.attachments
         .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
         .map((attachmentPath, index) => {
-          const name = path.basename(attachmentPath) || attachmentPath;
-          const ext = path.extname(name).toLowerCase();
+          const name = trustedNames?.get(attachmentPath) ?? (path.basename(attachmentPath) || attachmentPath);
+          const ext = path.extname(attachmentPath).toLowerCase();
           const size = seededAttachmentSize(projectRoot, attachmentPath);
           return {
             path: attachmentPath,
@@ -1395,6 +1405,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'daemon is shutting down');
     }
     const requestBody = toJsonRecord(req.body);
+    let documentReferencePrompt = '';
+    let preparedBlockoutContext = '';
+    const preparedBlockoutDesignTargets: BlockoutDesignRunTarget[] = [];
+    const blockoutAttachmentNames = new Map<string, string>();
+    let activeDocumentId: string | undefined;
+    let documentReferences: string[];
+    try {
+      documentReferences = parseDocumentReferences(requestBody.documentReferences ?? toJsonRecord(requestBody.context).documentReferences);
+      if (documentReferences.length && !requestBody.projectId) throw new DocumentReferenceError('Document references require an app project');
+    } catch { return sendApiError(res, 400, 'DOCUMENT_REFERENCE_INVALID', 'Choose valid document references within this project'); }
     const requestAnalyticsContext = readAnalyticsContext(req);
     const mediaExecution = parseMediaExecutionPolicyInput(requestBody.mediaExecution);
     if (!mediaExecution.ok) {
@@ -1441,6 +1461,51 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       );
       if (!authorization.ok) return;
       authorizedBoundMutation = authorization.authorizedBoundMutation;
+      const setupProject = toProjectRecord(getProject(db, requestBody.projectId));
+      if (setupProject) {
+        try {
+          const activeDocument = await resolveConversationDocument({ project: setupProject,
+            conversationId: typeof requestBody.conversationId === 'string' ? requestBody.conversationId : null,
+            dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR, getProject: (id) => getProject(db, id) });
+          activeDocumentId = activeDocument?.blockoutDocumentId ?? activeDocument?.id;
+          const prompt = await resolveRunDocumentReferenceContext({ project: setupProject, references: documentReferences, dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR,
+            conversationId: typeof requestBody.conversationId === 'string' ? requestBody.conversationId : null,
+            getProject: (id) => getProject(db, id), authorize: (id) => ctx.authorizeProjectRequest ? ctx.authorizeProjectRequest(req, res, id, { mode: 'read' }) : Promise.resolve(false) });
+          if (prompt === null) return;
+          documentReferencePrompt = prompt;
+        } catch (error) { return sendApiError(res, error instanceof DocumentReferenceError ? error.statusCode : 400, 'DOCUMENT_REFERENCE_INVALID', 'Referenced document is unavailable or does not belong to this project'); }
+        const setupRoot = resolveProjectDir(PROJECTS_DIR, setupProject.id, setupProject.metadata);
+        const currentSetup = await readDocumentSetup(setupRoot, undefined, setupProject.id).catch(() => null);
+        const referenceStore = await readDocumentProjectReferences(setupRoot, setupProject.id);
+        const projectIds = currentSetup?.intent.contextProjectIds ?? referenceStore.references.map((entry) => entry.projectId);
+        if (projectIds.length) {
+          const references = await resolveDocumentProjectReferences({ primaryProjectId: setupProject.id, projectIds, projectsDir: PROJECTS_DIR,
+            authorize: (id) => ctx.authorizeProjectRequest ? ctx.authorizeProjectRequest(req, res, id, { mode: 'read' }) : Promise.resolve(false),
+            getProject: (id) => getProject(db, id) });
+          if (references === null) return;
+          const cached = currentSetup?.projectContexts ?? referenceStore.references;
+          if (JSON.stringify(references.map((entry) => [entry.projectId, entry.workingDirectory])) !== JSON.stringify(cached.map((entry) => [entry.projectId, entry.workingDirectory]))) return sendApiError(res, 409, 'DOCUMENT_CONTEXT_CHANGED', 'Read the selected project context again; its working folder has changed.');
+        }
+        const effectiveSetupMode = typeof requestBody.sessionMode === 'string' ? requestBody.sessionMode
+          : typeof requestBody.conversationId === 'string' ? getConversation(db, requestBody.conversationId)?.sessionMode
+          : getFirstProjectConversation(db, setupProject.id)?.sessionMode;
+        const pendingSetup = await documentSetupRunGate(setupRoot, setupProject.metadata as ContractProjectMetadata | null, setupProject.id, effectiveSetupMode, activeDocumentId);
+        if (pendingSetup) return sendApiError(res, 409, 'DOCUMENT_SETUP_CONFIRMATION_REQUIRED', pendingSetup);
+        try {
+          const attachments = Array.isArray(requestBody.attachments) ? requestBody.attachments.filter((file): file is string => typeof file === 'string') : [];
+          preparedBlockoutContext = await loadBlockoutContext(setupRoot, attachments, activeDocumentId, {
+            projectId: setupProject.id, dataRoot: RUNTIME_DATA_DIR, projectsRoot: PROJECTS_DIR,
+            editTargetFile: normalizeRunContextSelection(requestBody.context).editTargetFile,
+            getProject: (id) => getProject(db, id),
+            authorize: (id) => ctx.authorizeProjectRequest ? ctx.authorizeProjectRequest(req, res, id, { mode: 'read' }) : Promise.resolve(false),
+            onHandoff: (attachmentPath, title) => { blockoutAttachmentNames.set(attachmentPath, blockoutHandoffDisplayName(title)); },
+            onDesignHandoff: (target) => { preparedBlockoutDesignTargets.push(target); },
+          });
+        } catch (error) {
+          if (res.headersSent) return;
+          return sendApiError(res, 400, 'DOCUMENT_REFERENCE_INVALID', error instanceof Error ? error.message : 'The Blockout editing target could not be resolved');
+        }
+      }
     }
     // Keep enrichment's specific recovery response ahead of generic task handoff.
     // Same-request retries still reach the idempotent claim below.
@@ -1562,11 +1627,12 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       let runResolveBody: JsonRecord = requestBody;
       let synthesizedAutomaticDefault = false;
       const rolloutProject = toProjectRecord(getProject(db, requestBody.projectId));
+      const fastProject = isFastProject(rolloutProject?.metadata);
       const snapshotConversationId =
         typeof requestBody.conversationId === 'string' && requestBody.conversationId
           ? getConversation(db, requestBody.conversationId)?.id ?? null
           : getFirstProjectConversation(db, requestBody.projectId)?.id ?? null;
-      const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(
+      const defaultPluginId = fastProject ? null : defaultScenarioPluginIdForProjectMetadata(
         toScenarioProjectMetadata(rolloutProject?.metadata),
       );
       const suppliedSnapshotWasNamed = typeof requestBody.appliedPluginSnapshotId === 'string'
@@ -1658,7 +1724,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       // In-flight physical runs and idempotent retries keep their frozen bundle.
       const rolloutAppConfig = await readAppConfig(RUNTIME_DATA_DIR);
       const rolloutPolicy = readOdNextRolloutPolicy(process.env, rolloutAppConfig);
-      const rolloutTaskType = !explicitUserPlugin ? 'discovery' as const : null;
+      const rolloutTaskType = !fastProject && !explicitUserPlugin ? 'discovery' as const : null;
       const routeApplicability = explicitUserPlugin
         ? 'explicit_user' as const
         : rolloutTaskType && snapshotConversationId
@@ -2075,10 +2141,35 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         return sendApiError(res, 404, 'CONVERSATION_NOT_FOUND', 'conversation not found for project');
       }
     }
+    // Apply after conversation binding and before freezing OD Next inputs.
+    // Carry the quality floor through short follow-up edits in this conversation.
+    const previousRun = typeof meta.projectId === 'string' && typeof meta.conversationId === 'string'
+      ? design.runs.list({ projectId: meta.projectId, conversationId: meta.conversationId })
+        .filter((candidate) => candidate.projectId === meta.projectId && candidate.conversationId === meta.conversationId)
+        .sort((a, b) => b.createdAt - a.createdAt)[0] : null;
+    const selectedContext = requestBody.context as { workspaceItems?: Array<{ path?: unknown }> } | undefined;
+    const selectedFiles = Array.isArray(selectedContext?.workspaceItems)
+      ? selectedContext.workspaceItems.flatMap((item) => typeof item?.path === 'string' ? [item.path] : []) : [];
+    const svgExecutionPolicy = resolveSvgExecutionPolicy({
+      agentId: typeof meta.agentId === 'string' ? meta.agentId : null,
+      prompt: typeof requestBody.currentPrompt === 'string' ? requestBody.currentPrompt
+        : typeof requestBody.message === 'string' ? requestBody.message : '',
+      attachments: [...selectedFiles, ...(Array.isArray(requestBody.attachments)
+        ? requestBody.attachments.filter((file): file is string => typeof file === 'string') : [])],
+      model: typeof meta.model === 'string' ? meta.model : null,
+      reasoning: typeof meta.reasoning === 'string' ? meta.reasoning : null,
+      previousPolicy: previousRun?.svgExecutionPolicy ?? null,
+    });
+    // Both browser and od CLI enter here. Replace any client-supplied decision.
+    meta.svgExecutionPolicy = svgExecutionPolicy;
+    if (svgExecutionPolicy) {
+      meta.model = svgExecutionPolicy.model;
+      meta.reasoning = svgExecutionPolicy.reasoning;
+    }
     // Resolve session mode before omit-pin seed so the user turn stores the
     // same mode the run will use (matches web PUT /messages persistence).
     meta.sessionMode =
-      meta.sessionMode === 'chat' || meta.sessionMode === 'design' || meta.sessionMode === 'plan'
+      meta.sessionMode === 'chat' || meta.sessionMode === 'design' || meta.sessionMode === 'plan' || meta.sessionMode === 'blockout'
         ? normalizeConversationSessionMode(meta.sessionMode)
         : normalizeConversationSessionMode(conversationSession?.sessionMode);
     // Web always mints assistantMessageId client-side. API clients that already
@@ -2229,7 +2320,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       const projectRoot = runProject && meta.projectId
         ? resolveProjectDir(PROJECTS_DIR, meta.projectId, runProject.metadata)
         : null;
-      const seededAttachments = seededUserMessageAttachmentFields(meta, projectRoot);
+      const seededAttachments = seededUserMessageAttachmentFields(meta, projectRoot, blockoutAttachmentNames);
       const hasSeedableAttachmentMetadata =
         (seededAttachments.attachments?.length ?? 0) > 0 ||
         (seededAttachments.commentAttachments?.length ?? 0) > 0;
@@ -2473,7 +2564,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           route: 'full_plan',
           mode: 'unresolved',
         });
+        const visibleProjectAttachments = Array.isArray(requestBody.attachments)
+          ? requestBody.attachments.filter((value): value is string => typeof value === 'string' && value.length > 0 && !isBlockoutHandoffAttachment(value))
+          : [];
+        const privateIntakeContextFiles = await prepareIntakeContextFiles(projectRoot, visibleProjectAttachments);
+        // Logical child packets are resolved/authorized before the snapshot;
+        // freeze their private text, not a possibly virtual parent file path.
+        const privateBlockoutContextFiles = await prepareBlockoutContextFiles(projectRoot, [], activeDocumentId, undefined, preparedBlockoutContext);
+        const privateDocumentSetupFiles = runProject?.metadata?.projectMode === 'fast' ? [] : await prepareDocumentSetupContextFiles(projectRoot, meta.projectId!, runProject?.metadata?.documentSetupIntent, activeDocumentId);
         createdTaskInputSnapshot = createOdNextTaskInputSnapshot({
+          documentReferenceContext: documentReferencePrompt,
           snapshotsRoot: taskInputSnapshotsRoot,
           ...(previousStrategyTask ? { inheritedSnapshot: {
             taskExecutionId: previousStrategyTask.taskExecutionId,
@@ -2483,11 +2583,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           taskExecutionId,
           taskConfiguration,
           projectRoot,
-          projectAttachments: Array.isArray(requestBody.attachments)
-            ? requestBody.attachments.filter(
-                (value): value is string => typeof value === 'string' && value.length > 0,
-              )
-            : [],
+          projectAttachments: [...visibleProjectAttachments, ...privateIntakeContextFiles, ...privateBlockoutContextFiles, ...privateDocumentSetupFiles],
           uploadRoot: UPLOAD_DIR,
           imagePaths: Array.isArray(requestBody.imagePaths)
             ? requestBody.imagePaths.filter(
@@ -2566,7 +2662,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                       snapshotId: resolvedSnapshot.snapshotId,
                       selectedAgentId: candidate.agentId!,
                       initialRunId: candidate.id,
-                      sessionMode: meta.sessionMode === 'chat' || meta.sessionMode === 'plan' ? meta.sessionMode : 'design',
+                      sessionMode: meta.sessionMode === 'chat' || meta.sessionMode === 'plan' || meta.sessionMode === 'blockout' ? meta.sessionMode : 'design',
                       frozenSkillPackage,
                       promptBundleText: preparedPromptBundleText,
                       ...(previousStrategyTask ? { continuedFromTaskExecutionId: previousStrategyTask.taskExecutionId } : {}),
@@ -2855,10 +2951,13 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     const executionMeta: RunCreateMeta = {
       ...meta,
+      documentReferences,
       ...(requestBody.byokProvider !== undefined
         ? { byokProvider: requestBody.byokProvider }
         : {}),
     };
+    setRunDocumentReferenceContext(run, documentReferencePrompt);
+    setRunBlockoutContext(run, preparedBlockoutContext, preparedBlockoutDesignTargets);
     internalRuns.start(
       run,
       {
@@ -3137,17 +3236,24 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       run,
       status,
     );
-    if (
+    const cached = (
       typeof status.deliverableValid === 'boolean'
       && typeof status.deliverableValidation === 'string'
-    ) {
+    );
+    let deliverable = cached ? await revalidateMissingChatRunBlockout({
+      db, projectsRoot: PROJECTS_DIR, dataRoot: RUNTIME_DATA_DIR, run,
+      runStatus: run.status, artifactCount: typeof status.artifactCount === 'number' ? status.artifactCount : 0,
+      cached: status,
+    }) : null;
+    if (cached && !deliverable) {
       res.json({ ...status, ...projectDeliverable });
       return;
     }
     const touchedArtifactPaths = runTouchedArtifactPaths(run);
-    const deliverable = await validateChatRunDeliverable({
+    deliverable ??= await validateChatRunDeliverable({
       db,
       projectsRoot: PROJECTS_DIR,
+      dataRoot: RUNTIME_DATA_DIR,
       run,
       runStatus: run.status,
       artifactCount:

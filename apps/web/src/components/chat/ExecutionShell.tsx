@@ -6,7 +6,7 @@
  * 这个组件只负责画,不做任何归属判断 —— 判断留在纯函数层才能脱离 React 测。
  *
  * 壳头四种样子(设计稿只有三态,手动停止是旗标不是第四态):
- *   进行中   球 + 会扫光的「进行中」+ 秒数,默认展开
+ *   进行中   球 + 会扫光的「进行中」+ 秒数,默认收起(D53)
  *   思考中   同上但换文案 + 三个点。**靠事件驱动**:claude 的 thinking 全是空串,
  *            靠文字判断永远等不到(S21 / W11)
  *   已完成   纯文本 + 总耗时,**默认收起**
@@ -15,7 +15,7 @@
  *    这一档沿用「进行中」,而下方那行「已手动停止」在历史回合上是 hover 才揭示的,
  *    于是一轮停掉的活在屏幕上常驻的唯一说法是「进行中」。判据见 `head` 里的注释。)
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { useRef, type ReactElement } from 'react';
 import { useT } from '../../i18n';
 import { Icon } from '../Icon';
 import type { ExecutionShell as ShellData, ImageRow as ImageRowData, ShellItem, ThinkingTokens, TodoSegment } from '../../runtime/chat/contract';
@@ -81,24 +81,7 @@ export interface ExecutionShellProps {
    * can disable this so their non-hydrated HTML remains inspectable.
    */
   deferCollapsedBodies?: boolean;
-  /**
-   * **这一轮的结论已经开始落地了** —— done 标记到了(产品 2026-09-04)。
-   *
-   * 用户原话:「输出 done 标记之后,上面的**进行中展开收起卡片,就应该自动收起**,
-   * 而不是等到整个对话 run 完了再收起」。截图里两个做完的步骤连着工具行还全摊着,
-   * 而正文已经在下面写「已交付 …」了。
-   *
-   * 为什么不能只看 `shell.status`:done 到达时 run **还在跑**(结论本身还在一个字
-   * 一个字地写),壳仍是 `running`,`lifecycleOpen` 照旧为真 —— 卡要摊到流真正关闭
-   * 为止,而那可能是几十秒之后。判据在 `tests/components/chat/shell-collapse-on-done.tsx`。
-   *
-   * 只影响**自动**折叠;用户手点开过的那张仍然归用户(`userToggled` 闩)。
-   *
-   * ⚠️ 这个值由消息层给,因为 done 是**轮次**的事实,不是壳的字段:壳外出现结论段
-   * (`ProseBlock`)就等于这一轮的 done 已经判定。壳的契约里目前没有这枚闩 ——
-   * `buildTurnBlocks` 内部那只 `doneSeen` 没有出口,补一个字段要动
-   * `runtime/chat/contract.ts`,另有改动在飞,所以先由消息层推。
-   */
+  /** Retained for caller compatibility; conclusion arrival no longer changes user disclosure state (D53). */
   concluded?: boolean;
   /**
    * D43 routes pre-done prose, including cards, through the execution shell.
@@ -118,7 +101,6 @@ export function ExecutionShell({
   runTerminal = false,
   imageSrc,
   deferCollapsedBodies = true,
-  concluded = false,
   odCardScope,
   onBrandBrowserAssistConfirm,
 }: ExecutionShellProps): ReactElement {
@@ -147,47 +129,8 @@ export function ExecutionShell({
     (item) => item.kind === 'todo' && item.segment.status === 'in_progress',
   );
 
-  /**
-   * 折叠态跟着 **run 的生命周期**走(D18):跑着的时候摊开,结束就收起来。
-   *
-   * 不能只靠 `Foldable` 的 `defaultOpen` —— 那是初始值,run 结束时不会再看它一眼,
-   * 壳会一直摊在那儿。也不能每次都把它写回去:用户中途手点收起/展开之后就该听用户的
-   * (同一条约束在 `Foldable` 的注释里,老的执行记录卡也是这么做的)。
-   */
-  /*
-   * **收起的时刻是 done,不是 run 结束**(产品 2026-09-04,见 `concluded` 的注释)。
-   *
-   * 这一行原来只有 `running || shell.stopped`,于是「摊开」一直摊到流关闭。
-   * `concluded` 一为真,这一轮的活就已经交代完了 —— 后面写的是结论,不是过程,
-   * 记录卡该让位给它。
-   *
-   * `shell.stopped` 仍然单独成条:被用户停住的那一档没有结论,收起来等于把
-   * 「停在哪一步」也藏了。
-   */
-  const lifecycleOpen = (running && !concluded) || shell.stopped;
-  const [open, setOpen] = useState(lifecycleOpen);
-  const [userToggled, setUserToggled] = useState(false);
-  useEffect(() => {
-    if (!userToggled) setOpen(lifecycleOpen);
-  }, [lifecycleOpen, userToggled]);
-  /*
-   * ⚠️ **`<details>` 的 `toggle` 事件不区分是谁掀开的**(OPEND-2557 的真因)。
-   *
-   * 我们是受控方,React 每次把 `open` 写回 DOM,浏览器都会照样派发一次 `toggle`。
-   * 这里原来收到就 `setUserToggled(true)` —— 而**壳跑起来那一帧**就有这么一次
-   * (`open` 从无到有),于是这一轮还没跑完就已经算「用户点过」,后面 run 结束时
-   * 那次收起同步被自己屏蔽掉。用户截图:「Done 2m 12s ^」,整条记录还全摊着。
-   *
-   * 判据是**值**:受控方写回去的那一次,`next` 必然等于我们此刻的状态;
-   * 用户点的那一次,DOM 先自己翻面,`next` 必然和我们的状态相反。
-   * 用 ref 读当前值而不是闭包,免得回声事件排到下一帧时读到过期的 `open`。
-   */
-  const openRef = useRef(open);
-  openRef.current = open;
-  const onToggle = useCallback((next: boolean) => {
-    if (next !== openRef.current) setUserToggled(true);
-    setOpen(next);
-  }, []);
+  // D53: activity summaries remain visible, but only the user opens execution details.
+  // Foldable owns manual state, so streaming/status updates cannot move the page by toggling it.
 
   const head = (() => {
     if (shell.status === 'failed') {
@@ -347,8 +290,6 @@ export function ExecutionShell({
       summary={head}
       variant="flat"
       elapsed={elapsed ?? undefined}
-      open={open}
-      onToggle={onToggle}
       expandable={items.length > 0}
       deferBody={deferCollapsedBodies}
       className={hasTodo ? styles.hasTodo : undefined}
@@ -474,14 +415,10 @@ interface RenderCtx {
 
 function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): ReactElement | null {
   if (item.kind === 'thoughts') {
-    /*
-     * key 里带上形态:`live` 翻成 false 的那一刻要**换一只 details**,
-     * 不然 `Foldable` 内部记着的展开态会跟过来,思考一结束就原地摊开
-     * ——「怎么一结束全部释放出来了」正是这个。
-     */
+    // Keep identity through live → done so a manually opened/closed thought stays that way (D53).
     return (
       <ThoughtsRow
-        key={`thoughts-${item.live ? 'live' : 'done'}-${index}`}
+        key={`thoughts-${index}`}
         texts={item.texts}
         elapsedMs={item.elapsedMs}
         tokens={item.tokens ?? null}
@@ -797,7 +734,6 @@ function ThoughtsRow({ texts, elapsedMs, tokens, muted, live, t, deferBody }: {
       summary={summary}
       elapsed={slot ?? undefined}
       className={styles.thoughts}
-      defaultOpen={live}
       stream={live}
       /* **两态共用同一套限高**:`max-height` + 普通滚动条,用户自己滚。
          用户 2026-08-27:「thought 展开应该有个最高高度, 可以滚动」;
@@ -806,7 +742,7 @@ function ThoughtsRow({ texts, elapsedMs, tokens, muted, live, t, deferBody }: {
          这里曾经写 `scroll={!live}`,把限高当成「想完了」才有的东西 —— 那是把「限高」
          和被推翻的「定高 + 慢速分步滚 + 渐隐」混成了一件事。详见 `.scroll` 的注释。 */
       scroll
-      deferBody={deferBody && !live}
+      deferBody={deferBody}
       bodyRef={bodyRef}
       /* 一段都没有就不出箭头也不出 body。claude 的 thinking 全是空串(真实数据:
          本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
@@ -899,15 +835,7 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
       }
       elapsed={elapsed ?? undefined}
       expandable={expandable}
-      /*
-       * **相位,不是初始值**(W24 的 `lifecycleOpen`)。这里原来是 `defaultOpen`,
-       * 而 `defaultOpen` 只在挂载那一帧被看一眼 —— 这一行的 key 是
-       * `todo-${segment.content}-${index}`,状态从 `in_progress` 翻成 `completed`
-       * 时内容和位置一个字都没变,于是同一个实例、同一份内部折叠态,**跑完还摊着**。
-       * `lifecycleOpen` 每次变都跟,但用户自己动过之后就不再跟。
-       * 守卫在 `tests/components/chat/todo-row-lifecycle-collapse.test.tsx`。
-       */
-      lifecycleOpen={segment.status === 'in_progress'}
+      /* D53: a task's status never changes its disclosure state. */
       deferBody={ctx.deferCollapsedBodies}
       /*
        * **这一行是一步** —— 那条竖线和它带来的 22px 那一列只属于步骤这一层。

@@ -12,6 +12,8 @@ import { useT } from '../../i18n';
 import { appendResourceQuery } from '../../collab/workspace-identity';
 import { projectRawUrl } from '../../providers/registry';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
+import { isBlockoutComparisonFile, isBlockoutFile } from '@open-design/contracts';
+import { BlockoutComparisonPreview, BlockoutFilePreview } from '../blockout/BlockoutFilePreview';
 import type { ProjectFile } from '../../types';
 import type { RunProgressStep } from '../../runtime/run-progress';
 import { RunStepFeed } from './RunStepFeed';
@@ -27,6 +29,7 @@ interface Props {
   /** The running turn's tool calls, newest first. */
   steps: RunProgressStep[];
   workspaceContext: WorkspaceCollabContext | null;
+  onOpenFile?: (path: string) => void;
 }
 
 interface FocusRect {
@@ -76,7 +79,16 @@ const SECTION_DWELL_MS = 1200;
  * the caption still says what is happening and the cursor stays hidden rather
  * than pointing at a guess.
  */
-export function DesignFilesBuildingState({
+export function DesignFilesBuildingState(props: Props) {
+  const path = props.file.path ?? props.file.name;
+  // Blockout choice/edits belong to the host's revision-fenced React workflow,
+  // including during generation. Raw build previews have no selection ack host.
+  if (isBlockoutComparisonFile(path)) return <BlockoutComparisonPreview projectId={props.projectId} path={path} revision={props.file.mtime + props.filesRefreshKey} onOpenComparison={props.onOpenFile} generating />;
+  if (isBlockoutFile(path)) return <BlockoutFilePreview projectId={props.projectId} path={path} revision={props.file.mtime + props.filesRefreshKey} generating />;
+  return <GeneratedDesignFilesBuildingState {...props} />;
+}
+
+function GeneratedDesignFilesBuildingState({
   projectId,
   file,
   filesRefreshKey,

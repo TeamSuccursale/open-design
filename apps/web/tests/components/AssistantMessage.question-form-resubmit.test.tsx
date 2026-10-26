@@ -17,7 +17,7 @@
  * remount; only an explicit submit failure re-opens it.
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AssistantMessage } from '../../src/components/AssistantMessage';
@@ -116,10 +116,10 @@ function restoreSessionStorage(): void {
 }
 
 function answerAndSend(container: HTMLElement, value: string): void {
-  const input = container.querySelector('.qf-input');
+  const input = container.querySelector('[data-testid="qf-input"]');
   if (!(input instanceof HTMLInputElement)) throw new Error('expected audience input');
   fireEvent.change(input, { target: { value } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+  fireEvent.click(screen.getByRole('button', { name: /^(Send answers|Submitting…)$/ }));
 }
 
 describe('inline question form resubmission', () => {
@@ -134,8 +134,9 @@ describe('inline question form resubmission', () => {
     cleanup();
     const container = renderForm(onSubmit);
 
-    const send = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Submitting…' }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting…');
 
     answerAndSend(container, 'Designers');
     await Promise.resolve();
@@ -163,8 +164,9 @@ describe('inline question form resubmission', () => {
     cleanup();
     const container = renderForm(onSubmit);
 
-    const send = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Submitting…' }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting…');
 
     answerAndSend(container, 'Designers');
     await Promise.resolve();
@@ -175,7 +177,7 @@ describe('inline question form resubmission', () => {
     settleSubmit!(true);
     await vi.waitFor(() =>
       expect(
-        (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
+        (screen.getByRole('button', { name: 'Submitting…' }) as HTMLButtonElement).disabled,
       ).toBe(true),
     );
   });
@@ -201,7 +203,7 @@ describe('inline question form resubmission', () => {
     const container = renderForm(onSubmit);
 
     expect(
-      (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
+      (screen.getByRole('button', { name: 'Submitting…' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     answerAndSend(container, 'Designers');
     await Promise.resolve();
@@ -214,6 +216,8 @@ describe('inline question form resubmission', () => {
         (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
       ).toBe(false),
     );
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('textbox')).toHaveValue('Designers');
   });
 
   it('re-opens the form when the submission explicitly failed', async () => {
@@ -260,5 +264,28 @@ describe('inline question form resubmission', () => {
     const container = renderForm(retried);
     answerAndSend(container, 'Designers');
     await vi.waitFor(() => expect(retried).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the visible pending state until the matching answer reaches history', async () => {
+    let accept!: (accepted: boolean) => void;
+    const onSubmit = vi.fn((_text: string) => new Promise<boolean>(resolve => { accept = resolve; }));
+    const message = formMessage();
+    const content = (nextUserContent?: string) => <AssistantMessage
+      message={message} streaming={false} projectId="proj-1" conversationId="conv-1"
+      isLast nextUserContent={nextUserContent} onSubmitQuestionForm={onSubmit as never}
+    />;
+    const view = render(content());
+    answerAndSend(view.container, 'Designers');
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting…');
+    expect(screen.getByRole('button', { name: 'Submitting…' })).toHaveAttribute('title', 'Submitting…');
+    await act(async () => accept(true));
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting…');
+    const sentText = onSubmit.mock.calls[0]![0];
+    view.rerender(content(sentText));
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByTestId('question-form-summary')).toHaveTextContent('Designers');
+    expect(screen.queryByRole('button', { name: 'Submitting…' })).toBeNull();
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 });

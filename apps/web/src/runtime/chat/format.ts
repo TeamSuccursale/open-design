@@ -13,8 +13,9 @@ export const UNKNOWN_ELAPSED_BELOW_MS = 100;
 export function formatElapsed(ms: number | null | undefined): string | null {
   if (ms == null || !(ms >= 0)) return null;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
+  const seconds = Math.round(ms / 1000);
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
   return `${m}m ${s}s`;
 }
 
@@ -26,8 +27,9 @@ export function formatShellElapsed(ms: number | null | undefined): string | null
   if (ms == null || !(ms >= 1000)) return null;
   if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
+  const seconds = Math.round(ms / 1000);
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
   return `${m}m ${s}s`;
 }
 

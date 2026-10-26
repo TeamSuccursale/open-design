@@ -1466,13 +1466,8 @@ body:has(.manual-edit-workspace) .chat-composer-fixed-layer {
   max-height: min(184px, 34vh);
   overflow-y: auto;
 }
-.composer.composer-active-file-mode .composer-input-editor {
-  min-height: clamp(150px, 20vh, 210px);
-  max-height: min(300px, 32vh);
-}
 /* Manual height from dragging the shell's gray backdrop vertically. Wins
-   over the default and active-file-mode min/max above (same specificity,
-   declared later). */
+   over the composer's scoped content-size rules. */
 .composer .composer-shell--manual-height .composer-input-editor {
   min-height: var(--composer-manual-h);
   max-height: var(--composer-manual-h);
@@ -1533,10 +1528,6 @@ body:has(.manual-edit-workspace) .chat-composer-fixed-layer {
    caret automatically. */
 .composer-input-editor:has(~ .home-hero__carousel) [contenteditable='true'] {
   caret-color: transparent;
-}
-.composer.composer-active-file-mode .composer-input-editor [contenteditable='true'],
-.composer.composer-active-file-mode .composer-input-editor .composer-editable {
-  min-height: clamp(150px, 20vh, 210px);
 }
 /* Lexical placeholder — absolutely positioned over the empty editor. The
    editor adds/removes its sibling automatically; we style by class. */
@@ -3954,4 +3945,11 @@ body.od-quick-switcher-open .chat-composer-fixed-layer .composer-att .msg-att-de
 }
 .fork-sep.is-new {
   animation: fork-in var(--duration-normal) var(--ease-out) both;
+}
+.mention-document-hint {
+  margin: 0;
+  padding: 0 12px 9px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
 }

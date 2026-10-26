@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppliedPluginSnapshot, SkillSummary } from '@open-design/contracts';
+import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, type AppliedPluginSnapshot, type SkillSummary } from '@open-design/contracts';
 import { ChatPane, buildRunErrorDiagnosticText, retryableAssistantMessage } from '../../src/components/ChatPane';
 import { DESIGN_SYSTEM_WORKSPACE_PROMPT_PREFIX } from '../../src/design-system-auto-prompt';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
@@ -40,6 +40,7 @@ const translations: Record<string, string> = {
 
 function translate(key: string, vars?: Record<string, unknown>): string {
   if (key === 'brand.appliedToChat') return `Using ${String(vars?.name ?? '')}`;
+  if (key === 'documentChat.headerFooterRefine') return `Prepare the header and footer graphic preview for “${String(vars?.name)}”.`;
   return translations[key] ?? key;
 }
 
@@ -597,7 +598,7 @@ describe('ChatPane streaming state', () => {
       agentId: 'amr',
     });
 
-    expect(text).toMatch(/^json-rpc id 4: Connection reset by server\n\nOpenDesign run error diagnostics/);
+    expect(text).toMatch(/^json-rpc id 4: Connection reset by server\n\nMelilloDesign run error diagnostics/);
     expect(text).not.toContain('raw_error:');
     expect(text).toContain('error_code: UPSTREAM_UNAVAILABLE');
     expect(text).not.toContain('\nerror:\n');
@@ -615,7 +616,7 @@ describe('ChatPane streaming state', () => {
       agentId: 'amr',
     });
 
-    expect(text).toMatch(/^Connection dropped\. Try again\.\n\nOpenDesign run error diagnostics/);
+    expect(text).toMatch(/^Connection dropped\. Try again\.\n\nMelilloDesign run error diagnostics/);
     expect(text).not.toContain('raw_error:');
     expect(text).toContain('error_code: AGENT_CONNECTION_DROPPED');
     expect(text).not.toContain('\nerror:\n');
@@ -663,7 +664,7 @@ describe('ChatPane streaming state', () => {
 
     expect(text).not.toContain('agent_stderr_tail');
     expect(text).toMatch(
-      /^json-rpc id 4: Connection reset by server\n\nOpenDesign run error diagnostics/,
+      /^json-rpc id 4: Connection reset by server\n\nMelilloDesign run error diagnostics/,
     );
   });
 
@@ -1159,6 +1160,25 @@ describe('ChatPane streaming state', () => {
     expect(screen.getByText('Annotation')).toBeTruthy();
     expect(screen.getByText('222')).toBeTruthy();
     expect(screen.queryByText('path-0-0-0-0-1')).toBeNull();
+  });
+
+  it('shows an editor-generated header/footer request as a concise action with expandable original details', () => {
+    const content = 'Sviluppa la grafica effettiva dell’intestazione e del piè di pagina del documento Relazione B. Usa il modello design-123 e la sua bozza salvata, le indicazioni e soltanto i loghi pertinenti del progetto. Mantieni le decisioni strutturali. Non generare il Blockout del corpo delle pagine finché questo passaggio non è applicato.';
+    render(<ChatPane messages={[{ id: 'header-footer-request', role: 'user', content, createdAt: 1 }]} streaming={false} error={null} projectId="project-1" projectFiles={[]} onEnsureProject={async () => 'project-1'} onSend={vi.fn()} onStop={vi.fn()} conversations={conversations} activeConversationId="conv-1" onSelectConversation={vi.fn()} onDeleteConversation={vi.fn()} projectMetadata={projectMetadata} />);
+    expect(screen.getByText('Prepare the header and footer graphic preview for “Relazione B”.')).toBeTruthy();
+    expect(screen.queryByText(content)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'documentChat.agentRequestDetails' }));
+    expect(screen.getByText(content)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'chat.input.collapse' }));
+    expect(screen.queryByText(content)).toBeNull();
+  });
+
+  it('summarizes the exact shared automatic blockout request without changing its original details', () => {
+    render(<ChatPane messages={[{ id: 'blockout-start', role: 'user', content: DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, createdAt: 1 }]} streaming={false} error={null} projectId="project-1" projectFiles={[]} onEnsureProject={async () => 'project-1'} onSend={vi.fn()} onStop={vi.fn()} conversations={conversations} activeConversationId="conv-1" onSelectConversation={vi.fn()} onDeleteConversation={vi.fn()} projectMetadata={projectMetadata} />);
+    expect(screen.getByText('documentChat.blockoutStart')).toBeTruthy();
+    expect(screen.queryByText(DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'documentChat.agentRequestDetails' }));
+    expect(screen.getByText(DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT)).toBeTruthy();
   });
 
   it('summarizes auto-sent design-system workspace prompts', () => {

@@ -2,11 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   mergeRunContextSelections,
+  normalizeRunContextSelection,
   normalizeWorkspaceContextItems,
   renderRunContextPrompt,
 } from '../../src/runtimes/chat-run-context.js';
 
 describe('chat run context helpers', () => {
+  it('preserves the explicit edit target independently from referenced tabs and rejects unsafe paths', () => {
+    const current = { editTargetFile: 'documents/report/blockout-comparison.html', workspaceItems: [{ id: 'ref', kind: 'file', label: 'Reference', path: 'documents/other/blockout-comparison.html' }] };
+    expect(normalizeRunContextSelection(current).editTargetFile).toBe(current.editTargetFile);
+    expect(mergeRunContextSelections({ editTargetFile: 'old.html' }, current).editTargetFile).toBe(current.editTargetFile);
+    expect(renderRunContextPrompt(current, {})).toContain('Explicit editing target');
+    for (const editTargetFile of ['../escape.html', 'C:\\private\\secret.html', '/absolute.html', 'file//bad.html']) expect(normalizeRunContextSelection({ editTargetFile }).editTargetFile).toBeUndefined();
+    expect(normalizeRunContextSelection({ workspaceItems: current.workspaceItems }).editTargetFile).toBeUndefined();
+  });
   it('normalizes workspace context items and dedupes by kind/id', () => {
     expect(normalizeWorkspaceContextItems([
       { kind: 'browser', id: ' tab-1 ', label: ' Docs ', url: ' https://example.com/docs ' },

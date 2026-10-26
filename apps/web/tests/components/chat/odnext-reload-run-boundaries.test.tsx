@@ -122,7 +122,8 @@ describe('OD Next 折叠轮次 · run 边界(真机库字节)', () => {
   it('每个 run 一张执行壳,run 1 的推理不和 run 2 的工具堆在一起', () => {
     const folded = foldStrategyTaskTurns(RELOAD).find((m) => m.role === 'assistant')!;
     const shells = blocksOf(folded).filter((b): b is ExecutionShell => b.kind === 'shell');
-    expect(shells).toHaveLength(RUNS.length);
+    // D53: run 0 has only a final question preface, now visible with its form; no empty shell is retained.
+    expect(shells).toHaveLength(RUNS.length - 1);
     // run 2 的两次 Bash 必须落在 run 2 自己那张壳里,而不是 run 0 开的第一张
     expect(shells[0]!.items.some((it) => it.kind === 'tool')).toBe(false);
   });
@@ -190,7 +191,6 @@ describe('OD Next 折叠轮次 · run 边界(真机库字节)', () => {
     expect(runTag(answeredBlock.textContent ?? '')).toBe('run0');
 
     expect(order).toEqual([
-      'shell:run0',
       'answered+prose',
       'shell:run1',
       'prose:run1',

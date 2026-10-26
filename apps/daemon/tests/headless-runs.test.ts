@@ -4,6 +4,7 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createBlockoutDocument, type BlockoutWorkspaceResponse, type BlockoutHandoffResponse, type ChatMessage } from '@open-design/contracts';
 
 import { startServer } from '../src/server.js';
 
@@ -479,6 +480,36 @@ describe('POST /api/runs headless fallbacks', () => {
       ]),
     );
   });
+
+  it('keeps validated Blockout names after daemon seeding and reload while ordinary JSON files keep their names', async () => {
+    started = await startTestServer();
+    const { projectId, conversationId } = await createProject(started.url, 'Blockout attachment persistence');
+    const document = createBlockoutDocument(); document.title = 'Relazione tecnica.png';
+    const workspaceUrl = `${started.url}/api/projects/${encodeURIComponent(projectId)}/blockout-documents/document-1`;
+    const savedResponse = await fetch(workspaceUrl, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ document, baseRaw: null }) });
+    expect(savedResponse.status).toBe(200);
+    const saved = await savedResponse.json() as BlockoutWorkspaceResponse;
+    const handoffResponse = await fetch(`${workspaceUrl}/starting-point`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ document: saved.document, baseRaw: saved.raw, requestId: 'named-blockout-attachment', operation: { type: 'append-alternatives', count: 1, instruction: 'Keep empty blocks' } }) });
+    expect(handoffResponse.status).toBe(200);
+    const handoff = await handoffResponse.json() as BlockoutHandoffResponse;
+    const fileResponse = await fetch(`${started.url}/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'notes.json', content: '{"ordinary":true}' }) });
+    expect(fileResponse.status).toBe(200);
+    const message = `named Blockout attachment ${randomUUID()}`;
+    const runResponse = await fetch(`${started.url}/api/runs`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: `missing-agent-${randomUUID()}`, projectId, conversationId, message, sessionMode: 'chat', attachments: [handoff.path, 'notes.json'] }) });
+    expect(runResponse.status).toBe(202);
+    for (let read = 0; read < 2; read++) {
+      const response = await fetch(`${started.url}/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`);
+      expect(response.status).toBe(200);
+      const messages = await response.json() as { messages: ChatMessage[] };
+      const user = messages.messages.find((item) => item.role === 'user' && item.content === message);
+      expect(user?.attachments).toEqual([
+        expect.objectContaining({ path: handoff.path, name: 'Blockout · Relazione tecnica.png', kind: 'file', order: 0 }),
+        expect.objectContaining({ path: 'notes.json', name: 'notes.json', kind: 'file', order: 1 }),
+      ]);
+    }
+  }, 30_000);
 
   it('preserves sessionMode and runContext on omit-pin seeded user turns', async () => {
     started = await startTestServer();

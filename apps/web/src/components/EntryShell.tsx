@@ -90,6 +90,7 @@ import type {
   SkillSummary,
 } from '../types';
 import { CenteredLoader } from './Loading';
+import { CodexOnboarding } from './CodexOnboarding';
 import { DesignsTab } from './DesignsTab';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { BrandsTab } from './BrandsTab';
@@ -196,6 +197,7 @@ import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { type EntrySettingsSection } from './EntrySettingsMenu';
 import { NewProjectModal } from './NewProjectModal';
+import { DocumentStartDialog, type DocumentStartDraft } from './document-setup/DocumentStartDialog';
 import { ExtensionsMarketplace } from './PluginsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
@@ -921,21 +923,21 @@ export function EntryShell({
     teamProjects: teamProjects.projects,
     workspaceContext,
     isShared: isSharedProject,
-  });
+  }).filter((project) => !project.metadata?.collectionProjectId);
   const allProjectsList: Project[] = buildAllProjectsList({
     projects,
     teamProjects: teamProjects.projects,
     workspaceContext,
     sharedFallbackName: t('recentProjects.sharedProjectFallbackName'),
     isShared: isSharedProject,
-  });
+  }).filter((project) => !project.metadata?.collectionProjectId);
   const projectSearchProjects = buildProjectSearchCatalog(draftProjectsList, allProjectsList);
   const homeProjectsList = useMemo(
     () => reconcileSharedProjectCatalogFields({
       projects,
       teamProjects: teamProjects.projects,
       workspaceContext,
-    }),
+    }).filter((project) => !project.metadata?.collectionProjectId),
     [projects, teamProjects.projects, workspaceContext],
   );
   // projectId → sharing member id, so a card in the 全部项目 / 草稿 grids can
@@ -1212,6 +1214,8 @@ export function EntryShell({
     }
   }, [workspaceLoading, isWorkspaceOnlyView, hasWorkspaceContext]);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [blankDocumentStartOpen, setBlankDocumentStartOpen] = useState(false);
+  const [otherOnboardingOptions, setOtherOnboardingOptions] = useState(false);
   // Home has NO low-balance surface, and since T66 (product 2026-09-07) neither
   // does anywhere else: a positive balance produces nothing at all and the run
   // just starts. Home reached that end state first — ruling 2026-09-06 (T53),
@@ -1302,7 +1306,7 @@ export function EntryShell({
       ? onProviderModelsCacheChange!
       : setLocalProviderModelsCache;
   const [newProjectInitialTab, setNewProjectInitialTab] =
-    useState<CreateTab>('prototype');
+    useState<CreateTab>('other');
   const [integrationTab, setIntegrationTab] = useState<IntegrationTab>(integrationInitialTab);
   // Lazy initializer, so a handoff published by a surface that then navigated
   // here — the `/marketplace/<id>` detail route, which `App` renders outside
@@ -1410,34 +1414,38 @@ export function EntryShell({
     changeView('integrations');
   }
 
-  function openNewProject(tab: CreateTab = 'prototype') {
+  function openNewProject(tab: CreateTab = 'other') {
     setNewProjectInitialTab(tab);
     setNewProjectOpen(true);
   }
 
   function startBlankProjectFromRail() {
-    void Promise.resolve(
-      onCreateProject({
-        name: t('common.untitled'),
+    setBlankDocumentStartOpen(true);
+  }
+
+  async function finishBlankDocumentCreation(draft: DocumentStartDraft) {
+    try {
+      const accepted = await onCreateProject({
+        name: draft.projectName,
         skillId: null,
         designSystemId: null,
-        // No user-typed name exists yet — mark it `generated` (the same tag
-        // `handleCreateProjectFromDesignSystem` and the New Project panel's
-        // blank/no-name path use) so `canAutoRenameProjectFromPrompt` stays
-        // eligible once the user's first in-project prompt or the agent's
-        // own generated title arrives. Without this the project is stuck at
-        // "未命名" forever: this rail (the Drafts / All-projects empty-state
-        // "创建" button) is the only reachable way to open a truly metadata-
-        // less blank project, and every other create path already tags its
-        // fallback name with a `nameSource` the rename gate recognizes.
-        metadata: { kind: 'other', nameSource: 'generated' },
-      }),
-    ).catch((err) => {
-      console.warn('Failed to create blank project from entry rail', err);
-    });
+        metadata: {
+          kind: 'other', intent: 'document', nameSource: 'user',
+          documentSetupIntent: draft.intent, linkedDirs: draft.intent.contextRoots,
+          ...(draft.workingDir ? { userWorkingDir: draft.workingDir } : {}),
+        },
+        ...(draft.workingDirToken ? { userWorkingDirToken: draft.workingDirToken } : {}),
+        conversationMode: 'blockout',
+        autoSendFirstMessage: false,
+      });
+      if (accepted === false) return false;
+      setBlankDocumentStartOpen(false);
+      return true;
+    } catch (error) { console.warn('Failed to create document project', error); throw error; }
   }
 
   function handleCreate(input: CreateInput) {
+    if (input.metadata.documentSetupIntent) return onCreateProject({ ...input, conversationMode: 'blockout', autoSendFirstMessage: false });
     // The NewProjectModal no longer asks the user to pick a plugin.
     // Each project kind is silently bound to its default scenario
     // pipeline at creation time so the user lands in a running flow
@@ -1485,11 +1493,13 @@ export function EntryShell({
   // projectKind='other', so the agent infers the task type and asks only
   // when the brief cannot be routed reliably.
   async function handlePluginLoopSubmit(payload: PluginLoopSubmit) {
+    const createInput = pluginLoopCreateInput(payload);
+    // Collecting document context creates local state; it is not a model run.
+    if (createInput.metadata?.documentSetupIntent) return onCreateProject(createInput);
     if (amrAuthRequired) {
       navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
       return 'blocked' as const;
     }
-    const createInput = pluginLoopCreateInput(payload);
     const isAmrSend = config.mode === 'daemon' && config.agentId === 'amr';
     const amrModelId = isAmrSend
       ? effectiveAgentModelId(
@@ -1544,7 +1554,7 @@ export function EntryShell({
     // this shell is unmounted the moment the hand-off navigates, so nothing
     // after this line may rely on this instance's state or DOM. App owns the
     // hand-off and the way back.
-    const handoff = onBeginProjectCreation(createInput);
+    const handoff = createInput.metadata?.projectMode === 'fast' ? null : onBeginProjectCreation(createInput);
     // Confirm sign-in behind the pending frame. Workspace billing is not a
     // send prerequisite: Link admits funding when the run starts, and
     // ProjectView presents any live funding rejection without waiting on a
@@ -1606,7 +1616,7 @@ export function EntryShell({
           if (decision === 'dismiss') {
             // The dialog was the feedback; the composer gets its draft back
             // without a second error on top.
-            handoff.rollback();
+            handoff?.rollback();
             return 'blocked' as const;
           }
           gate = await retryUnavailableAmrBalanceGate(
@@ -1614,7 +1624,7 @@ export function EntryShell({
           );
         }
         if (gate.kind === 'unavailable') {
-          handoff.rollback({ notice: t('home.amrGateUnavailable') });
+          handoff?.rollback({ notice: t('home.amrGateUnavailable') });
           return false;
         }
         // Everything else falls through and the run starts. Home used to hold
@@ -1641,13 +1651,13 @@ export function EntryShell({
         break;
       }
       if (!amrGatePrecheckPassed) {
-        handoff.rollback({ notice: t('home.createFailed') });
+        handoff?.rollback({ notice: t('home.createFailed') });
         return false;
       }
     }
     const create = () => Promise.resolve(onCreateProject({
       ...createInput,
-      optimisticProjectId: handoff.projectId,
+      ...(handoff ? { optimisticProjectId: handoff.projectId } : {}),
       ...(amrGatePrecheckWitness ? { amrGatePrecheckWitness } : {}),
     }));
     try {
@@ -1670,27 +1680,32 @@ export function EntryShell({
    * reused by the create that follows the admission check.
    */
   function pluginLoopCreateInput(payload: PluginLoopSubmit): EntryCreateProjectInput {
+    const documentSetupIntent = payload.projectMetadata?.documentSetupIntent;
+    const fastProject = payload.projectMetadata?.projectMode === 'fast';
     const summarizedName = summarizeProjectNameFromPrompt(payload.prompt);
     const head = payload.prompt.trim().split(/\s+/).slice(0, 8).join(' ');
     const firstAttachmentName = payload.attachments?.[0]?.name ?? '';
     const fallbackName =
       summarizedName || (head.length > 0 ? head : firstAttachmentName || 'Untitled');
-    const name =
+    const name = payload.projectName?.trim() || (
       payload.pluginTitle && payload.pluginTitle.trim().length > 0
         ? payload.pluginTitle.trim()
-        : fallbackName;
+        : fallbackName);
     const linkedDirs = Array.from(
       new Set(
         [
-          ...(payload.workingDir ? [payload.workingDir] : []),
-          ...(payload.linkedDirs ?? []),
+          ...(fastProject ? [] : documentSetupIntent ? documentSetupIntent.contextRoots : [
+            ...(payload.workingDir ? [payload.workingDir] : []),
+            ...(payload.linkedDirs ?? []),
+          ]),
         ].map((dir) => dir.trim()).filter(Boolean),
       ),
     );
     const metadata: ProjectMetadata = {
       ...(payload.projectMetadata ?? {}),
-      kind: payload.projectKind ?? payload.projectMetadata?.kind ?? 'prototype',
-      nameSource: 'prompt',
+      kind: documentSetupIntent || fastProject ? 'other' : payload.projectKind ?? payload.projectMetadata?.kind ?? 'prototype',
+      ...(documentSetupIntent ? { intent: 'document', documentSetupIntent, userWorkingDir: payload.workingDir ?? undefined } : {}),
+      nameSource: payload.projectName?.trim() ? 'user' : 'prompt',
       ...(payload.contextPlugins && payload.contextPlugins.length > 0
         ? { contextPlugins: payload.contextPlugins }
         : {}),
@@ -1700,20 +1715,17 @@ export function EntryShell({
       ...(payload.contextConnectors && payload.contextConnectors.length > 0
         ? { contextConnectors: payload.contextConnectors }
         : {}),
-      // The Home working-directory picker grants the agent read-only
-      // awareness of a local folder (via `--add-dir`), it does NOT import
-      // that folder into Design Files. So the picked path becomes the new
-      // project's `linkedDirs` rather than its `baseDir`/`userWorkingDir`:
-      // Design Files stays the managed `.od/projects/<id>` artifact store,
-      // independent of the user's local files.
-      ...(linkedDirs.length > 0 ? { linkedDirs } : {}),
+      // Legacy specialized Home flows use the picked folder as read-only context.
+      // Document setup makes its output folder explicit above; only additional
+      // reference folders belong in linkedDirs for that path.
+      ...(documentSetupIntent || linkedDirs.length > 0 ? { linkedDirs } : {}),
       ...(payload.examplePromptContext ? {
         examplePrompt: true,
         examplePromptTitle: payload.examplePromptContext.title,
         examplePromptBrief: payload.examplePromptContext.brief,
       } : {}),
     };
-    const strategyRoutingFields = entryStrategyRoutingFields(payload, metadata);
+    const strategyRoutingFields = documentSetupIntent || fastProject ? { skillId: payload.skillId ?? null } : entryStrategyRoutingFields(payload, metadata);
     return {
       name,
       ...strategyRoutingFields,
@@ -1725,29 +1737,27 @@ export function EntryShell({
         ? { designSystemCatalogScope: payload.designSystemCatalogScope }
         : {}),
       metadata,
-      pendingPrompt: payload.prompt,
-      ...(payload.pluginId && !payload.pluginSelectionProvenance
+      pendingPrompt: documentSetupIntent ? undefined : payload.prompt,
+      ...(payload.pluginId && !payload.pluginSelectionProvenance && !documentSetupIntent && !fastProject
         ? { pluginId: payload.pluginId }
         : {}),
-      ...(payload.pluginSource && !payload.pluginSelectionProvenance
+      ...(payload.pluginSource && !payload.pluginSelectionProvenance && !documentSetupIntent && !fastProject
         ? { pluginSource: payload.pluginSource }
         : {}),
-      ...(payload.pluginType && !payload.pluginSelectionProvenance
+      ...(payload.pluginType && !payload.pluginSelectionProvenance && !documentSetupIntent && !fastProject
         ? { pluginType: payload.pluginType }
         : {}),
-      ...(payload.appliedPluginSnapshotId && !payload.pluginSelectionProvenance
+      ...(payload.appliedPluginSnapshotId && !payload.pluginSelectionProvenance && !documentSetupIntent && !fastProject
         ? { appliedPluginSnapshotId: payload.appliedPluginSnapshotId }
         : {}),
       ...(payload.initialRunContext ? { initialRunContext: payload.initialRunContext } : {}),
-      ...(payload.conversationMode ? { conversationMode: payload.conversationMode } : {}),
+      ...(documentSetupIntent ? { conversationMode: 'blockout' } : payload.conversationMode ? { conversationMode: payload.conversationMode } : {}),
       ...(payload.attachments && payload.attachments.length > 0
         ? { pendingFiles: payload.attachments }
         : {}),
-      // No `userWorkingDirToken`: linkedDirs grant read-only `--add-dir`
-      // access and are validated by the daemon at create time, so they do
-      // not need the desktop main-process trust token that baseDir imports
-      // require for write access.
-      autoSendFirstMessage: true,
+      // Only the explicit document output folder needs its desktop write grant.
+      ...(documentSetupIntent && payload.workingDirToken ? { userWorkingDirToken: payload.workingDirToken } : {}),
+      autoSendFirstMessage: !documentSetupIntent,
     };
   }
 
@@ -1807,7 +1817,17 @@ export function EntryShell({
     return (
       <div className="entry-shell entry-shell--no-header entry-shell--onboarding">
         <main className="entry-onboarding-modal" aria-label={t('settings.welcomeTitle')}>
-          <OnboardingView
+          {!otherOnboardingOptions ? (
+            <CodexOnboarding
+              config={config}
+              agents={agents}
+              daemonLive={daemonLive}
+              onRefreshAgents={onRefreshAgents}
+              onConfigPersist={onConfigPersist}
+              onFinish={finishOnboarding}
+              onOtherOptions={() => setOtherOnboardingOptions(true)}
+            />
+          ) : <OnboardingView
             config={config}
             agents={agents}
             agentsLoading={agentsLoading}
@@ -1823,7 +1843,7 @@ export function EntryShell({
             onRefreshAgents={onRefreshAgents}
             onAmrLoginStatusChange={onAmrLoginStatusChange}
             onFinish={finishOnboarding}
-          />
+          />}
         </main>
       </div>
     );
@@ -1859,6 +1879,7 @@ export function EntryShell({
     defaultDesignSystemId,
     onSubmit: handlePluginLoopSubmit,
     onOpenProject,
+    onOpenExistingProjects: () => setProjectSearchOpen(true),
     // The Add menu's "Add plugin" row lands on the plugins page.
     onBrowseRegistry: () => changeView('plugins'),
     onOpenIntegrations: () => openIntegrationTab('connectors'),
@@ -2284,6 +2305,7 @@ export function EntryShell({
         }}
         onClose={() => setNewProjectOpen(false)}
       />
+      {blankDocumentStartOpen ? <DocumentStartDialog purpose="" onCancel={() => setBlankDocumentStartOpen(false)} onConfirm={finishBlankDocumentCreation} /> : null}
     </div>
   );
 }
@@ -3857,12 +3879,12 @@ function OnboardingView({
           <footer className="onboarding-cloud__footer">
             <LanguageMenu placement="up" align="start" />
             <span>
-              © {new Date().getFullYear()} OpenDesign · {t('settings.onboardingCloudRights')}
+              © {new Date().getFullYear()} MelilloDesign · {t('settings.onboardingCloudRights')}
             </span>
           </footer>
         </div>
         <div className="onboarding-cloud__art" aria-hidden="true">
-          <img src="/onboarding/onboarding-cloud-art.webp" alt="" />
+          <img src="/onboarding/melillodesign-architecture.png" alt="" />
         </div>
       </section>
     );

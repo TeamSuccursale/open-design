@@ -41,6 +41,7 @@ async function startRunStubServer(
   resumable: boolean,
   createResponse?: { status: number; body: unknown },
   eventStream?: string,
+  keepEventStreamOpen = false,
 ): Promise<StubServer> {
   const requests: CapturedRequest[] = [];
   let taskFollowEnabled = false;
@@ -143,7 +144,8 @@ async function startRunStubServer(
           'cache-control': 'no-cache',
         });
         if (eventStream !== undefined) {
-          res.end(eventStream);
+          if (keepEventStreamOpen) res.write(eventStream);
+          else res.end(eventStream);
         } else if (taskFollowEnabled && captured.url === '/api/runs/run-1/events') {
           res.end('event: end\ndata: {"status":"succeeded","strategyTask":{"taskExecutionId":"task-1","activeRunId":"run-2","nextRunId":"run-2","outcome":"running","terminal":false}}\n\n');
         } else if (taskFollowEnabled && captured.url === '/api/runs/run-2/events') {
@@ -200,6 +202,36 @@ async function runCli(
 }
 
 describe('od run CLI', () => {
+  it('closes the stream and exits cleanly after a terminal event even if the server keeps SSE open', async () => {
+    stub = await startRunStubServer(true, undefined,
+      'event: end\ndata: {"status":"succeeded"}\n\n', true);
+    const result = await runCli([
+      'run', 'start', '--project', 'project-1', '--message', 'A short check.',
+      '--follow', '--daemon-url', stub.baseUrl,
+    ]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('"status":"succeeded"');
+    expect(stub.requests.map((request) => request.url)).toEqual(['/api/runs', '/api/runs/run-2/events']);
+  });
+
+  it.each(['start', 'redesign'])('forwards the chosen Claude model and effort through od run %s', async (command) => {
+    stub = await startRunStubServer(true);
+    const result = await runCli([
+      'run', command, '--project', 'project-1', '--conversation', 'conversation-1',
+      '--agent', 'claude', '--model', 'claude-opus-5-5', '--reasoning', 'medium',
+      '--message', 'Reply with a short status.', '--json', '--daemon-url', stub.baseUrl,
+    ]);
+
+    expect(result.code, result.stderr).toBe(0);
+    expect(stub.requests).toHaveLength(1);
+    expect(`${stub.requests[0]!.method} ${stub.requests[0]!.url}`).toBe('POST /api/runs');
+    expect(JSON.parse(stub.requests[0]!.body)).toMatchObject({
+      projectId: 'project-1', conversationId: 'conversation-1', agentId: 'claude',
+      model: 'claude-opus-5-5', reasoning: 'medium', message: 'Reply with a short status.',
+    });
+  });
+
   it('submits BYOK connection options and an env key through the existing Run API', async () => {
     stub = await startRunStubServer(true);
     tempDir = await mkdtemp(join(tmpdir(), 'od-run-byok-'));

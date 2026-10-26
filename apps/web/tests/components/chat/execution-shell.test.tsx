@@ -8,7 +8,7 @@
  * 手捏的话组件与数据层可能各自漂移,接起来才发现对不上。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import type { PersistedAgentEvent } from '@open-design/contracts';
 import { I18nProvider } from '../../../src/i18n';
@@ -55,12 +55,12 @@ const todo = (id: string, items: Array<[string, string]>): PersistedAgentEvent[]
 ]);
 
 describe('壳头', () => {
-  it('运行中:会动的「进行中」+ 球,默认摊开', () => {
+  it('运行中:状态和球保留,默认收起(D53)', () => {
     const [shell] = shellsOf([{ kind: 'status', label: 'requesting' }, ...call('t1', 'Bash', { command: 'ls' })], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('进行中')).toBeTruthy();
     expect(document.querySelector('[data-orb="connecting"]')).not.toBeNull();
-    expect(document.querySelector('details')?.open).toBe(true);
+    expect(document.querySelector('details')?.open).toBe(false);
   });
 
   /**
@@ -72,7 +72,7 @@ describe('壳头', () => {
    */
   it('收到 thinking 就出「思考中」并带三个点 —— 即使一个字都没有(S21)', () => {
     const [shell] = shellsOf([{ kind: 'thinking', text: '' }], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     const label = screen.getByText(/思考中/);
     expect(label).toBeTruthy();
     expect(document.querySelector('[data-orb="composing"]')).not.toBeNull();
@@ -84,7 +84,7 @@ describe('壳头', () => {
 
   it('结束:纯文本「已完成」,默认收起,球撤掉', () => {
     const [shell] = shellsOf(call('t1', 'Bash', { command: 'ls' }), 'succeeded');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('已完成')).toBeTruthy();
     expect(document.querySelector('[data-orb]')).toBeNull();
     expect(document.querySelector('details')?.open).toBe(false);
@@ -92,7 +92,7 @@ describe('壳头', () => {
 
   it('整轮失败:状态词换成「运行失败」,默认收起(原因交给报错卡)', () => {
     const [shell] = shellsOf(call('t1', 'Bash', { command: 'npm run build' }), 'failed');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('运行失败')).toBeTruthy();
     expect(document.querySelector('details')?.open).toBe(false);
   });
@@ -110,7 +110,7 @@ describe('壳头', () => {
    */
   it('手动停止:状态词是「已取消」,不挂球(秒数停住,仍不是第四种状态)', () => {
     const [shell] = shellsOf(call('t1', 'Bash', { command: 'ls' }), 'canceled');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('已取消')).toBeTruthy();
     expect(screen.queryByText('进行中')).toBeNull();
     expect(screen.queryByText('运行失败')).toBeNull();
@@ -119,13 +119,13 @@ describe('壳头', () => {
 
   it('空态:没有内容时不出箭头(D21)', () => {
     const [shell] = shellsOf([{ kind: 'status', label: 'requesting' }], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(document.querySelector('details svg')).toBeNull();
   });
 
   it('壳头耗时按粗档写(31s 而不是 31.0s)', () => {
     const [shell] = shellsOf(call('t1', 'Bash', { command: 'ls' }, { startedAt: 0, completedAt: 31_000 }), 'succeeded');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('31s')).toBeTruthy();
   });
 });
@@ -159,13 +159,13 @@ describe('有清单:按 todo 分段', () => {
     expect(strucked).not.toBeNull();                               // 划线
   });
 
-  it('正在跑的那条默认摊开', () => {
+  it('正在跑的步骤默认收起(D53)', () => {
     // 必须用「还在跑」的轮次:轮次一结束,没关掉的 todo 会被收成停止态,自然也就不该再摊开
     const shells = shellsOf(events, 'running');
-    render(<ExecutionShell shell={nth(shells, shells.length - 1)} />);
+    render(<ExecutionShell shell={nth(shells, shells.length - 1)} deferCollapsedBodies={false} />);
     const drawers = [...document.querySelectorAll('details details')] as HTMLDetailsElement[];
     const current = drawers.find((d) => d.querySelector('summary')?.textContent?.includes('按同一套间距'));
-    expect(current?.open).toBe(true);
+    expect(current?.open).toBe(false);
   });
 });
 
@@ -191,7 +191,7 @@ describe('没有清单:平铺', () => {
       { kind: 'text', text: '我先看一下工作区里的规格文件。' },
       ...call('t1', 'Bash', { command: 'cat 规格.md' }),
     ], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     expect(screen.getByText('我先看一下工作区里的规格文件。')).toBeTruthy();
     // 工具行照旧在壳里,而且排在那句话后面
     expect(screen.getByText('读取')).toBeTruthy();
@@ -206,7 +206,7 @@ describe('没有清单:平铺', () => {
 describe('思考流(D46)', () => {
   it('思考中:限高滚动窗挂在思考那一格上,壳 body 不动', () => {
     const [shell] = shellsOf([{ kind: 'thinking', text: '两张图的栅格看着是同一套。' }], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     // 壳 body 永远是 `.stack` —— 思考不改变壳的形态
     const body = document.querySelector('details > div[class*="body"]');
     expect(body?.className).toMatch(/stack/);
@@ -223,7 +223,7 @@ describe('思考流(D46)', () => {
       { kind: 'thinking', text: '先看一眼。' },
       ...call('t1', 'Bash', { command: 'ls' }),
     ], 'running');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     const body = document.querySelector('details > div[class*="body"]');
     expect(body?.className).toMatch(/stack/);
     expect(body?.className).not.toMatch(/stream/);
@@ -231,7 +231,7 @@ describe('思考流(D46)', () => {
 
   it('跑完了不再流式', () => {
     const [shell] = shellsOf([{ kind: 'thinking', text: '想好了。' }], 'succeeded');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
     const body = document.querySelector('details > div[class*="body"]');
     expect(body?.className ?? '').not.toMatch(/stream/);
   });

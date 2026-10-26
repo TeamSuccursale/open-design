@@ -889,7 +889,7 @@ function cleanAgentVersionLabel(
 }
 
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'OpenDesign' : agent.name;
+  return agent.id === 'amr' ? 'MelilloDesign' : agent.name;
 }
 
 const AGENT_CLI_ENV_FIELDS = [

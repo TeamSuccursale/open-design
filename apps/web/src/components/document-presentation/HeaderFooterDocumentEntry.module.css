@@ -1,0 +1,6 @@
+.entry { margin: 14px 0 22px; padding: 20px; border: 1px solid var(--studio-line); border-radius: 14px; background: var(--studio-paper); color: var(--studio-ink); }
+.entry h3 { margin: 0 0 8px; font-size: 17px; line-height: 1.4; font-weight: 600; }
+.entry p { color: var(--studio-muted); max-width: 68ch; margin: 0 0 16px; font-size: 13px; line-height: 1.6; }
+.document { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 12px; }
+.document > span { display: grid; gap: 3px; }
+.document small { color: var(--studio-muted); }

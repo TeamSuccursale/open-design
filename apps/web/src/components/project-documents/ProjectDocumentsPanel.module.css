@@ -1,0 +1,48 @@
+.backdrop { justify-content: flex-end; align-items: stretch; padding: 16px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+.panel { width: min(760px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--studio-paper); color: var(--studio-ink); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px 18px; border-bottom: 1px solid var(--studio-line); }
+.header h2 { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 600; letter-spacing: -0.02em; }
+.header p { margin: 6px 0 0; font-size: 13px; color: var(--studio-muted); }
+.body { overflow: auto; overscroll-behavior: contain; min-height: 0; padding: 22px 26px 30px; scrollbar-color: var(--studio-muted) var(--studio-paper); }
+.intro { font-size: 13px; line-height: 1.65; max-width: 65ch; margin: 0 0 22px; color: var(--studio-muted); }
+.toolbar, .row, .rowActions, .formActions { display: flex; align-items: center; gap: 10px; }
+.toolbar { justify-content: space-between; margin-bottom: 26px; }
+.toolbar button, .row button { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
+.group { margin: 24px 0; }
+.group h3 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+.group ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--studio-line); }
+.group li { padding: 18px 0; border-bottom: 1px solid var(--studio-line); }
+.group li[data-active] .identity h4 { color: var(--studio-accent); }
+.row { justify-content: space-between; }
+.identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.identity > svg { flex: none; color: var(--studio-accent); }
+.identity h4 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+.identity p { margin: 4px 0 0; font-size: 11px; line-height: 1.5; color: var(--studio-muted); }
+.folder { padding-left: 32px; margin-top: 10px; font-size: 11px; color: var(--studio-muted); }
+.folder summary, .archived summary { cursor: pointer; }
+.folder p { line-height: 1.6; margin: 8px 0 0; overflow-wrap: anywhere; }
+.rowActions { flex-wrap: wrap; padding-left: 24px; margin-top: 8px; gap: 2px 8px; }
+.rowActions button { font-size: 11px; height: auto; min-height: 32px; white-space: normal; }
+.empty { min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; color: var(--studio-muted); }
+.empty p { max-width: 44ch; font-size: 13px; line-height: 1.6; }
+.form { display: flex; flex-direction: column; gap: 18px; }
+.form h3 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.5; }
+.form > p { font-size: 12px; line-height: 1.6; margin: 0; }
+.form > label, .folderInput label { display: flex; flex-direction: column; gap: 7px; align-items: stretch; text-align: left; font-size: 12px; }
+.location { margin: 0; padding: 14px 16px; border: 1px solid var(--studio-line); border-radius: 8px; display: flex; flex-direction: column; gap: 12px; }
+.location legend { padding: 0 6px; font-size: 12px; }
+.location label { display: flex; align-items: center; justify-content: flex-start; gap: 9px; font-size: 12px; }
+.location input { width: 15px; height: 15px; margin: 0; accent-color: var(--studio-accent); }
+.folderInput { display: flex; align-items: flex-end; gap: 10px; }
+.folderInput label { flex: 1; min-width: 0; }
+.folderInput button { flex: none; font-size: 12px; }
+.hint { color: var(--studio-muted); font-size: 12px; line-height: 1.6; }
+.formActions { margin-top: 8px; justify-content: flex-end; padding-top: 18px; border-top: 1px solid var(--studio-line); }
+.formActions button { font-size: 12px; }
+.message, .confirm { margin: 0 0 20px; padding: 14px 16px; border-radius: 8px; background: var(--studio-tint); font-size: 12px; line-height: 1.6; }
+.confirm { margin-top: 12px; margin-bottom: 0; }
+.confirm button { margin-right: 8px; font-size: 12px; }
+.archived { margin-top: 26px; font-size: 12px; color: var(--studio-muted); }
+.archived .row { margin-top: 12px; gap: 16px; }
+.group button:focus-visible, .folder summary:focus-visible, .archived summary:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 3px; }
+@media (max-width: 620px) { .backdrop { padding: 8px; } .panel { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); } .header, .body { padding: 18px; } .toolbar { flex-wrap: wrap; } .folderInput { align-items: stretch; flex-direction: column; } .rowActions { padding-left: 0; } }

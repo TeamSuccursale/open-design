@@ -1,0 +1,5 @@
+.context { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 6px 2px; color: var(--chat-text-muted); }
+.context p { margin: 0; min-width: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.context strong { color: var(--chat-text); font-weight: 600; }
+.context button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 6px; font-size: 11px; }
+.context button span { font-size: 15px; line-height: 1; }

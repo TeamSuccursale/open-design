@@ -936,6 +936,7 @@ export function createRunAnalyticsLifecycle(
             ? await validateChatRunDeliverable({
                 db,
                 projectsRoot: PROJECTS_DIR,
+                dataRoot: RUNTIME_DATA_DIR,
                 run,
                 runStatus: run.status,
                 artifactCount,

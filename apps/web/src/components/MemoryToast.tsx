@@ -12,9 +12,11 @@ import { AnimatePresence, motion } from 'motion/react';
 import type {
   MemoryChangeEvent,
   MemoryExtractionEvent,
+  MemoryExtractionsResponse,
 } from '@open-design/contracts';
 import { useT } from '../i18n';
 import { toastSlideUp } from '../motion';
+import { bindStreamVisibility } from '../lib/stream-visibility';
 
 interface ActiveToast {
   key: number;
@@ -27,19 +29,19 @@ interface Props {
   // and clicking it should jump the user into Settings → Memory.
   onOpenMemory?: () => void;
   /**
-   * `off` preserves the browser's HTTP/1.1 connection budget while a project
-   * is hydrating. `activity` is used only while a project run can produce a
-   * memory extraction; when that run ends we keep the stream just long enough
-   * to observe the extraction's own terminal event. Other shell surfaces keep
-   * the existing always-on notification behavior.
+   * Runs and idle/Home surfaces leave the browser's HTTP/1.1 slots available
+   * for the run stream and normal requests. After a run ends, a bounded
+   * hand-off can observe its memory extraction;
+   * Settings → Memory remains the authoritative history outside that window.
    */
   subscriptionMode?: MemoryToastSubscriptionMode;
 }
 
 const VISIBLE_MS = 4500;
 const EXTRACTION_START_GRACE_MS = 10_000;
+const EXTRACTION_HANDOFF_MAX_MS = 60_000;
 
-export type MemoryToastSubscriptionMode = 'always' | 'activity' | 'off';
+export type MemoryToastSubscriptionMode = 'activity' | 'idle' | 'off';
 
 export function memoryToastSubscriptionMode(input: {
   routeKind: string;
@@ -49,23 +51,46 @@ export function memoryToastSubscriptionMode(input: {
   // MemorySection owns the same endpoint while its surface is open, so a
   // second toast-only connection would be redundant.
   if (input.memorySurfaceOpen) return 'off';
-  if (input.routeKind !== 'project') return 'always';
-  return input.projectRunActive ? 'activity' : 'off';
+  if (input.routeKind !== 'project') return 'off';
+  return input.projectRunActive ? 'activity' : 'idle';
 }
 
 export function MemoryToast({
   onOpenMemory,
-  subscriptionMode = 'always',
+  subscriptionMode = 'off',
 }: Props) {
   const t = useT();
   const [toast, setToast] = useState<ActiveToast | null>(null);
-  const [subscribed, setSubscribed] = useState(subscriptionMode !== 'off');
+  const [subscribed, setSubscribed] = useState(false);
   // We keep the dismiss timer in a ref so a second event mid-flight
   // resets the countdown instead of double-dismissing.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subscriptionModeRef = useRef(subscriptionMode);
   const subscriptionCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscriptionExpiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeExtractionIdsRef = useRef(new Set<string>());
+  const [streamVisible, setStreamVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
+  const reconcileOnOpen = useRef(false);
+
+  useEffect(() => {
+    // The shared lease only reports a return after it has released a stream.
+    // A component mounted hidden has no stream yet, so also observe an early
+    // visible return before that grace window has elapsed.
+    const becameVisible = () => {
+      if (document.visibilityState !== 'hidden') setStreamVisible(true);
+    };
+    const binding = bindStreamVisibility({
+      onHidden: () => { reconcileOnOpen.current = true; setStreamVisible(false); },
+      onVisible: () => setStreamVisible(true),
+    });
+    document.addEventListener('visibilitychange', becameVisible);
+    window.addEventListener('focus', becameVisible);
+    return () => {
+      binding.dispose();
+      document.removeEventListener('visibilitychange', becameVisible);
+      window.removeEventListener('focus', becameVisible);
+    };
+  }, []);
 
   useEffect(() => {
     const previousMode = subscriptionModeRef.current;
@@ -74,22 +99,41 @@ export function MemoryToast({
       clearTimeout(subscriptionCloseTimerRef.current);
       subscriptionCloseTimerRef.current = null;
     }
-    if (subscriptionMode !== 'off') {
-      setSubscribed(true);
-      return;
+    if (subscriptionExpiryTimerRef.current) {
+      clearTimeout(subscriptionExpiryTimerRef.current);
+      subscriptionExpiryTimerRef.current = null;
     }
-    // Entering a project from Home must release the memory slot immediately.
-    // Only a stream that was opened for an active run gets a short hand-off
-    // window so the post-child-close extractor can announce its `running` id.
-    if (previousMode !== 'activity') {
+    if (subscriptionMode === 'activity') {
+      // Extraction follows child close. While the native run is active its
+      // own stream has priority; a new run also ends any previous hand-off.
       activeExtractionIdsRef.current.clear();
       setSubscribed(false);
       return;
     }
+    // Only a completed activity opens a short hand-off window so the
+    // post-child-close extractor can announce its `running` id.
+    if (subscriptionMode !== 'idle' || previousMode !== 'activity') {
+      activeExtractionIdsRef.current.clear();
+      setSubscribed(false);
+      return;
+    }
+    // The extractor may have announced itself before the UI received the run's
+    // terminal frame. Reconcile once when opening, alongside future events.
+    reconcileOnOpen.current = true;
+    setSubscribed(true);
+    // A missing terminal frame (or a delayed extractor) must not leave a
+    // visible idle tab holding a socket forever. This expires observation
+    // only; extraction records and the native job continue independently.
+    subscriptionExpiryTimerRef.current = setTimeout(() => {
+      subscriptionExpiryTimerRef.current = null;
+      if (subscriptionModeRef.current !== 'idle') return;
+      activeExtractionIdsRef.current.clear();
+      setSubscribed(false);
+    }, EXTRACTION_HANDOFF_MAX_MS);
     subscriptionCloseTimerRef.current = setTimeout(() => {
       subscriptionCloseTimerRef.current = null;
       if (
-        subscriptionModeRef.current === 'off'
+        subscriptionModeRef.current === 'idle'
         && activeExtractionIdsRef.current.size === 0
       ) {
         setSubscribed(false);
@@ -101,14 +145,51 @@ export function MemoryToast({
     if (subscriptionCloseTimerRef.current) {
       clearTimeout(subscriptionCloseTimerRef.current);
     }
+    if (subscriptionExpiryTimerRef.current) {
+      clearTimeout(subscriptionExpiryTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
-    if (!subscribed) return;
+    if (!subscribed || !streamVisible) return;
     // Guard for environments without EventSource (jsdom in tests, SSR).
     // The toast is purely a UX nicety; no SSE just means no auto-pop-up.
     if (typeof EventSource === 'undefined') return;
     const es = new EventSource('/api/memory/events');
+    const reconcile = new AbortController();
+    let disposed = false;
+    let reconcileTimeout: ReturnType<typeof setTimeout> | undefined;
+    const changedSinceResume = new Set<string>();
+    if (reconcileOnOpen.current) {
+      reconcileOnOpen.current = false;
+      // Only observation resumes. A terminal event may have arrived while the
+      // toast released its socket; reconcile before retaining idle ownership.
+      reconcileTimeout = setTimeout(() => reconcile.abort(), 5000);
+      void fetch('/api/memory/extractions', { signal: reconcile.signal, cache: 'no-store' })
+        .then(async response => {
+          if (!response.ok) throw new Error('Memory extraction snapshot unavailable');
+          const value = await response.json() as MemoryExtractionsResponse;
+          if (!Array.isArray(value.extractions)) throw new Error('Invalid memory extraction snapshot');
+          if (disposed) return;
+          const running = new Set(value.extractions.filter(record => record.phase === 'running').map(record => record.id));
+          // Missing rows may have been evicted or explicitly cleared. Retain
+          // notification ownership only for known running rows, without
+          // overriding a newer SSE transition received during this read.
+          for (const id of activeExtractionIdsRef.current) if (!changedSinceResume.has(id) && !running.has(id)) activeExtractionIdsRef.current.delete(id);
+          for (const id of running) if (!changedSinceResume.has(id)) activeExtractionIdsRef.current.add(id);
+          if (subscriptionModeRef.current === 'idle' && activeExtractionIdsRef.current.size === 0 && subscriptionCloseTimerRef.current === null) setSubscribed(false);
+        })
+        .catch(() => {
+          // Notification failure cannot reserve an idle socket indefinitely.
+          // This does not change extraction records or the native job.
+          if (disposed) return;
+          for (const id of activeExtractionIdsRef.current) {
+            if (!changedSinceResume.has(id)) activeExtractionIdsRef.current.delete(id);
+          }
+          if (subscriptionModeRef.current === 'idle' && activeExtractionIdsRef.current.size === 0 && subscriptionCloseTimerRef.current === null) setSubscribed(false);
+        })
+        .finally(() => { if (reconcileTimeout) clearTimeout(reconcileTimeout); });
+    }
     es.addEventListener('change', (raw) => {
       try {
         const event = JSON.parse((raw as MessageEvent).data) as MemoryChangeEvent;
@@ -138,6 +219,7 @@ export function MemoryToast({
       try {
         const event = JSON.parse((raw as MessageEvent).data) as MemoryExtractionEvent;
         if (!event?.id) return;
+        changedSinceResume.add(event.id);
         if (event.phase === 'running') {
           activeExtractionIdsRef.current.add(event.id);
           if (subscriptionCloseTimerRef.current) {
@@ -148,12 +230,12 @@ export function MemoryToast({
         }
         activeExtractionIdsRef.current.delete(event.id);
         if (
-          subscriptionModeRef.current === 'off'
+          subscriptionModeRef.current === 'idle'
           && activeExtractionIdsRef.current.size === 0
         ) {
           subscriptionCloseTimerRef.current = setTimeout(() => {
             subscriptionCloseTimerRef.current = null;
-            if (subscriptionModeRef.current === 'off') setSubscribed(false);
+            if (subscriptionModeRef.current === 'idle') setSubscribed(false);
           }, 0);
         }
       } catch {
@@ -161,9 +243,11 @@ export function MemoryToast({
       }
     });
     return () => {
+      disposed = true; reconcile.abort();
+      if (reconcileTimeout) clearTimeout(reconcileTimeout);
       es.close();
     };
-  }, [subscribed]);
+  }, [subscribed, streamVisible]);
 
   useEffect(() => {
     if (!toast) return;

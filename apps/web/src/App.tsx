@@ -2579,8 +2579,8 @@ function AppInner() {
   // user's previous choice, so we only fill an empty slot.
   //
   // First-run onboarding is the one time we must NOT do this: the onboarding
-  // flow is the sole authority for the initial agent pick (AMR is the
-  // recommended default there), and AMR (vela) detection is asynchronous. If
+  // flow is the sole authority for the initial agent pick. CLI detection is
+  // asynchronous. If
   // this fallback fires during onboarding while AMR is still being detected it
   // snaps the slot to the registry-first *detected* agent (Claude) and
   // persists it to the daemon, which then races and clobbers the user's AMR
@@ -2590,7 +2590,8 @@ function AppInner() {
     if (!daemonConfigLoaded || agentsLoading) return;
     if (config.onboardingCompleted !== true) return;
     if (config.agentId) return;
-    const firstAvailable = agents.find((a) => a.available);
+    const firstAvailable = agents.find((a) => a.id === 'codex' && a.available)
+      ?? agents.find((a) => a.available);
     if (!firstAvailable) return;
     setConfig((prev) => {
       if (prev.agentId) return prev;
@@ -3285,7 +3286,7 @@ function AppInner() {
   const beginOptimisticProjectCreation = useCallback(
     (input: AppCreateProjectInput): OptimisticProjectCreationHandoff => {
       const derivedPendingPrompt =
-        input.pendingPrompt ??
+        input.metadata?.documentSetupIntent ? undefined : input.pendingPrompt ??
         (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
       const metadata = mergeLinkedDirsIntoMetadata(input.metadata, input.linkedDirs);
       const stagedFiles = Array.isArray(input.pendingFiles)
@@ -3367,7 +3368,7 @@ function AppInner() {
       // as a no-design-system project rather than silently inheriting the
       // workspace default.
       const derivedPendingPrompt =
-      input.pendingPrompt ??
+      input.metadata?.documentSetupIntent ? undefined : input.pendingPrompt ??
       (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
 
       const metadata = mergeLinkedDirsIntoMetadata(input.metadata, input.linkedDirs);
@@ -3399,7 +3400,7 @@ function AppInner() {
         }
         // An auto-send create that did not come through Home's composer opens
         // its frame here; Home's own sends arrive with the frame already up.
-        if (input.autoSendFirstMessage && !optimisticProjectId) {
+        if (!input.metadata?.documentSetupIntent && input.metadata?.projectMode !== 'fast' && input.autoSendFirstMessage && !optimisticProjectId) {
           optimisticProjectId = beginOptimisticProjectCreation(input).projectId;
         }
         const optimisticConversationId = optimisticProjectId
@@ -3488,6 +3489,7 @@ function AppInner() {
             appliedPluginSnapshotId: result.appliedPluginSnapshotId,
           }
         : result.project;
+      let setupWorkingDirHandoffFailed = false;
       if (optimisticProjectId) {
         releaseProjectRunStatusReads(optimisticProjectId);
         // The files now belong to this project (uploaded below); a later Home
@@ -3533,6 +3535,7 @@ function AppInner() {
             // re-pick the working directory from inside the project.
             console.warn('Failed to set working directory for new project', userWorkingDir, err);
             workingDirHandoffFailed = true;
+            setupWorkingDirHandoffFailed = Boolean(metadata?.documentSetupIntent);
             setWorkingDirError(
               `Couldn't apply the chosen folder "${userWorkingDir}". The project was created in the default location — re-pick the working directory from the project before uploading files or sending a message.`,
             );
@@ -3633,6 +3636,7 @@ function AppInner() {
         // reload after the run has started does not refire.
         if (
           !workingDirHandoffFailed &&
+          !metadata?.documentSetupIntent &&
           input.autoSendFirstMessage &&
           (derivedPendingPrompt !== undefined || firstMessageAttachments.length > 0)
         ) {
@@ -3732,6 +3736,7 @@ function AppInner() {
         // its first transcript settles (`handleCreationHandoffSettled`), so
         // the column never flips through the view's own loaders in between.
       }
+      if (setupWorkingDirHandoffFailed) return false;
       const projectRoute = {
         kind: 'project',
         projectId: project.id,

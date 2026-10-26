@@ -374,7 +374,7 @@ describe('W75 视觉方向卡 · 底栏最左是「跳过」', () => {
     const container = mount(DIRECTION_FORM);
     // 这一路选择器自带的那一行只有「随机」——「下一步」没有交给它,所以底栏照旧渲染
     expect(footLabels(container, '.qf-visual-foot')).toEqual(['Random']);
-    expect(footLabels(container, '.question-form-foot')[0]).toBe('Skip — you decide');
+    expect(footLabels(container, '.question-form-foot')[0]).toBe('Skip these questions');
   });
 
   it('两个调用点的顶栏都拿到了 4px 的那条 `.qf-visual-bar`,且都只放该放的东西', () => {

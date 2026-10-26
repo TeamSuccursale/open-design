@@ -1,0 +1,13 @@
+.root { min-width: 0; color: var(--chat-text); font-size: 12px; line-height: 1.45; }
+.actions, .references, .references li, .error { display: flex; align-items: center; gap: 6px; }
+.actions { flex-wrap: wrap; }
+.actions button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.references { flex-wrap: wrap; margin: 6px 0 0; padding: 0; list-style: none; }
+.references li { min-width: 0; max-width: 100%; padding: 2px 4px 2px 8px; border-radius: 8px; background: var(--chat-bg-subtle); }
+.references li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.references li button { flex: none; width: 24px; height: 24px; padding: 3px; }
+.error { flex-wrap: wrap; margin-top: 6px; color: var(--chat-red); overflow-wrap: anywhere; }
+.error button { font-size: 12px; }
+.status { display: block; color: var(--chat-text-muted); }
+.status:not(:empty) { margin-top: 4px; }
+.root button:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }

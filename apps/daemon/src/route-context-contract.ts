@@ -1,4 +1,6 @@
 import type { ServerContext } from './server-context.js';
+import type { RegisterProjectIntakeRoutesDeps } from './routes/project-intake.js';
+import type { RegisterProjectDocumentsRoutesDeps } from './routes/project-documents.js';
 import type { RegisterActiveContextRoutesDeps } from './routes/active-context.js';
 import type { RegisterAutomationRoutesDeps } from './routes/automation.js';
 import type { RegisterChatRoutesDeps } from './routes/chat.js';
@@ -22,6 +24,8 @@ import type { RegisterVelaRoutesDeps } from './routes/vela.js';
 import type { RegisterXaiRoutesDeps } from './routes/xai.js';
 
 type AllRegisteredRouteDeps =
+  & RegisterProjectIntakeRoutesDeps
+  & RegisterProjectDocumentsRoutesDeps
   & RegisterActiveContextRoutesDeps
   & RegisterAutomationRoutesDeps
   & RegisterChatRoutesDeps

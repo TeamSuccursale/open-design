@@ -169,6 +169,7 @@ export interface ChatSseEndPayload {
 }
 
 export type DaemonAgentPayload =
+  | ({ type: 'diagnostic' } & import('../api/header-footer-delivery.js').HeaderFooterDraftDeliveryReceipt)
   | { type: 'status'; label: string; model?: string; ttftMs?: number; detail?: string }
   | { type: 'text_delta'; delta: string }
   /**

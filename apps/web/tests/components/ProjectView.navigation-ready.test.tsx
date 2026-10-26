@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectDocument } from '@open-design/contracts';
 
 import { navigationTiming } from '../../src/observability/navigation-timing';
 import { reportSafetyEvent } from '../../src/analytics/error-tracking';
@@ -138,11 +139,28 @@ vi.mock('../../src/components/Loading', () => ({
 }));
 
 vi.mock('../../src/components/ChatPane', () => ({
-  ChatPane: ({ onSelectConversation }: { onSelectConversation: (id: string) => void }) => (
+  ChatPane: ({ onSelectConversation, messages, documentSetupContent, onRetryConversationRead }: { onSelectConversation: (id: string) => void; messages: Array<{ content: string }>; documentSetupContent?: ReactNode; onRetryConversationRead?: () => void }) => (
     <div data-testid="chat-pane">
+      {documentSetupContent}
+      <output data-testid="visible-transcript">{messages.map((message) => message.content).join('\n')}</output>
       <button onClick={() => onSelectConversation('conv-2')}>Switch conversation</button>
+      {onRetryConversationRead && <button onClick={onRetryConversationRead}>Retry conversation read</button>}
     </div>
   ),
+}));
+const documentLibrary = vi.hoisted(() => ({ documents: [] as ProjectDocument[] }));
+vi.mock('../../src/components/project-documents/useProjectDocuments', () => ({ useProjectDocuments: () => ({
+  documents: documentLibrary.documents, selectedDocumentId: null, loading: false, error: false, refresh: vi.fn(),
+}) }));
+vi.mock('../../src/components/document-setup/DocumentSetupReview', () => ({
+  DocumentSetupReview: ({ enabled }: { enabled: boolean }) => enabled ? <div data-testid="global-preparation-controls" /> : null,
+}));
+vi.mock('../../src/components/project-documents/ProjectDocumentsPanel', () => ({
+  ProjectDocumentsPanel: ({ onOpen }: { onOpen: (document: unknown) => Promise<void> }) => <button onClick={() => void onOpen({
+    id: 'graphics', projectId: 'project-1', workspaceProjectId: 'project-1', name: 'Graphics', kind: 'document',
+    conversationIds: ['new-document-chat'], workingDirectory: 'C:/project', folderMode: 'managed', availability: 'available',
+    createdAt: '2026-10-24', updatedAt: '2026-10-24', archivedAt: null,
+  })}>Open new document</button>,
 }));
 
 const mockedListConversations = vi.mocked(listConversations);
@@ -235,6 +253,7 @@ function results() {
 beforeEach(() => {
   navigationTiming.cancel('page_exit');
   vi.clearAllMocks();
+  documentLibrary.documents = [];
   navigate({ kind: 'project', projectId: project.id, conversationId: conversation.id, fileName: null }, { replace: true });
   mockedListConversations.mockResolvedValue([conversation]);
   mockedCreateConversation.mockResolvedValue(conversation);
@@ -251,6 +270,42 @@ afterEach(() => {
 });
 
 describe('ProjectView business Ready wiring', () => {
+  it('keeps collection preparation in its original chat and removes those controls from an output’s editing chat', async () => {
+    documentLibrary.documents = [{ id: 'graphics', projectId: project.id, workspaceProjectId: project.id, name: 'Graphics', kind: 'document',
+      conversationIds: ['new-document-chat'], workingDirectory: 'C:/project', folderMode: 'managed', availability: 'available',
+      createdAt: '2026-10-24', updatedAt: '2026-10-24', archivedAt: null }];
+    mockedListConversations.mockResolvedValue([conversation, { ...conversation, id: 'new-document-chat' }]);
+    renderProjectView({ project: { ...project, metadata: { kind: 'other', documentSetupIntent: { kind: 'report', subtype: 'Two outputs', purpose: 'Two documents', contextRoots: [], imageIntakeConsent: false } } } });
+    await screen.findByTestId('global-preparation-controls');
+    act(() => navigate({ kind: 'project', projectId: project.id, conversationId: 'new-document-chat', fileName: null }));
+    await waitFor(() => expect(mockedListMessages.mock.calls.some((call) => call[1] === 'new-document-chat')).toBe(true));
+    expect(screen.queryByTestId('global-preparation-controls')).toBeNull();
+  });
+
+  it('refreshes and switches to a newly materialized same-project document chat instead of leaving the preparation transcript visible', async () => {
+    mockedListMessages.mockImplementation(async (_projectId, id) => id === 'conv-1'
+      ? [{ id: 'preparation-message', role: 'assistant', content: 'Original preparation history', createdAt: 1 }] : []);
+    renderProjectView();
+    await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toBe('Original preparation history'));
+    mockedListConversations.mockResolvedValue([conversation, { ...conversation, id: 'new-document-chat', title: 'Graphics' }]);
+    fireEvent.click(screen.getByRole('button', { name: 'Documents' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open new document' }));
+    await waitFor(() => expect(mockedListMessages.mock.calls.some((call) => call[1] === 'new-document-chat')).toBe(true));
+    await waitFor(() => expect(screen.getByTestId('visible-transcript').textContent).toBe(''));
+    expect(window.location.pathname).toContain('new-document-chat');
+    expect(mockedListConversations.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mockedCreateConversation).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an externally routed conversation missing from the already-loaded conversation list', async () => {
+    renderProjectView(); await waitFor(() => expect(mockedListMessages.mock.calls.some((call) => call[1] === 'conv-1')).toBe(true));
+    mockedListConversations.mockResolvedValue([conversation, { ...conversation, id: 'new-route-chat' }]);
+    act(() => navigate({ kind: 'project', projectId: project.id, conversationId: 'new-route-chat', fileName: null }));
+    await waitFor(() => expect(mockedListMessages.mock.calls.some((call) => call[1] === 'new-route-chat')).toBe(true));
+    expect(window.location.pathname).toContain('new-route-chat');
+    expect(mockedCreateConversation).not.toHaveBeenCalled();
+  });
+
   it.each(['rejected', 'pending'] as const)('observes existing conversation reconciliation while the router guard is %s', async (mode) => {
     mockedListConversations.mockResolvedValue([conversation, { ...conversation, id: 'conv-2' }]);
     renderProjectView();
@@ -320,6 +375,28 @@ describe('ProjectView business Ready wiring', () => {
     await waitFor(() => expect(results().map((e) => e?.status)).toEqual(['started', 'failed']));
     expect(results()[1]?.reason).toBe('messages_unavailable');
     expect(JSON.stringify(results())).not.toContain('private upstream text');
+  });
+  it('retries a failed transcript on the same original conversation without creating a chat or document', async () => {
+    mockedListMessages.mockRejectedValueOnce(new Error('temporary read failure')).mockResolvedValueOnce([{ id: 'saved-message', role: 'assistant', content: 'Original document brief', createdAt: 1 }]);
+    renderProjectView();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry conversation read' }));
+    await screen.findByText('Original document brief');
+    expect(mockedListMessages.mock.calls.map((call) => call.slice(0, 2))).toEqual([[project.id, conversation.id], [project.id, conversation.id]]);
+    expect(mockedCreateConversation).not.toHaveBeenCalled();
+  });
+  it('retries a failed conversation list while preserving its original deep link', async () => {
+    mockedListConversations.mockRejectedValueOnce(new Error('temporary list failure')).mockResolvedValueOnce([conversation]);
+    renderProjectView({ routeConversationId: conversation.id });
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry conversation read' }));
+    await waitFor(() => expect(mockedListMessages).toHaveBeenCalled());
+    expect(mockedListMessages.mock.calls[0]?.slice(0, 2)).toEqual([project.id, conversation.id]);
+    expect(mockedCreateConversation).not.toHaveBeenCalled();
+  });
+  it('does not mount guided document setup in a Fast child with a saved document intent', async () => {
+    documentLibrary.documents = [{ id: 'report', projectId: 'collection', workspaceProjectId: project.id, name: 'Fast report', kind: 'document', conversationIds: [conversation.id], workingDirectory: 'C:/fast', folderMode: 'managed', availability: 'available', createdAt: 'now', updatedAt: 'now', archivedAt: null }];
+    renderProjectView({ project: { ...project, metadata: { kind: 'other', projectMode: 'fast', collectionProjectId: 'collection', collectionDocumentId: 'report', documentSetupIntent: { kind: 'report', subtype: 'Technical report', purpose: 'Prepare a technical report', contextRoots: [], imageIntakeConsent: false } } } });
+    await waitFor(() => expect(mockedListMessages).toHaveBeenCalled());
+    expect(screen.queryByTestId('global-preparation-controls')).toBeNull();
   });
 
   it('cannot finish a cancelled entry when its messages resolve after unmount', async () => {

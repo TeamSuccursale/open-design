@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { useEffect } from 'react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useEffect, useState } from 'react';
+import { FastProjectDialog } from '../../src/components/FastProjectDialog';
 import { installMockOpenDesignHost } from '@open-design/host/testing';
 
 import { navigate } from '../../src/router';
@@ -137,6 +138,11 @@ vi.mock('../../src/analytics/error-tracking', async (importOriginal) => ({
   reportSafetyEvent: vi.fn(),
 }));
 
+function FastCreationHarness({ onCreateProject }: { onCreateProject: (input: unknown) => boolean | Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  return <><button onClick={() => setOpen(true)}>Open fast creation</button>{open ? <FastProjectDialog onCancel={() => setOpen(false)} onConfirm={(draft) => onCreateProject({ name: 'Fast material test', skillId: null, designSystemId: null, metadata: { kind: 'other', projectMode: 'fast' }, pendingPrompt: draft.prompt, pendingFiles: draft.files, autoSendFirstMessage: true, conversationMode: 'design' })} /> : null}</>;
+}
+
 vi.mock('../../src/components/EntryView', () => ({
   EntryView: ({
     onCreateProject,
@@ -184,6 +190,7 @@ vi.mock('../../src/components/EntryView', () => ({
   }) => (
     <main>
       <div data-testid="entry-home-surface" />
+      <FastCreationHarness onCreateProject={onCreateProject} />
       <div data-testid="amr-login-status">{String(amrLoggedIn)}</div>
       <div data-testid="entry-projects-loading">{String(Boolean(projectsLoading))}</div>
       <button
@@ -239,6 +246,12 @@ vi.mock('../../src/components/EntryView', () => ({
       >
         Create project with working dir
       </button>
+      <button type="button" onClick={() => onCreateProject({
+        name: 'Document setup project', skillId: null, designSystemId: null,
+        metadata: { kind: 'other', intent: 'document', userWorkingDir: '/Users/me/external', documentSetupIntent: { kind: 'report', subtype: 'Technical report', purpose: 'Lay out the source report', contextRoots: [], imageIntakeConsent: true } },
+        userWorkingDirToken: 'wd-token', pendingPrompt: 'Do not send before confirming context', autoSendFirstMessage: true,
+        pendingFiles: [new File(['source'], 'source.pdf', { type: 'application/pdf' })],
+      })}>Create setup-only document</button>
       <button
         type="button"
         onClick={() =>
@@ -1551,6 +1564,26 @@ describe('App project creation routing', () => {
     ]);
   });
 
+  it('keeps the fast dialog, request and files mounted through an actual create failure and retry', async () => {
+    mockedListProjects.mockResolvedValue([]);
+    mockedCreateProject.mockRejectedValueOnce(new Error('Temporary create failure')).mockResolvedValueOnce({ project: { ...freshProject, metadata: { kind: 'other', projectMode: 'fast' } }, conversationId: 'conv-fast' });
+    render(<App />); fireEvent.click(await screen.findByRole('button', { name: 'Open fast creation' }));
+    const modal = await screen.findByRole('dialog'), dialog = within(modal);
+    fireEvent.change(dialog.getByRole('textbox'), { target: { value: 'Prepare the sheet from my package' } });
+    const file = new File(['My prepared material'], 'package.txt', { type: 'text/plain' });
+    fireEvent.change(modal.querySelector('input[type=file]')!, { target: { files: [file] } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Create and start chat' }));
+    await dialog.findByRole('alert');
+    expect(window.location.pathname).toBe('/'); expect(screen.queryByTestId('project-view')).toBeNull();
+    expect(dialog.getByRole('textbox')).toHaveProperty('value', 'Prepare the sheet from my package');
+    expect(dialog.getByText('package.txt')).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: 'Create and start chat' }));
+    await screen.findByTestId('project-view');
+    expect(mockedCreateProject).toHaveBeenCalledTimes(2);
+    expect(mockedCreateProject.mock.calls[1]![0]).toMatchObject({ pendingPrompt: 'Prepare the sheet from my package', metadata: { projectMode: 'fast' }, conversationMode: 'design' });
+    expect(mockedUploadProjectFiles).toHaveBeenCalledWith(freshProject.id, [file], undefined, null);
+  });
+
   it('rolls a failed optimistic Home creation back to the preserved Home surface', async () => {
     mockedListProjects.mockResolvedValue([]);
     const creation = deferred<{
@@ -2438,6 +2471,32 @@ describe('App project creation routing', () => {
         }),
       }),
     );
+  });
+
+  it('never stages or auto-sends an unconfirmed document prompt and finishes its folder and upload before navigation', async () => {
+    mockedListProjects.mockResolvedValue([]);
+    mockedReplaceProjectWorkingDir.mockResolvedValue(undefined as never);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Create setup-only document' }));
+    await waitFor(() => expect(mockedUploadProjectFiles).toHaveBeenCalledOnce());
+    expect(mockedCreateProject.mock.calls[0]?.[0]).toMatchObject({ pendingPrompt: undefined, metadata: { intent: 'document', documentSetupIntent: { purpose: 'Lay out the source report' } } });
+    expect(mockedReplaceProjectWorkingDir).toHaveBeenCalledWith('project-new', '/Users/me/external', 'wd-token', null);
+    expect(mockedReplaceProjectWorkingDir.mock.invocationCallOrder[0]!).toBeLessThan(mockedUploadProjectFiles.mock.invocationCallOrder[0]!);
+    await screen.findByTestId('project-title');
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBeNull();
+    expect(window.sessionStorage.getItem('od:auto-send-prompt:project-new')).toBeNull();
+  });
+
+  it('keeps setup-only creation on Home if the chosen folder cannot be applied', async () => {
+    mockedListProjects.mockResolvedValue([]);
+    mockedReplaceProjectWorkingDir.mockRejectedValue(new Error('working-dir token expired'));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Create setup-only document' }));
+    await screen.findByText(/Couldn't apply the chosen folder/i);
+    expect(mockedUploadProjectFiles).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('project-title')).toBeNull();
+    expect(window.location.pathname).toBe('/');
+    expect(window.sessionStorage.getItem('od:auto-send-first:project-new')).toBeNull();
   });
 
   it('short-circuits the upload + auto-send when the working-dir handoff fails', async () => {

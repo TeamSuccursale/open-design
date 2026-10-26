@@ -33,6 +33,7 @@ export function deliverableSyntaxFinalizerEnabled(
  * independent of task orchestration and model-authored plans.
  */
 export async function finalizeSuccessfulRunDeliverable(input: {
+  runId?: string;
   artifactCount: number;
   previousMetrics?: DeliverableSyntaxMetrics;
   processTreeQuiescent: boolean;
@@ -45,9 +46,11 @@ export async function finalizeSuccessfulRunDeliverable(input: {
   baselineEntryFile?: string;
   allowIndependentOutput?: boolean;
   allowMultipleOutputCandidates?: boolean;
+  documentScope?: Parameters<typeof validateRunDeliverable>[0]['documentScope'];
   syntaxFinalizerEnabled?: boolean;
 }): Promise<SuccessfulRunDeliverableFinalizationResult> {
   const deliverable = await validateRunDeliverable({
+    ...(input.runId ? { runId: input.runId } : {}),
     projectsRoot: input.projectsRoot,
     projectId: input.projectId,
     ...(input.projectMetadata !== undefined
@@ -59,6 +62,7 @@ export async function finalizeSuccessfulRunDeliverable(input: {
     ...(input.baselineEntryFile ? { baselineEntryFile: input.baselineEntryFile } : {}),
     ...(input.allowIndependentOutput ? { allowIndependentOutput: true } : {}),
     ...(input.allowMultipleOutputCandidates ? { allowMultipleOutputCandidates: true } : {}),
+    ...(input.documentScope ? { documentScope: input.documentScope } : {}),
   });
   if (
     !deliverable.valid

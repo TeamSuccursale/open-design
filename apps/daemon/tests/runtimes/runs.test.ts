@@ -799,6 +799,7 @@ describe('chat run service shutdown', () => {
     const valid = runs.create({ sessionMode: 'plan', context: workspaceContext });
     expect(valid.sessionMode).toBe('plan');
     expect(valid.context).toEqual(workspaceContext);
+    expect(runs.create({ sessionMode: 'blockout' }).sessionMode).toBe('blockout');
 
     const invalid = runs.create({ sessionMode: 'review', context: [] });
     expect(invalid.sessionMode).toBeNull();
@@ -1536,6 +1537,15 @@ describe('run event log persistence', () => {
       runsLogDir: runsLogDir as unknown as null,
     });
   }
+
+  it('retains the SVG quality floor for conversation follow-ups after a restart', () => {
+    const runs = createRunsWithLog(tmpDir);
+    const svgExecutionPolicy = { model: 'gpt-6.1-sol', reasoning: 'max', complexity: 'complex' };
+    const run = runs.create({ projectId: 'svg-project', conversationId: 'svg-chat', svgExecutionPolicy });
+    runs.finish(run, 'succeeded', 0, null);
+    const restarted = createRunsWithLog(tmpDir);
+    expect(restarted.list({ projectId: 'svg-project', conversationId: 'svg-chat' })[0]?.svgExecutionPolicy).toEqual(svgExecutionPolicy);
+  });
 
   it('writes each emitted event as a JSONL line under runsLogDir/<runId>/events.jsonl', async () => {
     const runs = createRunsWithLog(tmpDir);

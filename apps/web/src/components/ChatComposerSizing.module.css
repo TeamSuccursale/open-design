@@ -1,0 +1,9 @@
+.root :global(.composer-input-editor) {
+  min-height: 48px;
+  max-height: min(240px, 32vh);
+}
+
+.root :global(.composer-input-editor [contenteditable='true']),
+.root :global(.composer-input-editor .composer-editable) {
+  min-height: 48px;
+}

@@ -42,6 +42,7 @@ import type {
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
+import { isHeaderFooterDraftDeliveryReceipt } from '@open-design/contracts';
 
 /**
  * 取消来源的四个合法值。服务端说了才算,说不清就不认 —— UI 把 `user_stop`
@@ -148,7 +149,7 @@ export function latestUserPromptFromHistory(history: ChatMessage[]): string {
 function truncateForTranscript(content: string): string {
   if (content.length <= MAX_TRANSCRIPT_MESSAGE_CHARS) return content;
   const omitted = content.length - MAX_TRANSCRIPT_MESSAGE_CHARS;
-  return `${content.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS)}\n\n[OpenDesign truncated ${omitted} chars from this prior message before sending it to the agent. Full content remains in persisted history.]`;
+  return `${content.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS)}\n\n[MelilloDesign truncated ${omitted} chars from this prior message before sending it to the agent. Full content remains in persisted history.]`;
 }
 
 function escapeTranscriptRoleDelimiters(content: string): string {
@@ -207,7 +208,7 @@ function buildPriorRunContextWarning(history: ChatMessage[]): string | null {
 
   return [
     '## context warning',
-    `OpenDesign detected ${notes.join(', ')}.`,
+    `MelilloDesign detected ${notes.join(', ')}.`,
     'Keep this turn compact: summarize prior tool output, read large references from temp files, and quote only task-relevant lines.',
   ].join('\n');
 }
@@ -278,6 +279,8 @@ export function buildDaemonPriorTranscript(
 
 export interface DaemonStreamHandlers extends StreamHandlers {
   onAgentEvent: (ev: AgentEvent) => void;
+  /** Actual daemon-selected settings, including server SVG routing and resumes. */
+  onExecutionSettings?: (settings: Pick<ChatSseStartPayload, 'agentId' | 'model' | 'reasoning'>) => void;
   /** Authoritative artifact count from the daemon's terminal run record. */
   onArtifactCount?: (count: number) => void;
   /**
@@ -497,6 +500,7 @@ export interface DaemonStreamOptions {
   // Per-turn skill ids picked via the composer's @-mention popover. These
   // are layered onto the system prompt for this run only and do not
   // change the project's persistent `skillId`.
+  documentReferences?: string[];
   skillIds?: string[];
   designSystemId?: string | null;
   // Project-relative paths the user has staged for this turn. The
@@ -661,7 +665,7 @@ export function createGenericDaemonDisconnectError(): Error & { code: string } {
  * the two locale strings; the routing and the reason codes are settled.
  */
 export const STRATEGY_TASK_BLOCKED_MESSAGE =
-  "The agent's reply did not carry the machine-readable state Open Design needs "
+  "The agent's reply did not carry the machine-readable state MelilloDesign needs "
   + 'to record this step, so the task could not continue.';
 
 /**
@@ -753,7 +757,7 @@ function shouldSuppressLifecycleExitFallback(
 }
 
 const AMR_OPENCODE_INCOMPLETE_MESSAGE =
-  'OpenDesign started, but the run did not complete. Please retry or check the run details for the session stream error.';
+  'MelilloDesign started, but the run did not complete. Please retry or check the run details for the session stream error.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -785,7 +789,7 @@ function daemonCreateRunError(response: Response, responseText: string): Error {
   if (!apiError || typeof apiError !== 'object') {
     return new Error(`daemon ${response.status}: ${responseText || 'no body'}`);
   }
-  const error = new Error(apiError.message || `OpenDesign service returned ${response.status}`) as Error & {
+  const error = new Error(apiError.message || `MelilloDesign service returned ${response.status}`) as Error & {
     code?: string;
     requestId?: string;
     retryable?: boolean;
@@ -861,10 +865,10 @@ function formatOpenCodeSessionError(value: unknown): string | null {
     return message;
   }
   if (statusCode === 404) {
-    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the OpenDesign link URL or model route.';
+    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the MelilloDesign link URL or model route.';
   }
   if (statusCode === 401 || statusCode === 403) {
-    return 'OpenDesign authentication failed. Please sign in again or refresh the runtime key.';
+    return 'MelilloDesign authentication failed. Please sign in again or refresh the runtime key.';
   }
   if (statusCode === 429) {
     return 'The model service rejected the request due to quota or rate limits. Retry later or check quota and rate limits.';
@@ -988,6 +992,7 @@ export async function streamViaDaemon({
   clientRequestId,
   skillId,
   skillIds,
+  documentReferences,
   designSystemId,
   attachments,
   commentAttachments,
@@ -1037,6 +1042,7 @@ export async function streamViaDaemon({
     clientRequestId: clientRequestId ?? null,
     skillId: skillId ?? null,
     skillIds: Array.isArray(skillIds) ? skillIds : [],
+    documentReferences: documentReferences ?? [],
     designSystemId: designSystemId ?? null,
     attachments: attachments ?? [],
     commentAttachments: commentAttachments ?? [],
@@ -1057,7 +1063,8 @@ export async function streamViaDaemon({
     ...(titleGeneration?.enabled ? { titleGeneration: { enabled: true } } : {}),
     ...(analyticsHints ? { analyticsHints } : {}),
   };
-  const body = JSON.stringify(request);
+  let body = JSON.stringify(request);
+  let setupConversationRecovery = false;
 
   try {
     let createResp: Response;
@@ -1085,6 +1092,18 @@ export async function streamViaDaemon({
 
       const errorBody = await createResp.clone().json().catch(() => null) as ApiErrorResponse | null;
       const error = errorBody?.error;
+      // Editing conversations can be opened before their brief is confirmed.
+      // Let the agent finish that conversation instead of retrying a forbidden
+      // generation phase forever. This does not confirm or approve anything:
+      // the admission gate rejected before minting a run, and the same IDs are
+      // reused for exactly one conversational retry.
+      if (createResp.status === 409 && error?.code === 'DOCUMENT_SETUP_CONFIRMATION_REQUIRED'
+        && request.sessionMode !== 'chat' && !setupConversationRecovery && !cancelSignal?.aborted) {
+        setupConversationRecovery = true;
+        request.sessionMode = 'chat';
+        body = JSON.stringify(request);
+        continue;
+      }
       const retryableAuthorityOutage =
         createResp.status === 503
         && error?.code === 'WORKSPACE_AUTHORITY_UNAVAILABLE'
@@ -2139,6 +2158,7 @@ async function consumeDaemonPhysicalRun({
 
           if (event.event === 'start') {
             const data = event.data as ChatSseStartPayload;
+            handlers.onExecutionSettings?.(data);
             onRunStatus?.('running');
             handlers.onAgentEvent({
               kind: 'status',
@@ -2523,6 +2543,9 @@ function normalizeAgentStatusLabel(label: string): string {
 // return null so the UI ignores them instead of rendering garbage.
 function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   const t = data.type;
+  if (t === 'diagnostic' && isHeaderFooterDraftDeliveryReceipt(data)) {
+    return { kind: 'diagnostic', name: data.name, source: data.source, shape: { ...data.shape } };
+  }
   if (t === 'status' && typeof data.label === 'string') {
     return {
       kind: 'status',

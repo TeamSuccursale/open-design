@@ -182,7 +182,7 @@ const BASE: [number, number, number] = [0.184, 0.471, 0.114]; // #2F781D
 // The resting artwork: the real logo SVG (paths filled #202020, matching the
 // app's near-black text tone); its alpha channel is the glyph mask the shader
 // samples. Same 1705:291 aspect as the host box.
-const LOGO_SRC = '/logo-scan.svg';
+const LOGO_SRC = '/melillodesign-wordmark.svg';
 
 let logoImgPromise: Promise<HTMLImageElement> | null = null;
 function loadLogo(): Promise<HTMLImageElement> {

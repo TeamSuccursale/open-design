@@ -82,6 +82,10 @@ export interface ProjectEventsConnectionOptions {
 
 const DEFAULT_INITIAL_BACKOFF = 1000;
 const DEFAULT_MAX_BACKOFF = 30_000;
+// Local HTTP/1.1 has six connections per origin. Several visible workspaces
+// must leave room for saves and folder reads alongside their run streams.
+const PROJECT_STREAM_LEASE_MS = 10_000;
+const PROJECT_STREAM_YIELD_MS = 500;
 
 export function projectEventsUrl(
   projectId: string,
@@ -129,6 +133,11 @@ export function createProjectEventsConnection(
   let cancelled = false;
   let source: EventSource | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let leaseTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearLease = () => {
+    if (leaseTimer) clearTimeout(leaseTimer);
+    leaseTimer = null;
+  };
   // Set while the socket is deliberately given back to a parked tab, so no
   // error/reconnect path re-opens it before the tab is visible again.
   let releasedWhileHidden = false;
@@ -138,6 +147,19 @@ export function createProjectEventsConnection(
     if (source) return;
     const es = new Ctor(projectEventsUrl(projectId, workspaceContext));
     source = es;
+    let yielded = false;
+    // Only reconcile-capable consumers can safely yield: their next ready
+    // handshake re-reads authoritative state, including changes during the gap.
+    // Start the lease before ready so even a queued EventSource gives way.
+    if (options.onReady) leaseTimer = setTimeout(() => {
+      leaseTimer = null;
+      if (cancelled || source !== es) return;
+      yielded = true;
+      source = null;
+      es.close();
+      options.onConnectedChange?.(false);
+      if (!releasedWhileHidden) reconnectTimer = setT(connect, PROJECT_STREAM_YIELD_MS) as ReturnType<typeof setTimeout>;
+    }, PROJECT_STREAM_LEASE_MS);
     es.addEventListener('ready', () => {
       backoff.reset();
       options.onConnectedChange?.(true);
@@ -252,7 +274,8 @@ export function createProjectEventsConnection(
       }
     });
     es.addEventListener('error', () => {
-      if (cancelled) return;
+      if (cancelled || yielded) return;
+      clearLease();
       options.onConnectedChange?.(false);
       es.close();
       if (source === es) source = null;
@@ -271,6 +294,7 @@ export function createProjectEventsConnection(
     onHidden: () => {
       if (cancelled) return;
       releasedWhileHidden = true;
+      clearLease();
       if (reconnectTimer) {
         clearT(reconnectTimer);
         reconnectTimer = null;
@@ -297,6 +321,7 @@ export function createProjectEventsConnection(
     close(): void {
       cancelled = true;
       visibility.dispose();
+      clearLease();
       if (reconnectTimer) clearT(reconnectTimer);
       if (source) source.close();
     },
