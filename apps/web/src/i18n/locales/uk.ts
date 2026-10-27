@@ -2,6 +2,7 @@ import { blockoutDesignEn } from '../blockout-design';
 import { projectContextEn } from '../project-context';
 import { documentConversationEn } from '../document-conversation';
 import { documentOverviewEn } from '../document-overview';
+import { documentRuleCheckEn } from '../document-rule-check';
 import type { Dict } from '../types';
 
 export const uk: Dict = {
@@ -57,6 +58,7 @@ export const uk: Dict = {
 
   "blockout.chatPlaceholder": "Describe your material, update the brief or ask to revise the pages.",
   ...documentOverviewEn,
+  ...documentRuleCheckEn,
   "documentStart.constraintKind.page-limit": "Page limit",
   "documentStart.constraintKind.paper": "Paper size",
   "documentStart.constraintKind.orientation": "Orientation",

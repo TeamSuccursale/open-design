@@ -2,6 +2,7 @@ import type { ProjectContextDict } from './project-context.js';
 import type { BlockoutDesignDict } from './blockout-design.js';
 import type { DocumentConversationDict } from './document-conversation.js';
 import type { DocumentOverviewDict } from './document-overview.js';
+import type { DocumentRuleCheckDict } from './document-rule-check.js';
 // Supported UI locales. Adding a new locale requires creating a new
 // dictionary in `./locales/` and registering it in `./index.tsx`.
 export type Locale = 'en' | 'id' | 'de' | 'zh-CN' | 'zh-TW' | 'pt-BR' | 'es-ES' | 'ru' | 'fa' | 'ar' | 'ja' | 'ko' | 'pl' | 'hu' | 'fr' | 'uk' | 'tr' | 'th' | 'it';
@@ -33,7 +34,7 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // Translation dictionary shape — flat keys, dot-namespaced. We keep it
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
-export interface Dict extends DocumentOverviewDict, DocumentConversationDict, ProjectContextDict, BlockoutDesignDict {
+export interface Dict extends DocumentOverviewDict, DocumentConversationDict, ProjectContextDict, BlockoutDesignDict, DocumentRuleCheckDict {
   "documentWorkspace.region": string;
   "documentWorkspace.stage": string;
   "documentWorkspace.files": string;

@@ -28,8 +28,9 @@ import { SidecarFactory } from '@open-design/sidecar';
 import { Agent as HttpAgent } from 'undici';
 import { APP_KEYS, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
 import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS, mediaFailureNextStep, parseApiFailureDetail } from '@open-design/contracts';
-import type { ArtifactLintFinding, LintArtifactCliResultEnvelope, LintArtifactResponse, LintFailOn } from '@open-design/contracts';
+import type { ArtifactLintFinding, DocumentRuleCheckResponse, LintArtifactCliResultEnvelope, LintArtifactResponse, LintFailOn } from '@open-design/contracts';
 import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
+import { formatDocumentRuleCheck } from './export-check-cli.js';
 import { exportRoutePath } from './export-cli-routing.js';
 import {
   AGENT_SLUGS,
@@ -801,6 +802,7 @@ const EXPORT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'deck', 'page', 'no-d
 function printExportHelp() {
   console.log(`Usage:
   od export <file> --project <id> --format <fmt> [options]
+  od export check <file> --project <id> [--json]   (rule check before export; see od export check --help)
 
 Programmatic export of an HTML/deck artifact to standalone HTML, PDF, image,
 or PPTX. Runs without model/agent calls. Standalone HTML works in a headless
@@ -828,7 +830,67 @@ Examples:
   od export deck.html --project p1 --format pptx --out deck.pptx`);
 }
 
+const EXPORT_CHECK_STRING_FLAGS = new Set(['daemon-url', 'project', 'file', 'version']);
+const EXPORT_CHECK_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+
+function printExportCheckHelp() {
+  console.log(`Usage:
+  od export check <file> --project <id> [--json]
+
+Measures a designed document (pages that declare their paper size) in the PC's
+Edge or Chrome and compares it with the rules its setup saved: page count
+against the limit, paper, orientation, the smallest type and the margins. Each
+row quotes its rule and the file and page it came from. It only warns: export
+is never blocked, and the command exits 0 whatever the rows say.
+
+Options:
+  --project <id>           Project id (required)
+  --version <id>           Check a saved version of the file
+  --json                   Print the { check } envelope from the daemon
+  --daemon-url <url>       Override daemon URL`);
+}
+
+async function runExportCheck(args) {
+  if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+    printExportCheckHelp();
+    return;
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: EXPORT_CHECK_STRING_FLAGS, boolean: EXPORT_CHECK_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const file = flags.file || positionalArgs(args, EXPORT_CHECK_STRING_FLAGS)[0];
+  const projectId = flags.project || process.env.OD_PROJECT_ID;
+  if (!file || !projectId) {
+    printExportCheckHelp();
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const token = process.env.OD_TOOL_TOKEN;
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/export/check`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ fileName: file, ...(flags.version ? { versionId: flags.version } : {}) }),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const result = (await resp.json()) as DocumentRuleCheckResponse;
+  if (flags.json) return process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  console.log(result.check
+    ? formatDocumentRuleCheck(result.check)
+    : `${file} declares no paper size on its pages: there is nothing to check.`);
+}
+
 async function runExport(args) {
+  if (args[0] === 'check') return runExportCheck(args.slice(1));
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printExportHelp();
     process.exit(args.length === 0 ? 2 : 0);

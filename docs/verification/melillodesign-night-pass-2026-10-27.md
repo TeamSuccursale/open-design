@@ -105,9 +105,24 @@ The developer approved six of the open findings in the morning. Each is a local 
 
 Checked live on the production build after these commits. The rail and the home page carry no upstream links. The new-project dialog is one screen whose button stays disabled until the fields are set. In run 3's project the operator asked, without naming any syntax, for the booklet's four numbering boxes to become one self-updating «Pagina 3 di 8». During the 3 min 06 s turn the collapsed header read «In corso» followed by the agent's latest sentence, which changed as it worked. The agent made an independent copy for the booklet, because the existing design is shared with the report, and wrote one `Pagina {pageNumber} di {totalPages}` block. The editor's preview printed «Pagina 1 di 4» as one phrase. The draft was left unapproved. The support dialog and the margin refusal were not triggered live; their tests cover them.
 
+## Rule check before export (E2)
+
+Built after the morning follow-up, in a side session (`7e12dfa9`, `3298fbf4`, `caead56f`, `8da82389`, `bca4c9c9`). «Esporta in PDF» on a designed document first opens «Controllo prima dell'esportazione», and `od export check` prints the same rows. Each row compares a measurement with a rule and quotes the rule with its source file and page: page count, paper, orientation, smallest type and margins. Where the tender is silent on margins, the Blockout's safe margin applies. The export button works throughout.
+
+| Document | Result |
+| --- | --- |
+| Run 2, A3 booklet | Margins flagged: plate 1, right, 13.4 mm against 24 mm, «Dettaglio inferiore», the plate found by eye during the night. 4 of 4 pages, A3 landscape. Smallest type unchecked, since the tender sets none for the booklet: 11 pt Arial. |
+| Run 2, report | Every row passes: 8 of 8 pages, A4 portrait, 11 pt Arial against «Arial, corpo 11», nearest content 20 mm from the edge. |
+| Run 3, A3 booklet | 4 of 4 pages, A3 landscape, margins within the Blockout's. Its new watermark first counted as content 21.5 mm from the bottom of every page; faded `aria-hidden` content is now background (`8da82389`). Smallest type 9 pt Segoe UI («Tavola 01»), unchecked. |
+
+The check took 3.5–7 s per document. While the project's background reading was running, one check took 74 s and another reached the 120 s limit. The limit is now 60 s, and the dialog then says in Italian that the check failed and the export is still possible.
+
 ## Open findings and proposals
 
 These are not fixed, because each needs a product decision or touches several tested paths at once.
+
+- A second `tools-dev` namespace started with its own `OD_DATA_DIR` still opened the main data folder, because `.env.local` sets `OD_DATA_DIR` and `tools-dev` applies it over the caller's environment. Its start-up cleanup marked a run that was still working in the main runtime as failed. Until this changes, a second runtime needs `--no-env-file`.
+- Opening a folder project in a second runtime starts that runtime's background reading, which rewrote run 2's `intake.config.json` and `intake-assets/catalog.json` at the same sizes.
 
 - The first form asks only which documents to prepare, which costs one turn before the editorial choices. With two documents in the sources it is a real question; with one it could be skipped.
 - The two-document choices form is about four screens tall in the chat pane. Sections per document that fold away would shorten it.

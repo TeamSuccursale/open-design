@@ -5,11 +5,17 @@ import { publicFileMutationHandler } from './routes/public-file-mutation-handler
 import type { PublicFileMutations } from './collab/public-file-mutations.js';
 import { deleteProjectWorkspaceArtifacts } from './chat-artifacts/store.js';
 import {
+  DocumentRuleCheckRequestSchema,
   PROJECT_EXPORT_MANIFEST_SCHEMA,
+  assessDocumentRules,
   isExportFormat,
   isPagedDocumentHtml,
+  type DocumentLayoutMeasurement,
+  type DocumentRuleCheckResponse,
   type StandaloneHtmlExportRequest,
 } from '@open-design/contracts';
+import { resolveProjectDir } from './projects.js';
+import { documentRuleInputs } from './services/document-rule-check.js';
 import nodePath from 'node:path';
 import os from 'node:os';
 import { readFile, rm } from 'node:fs/promises';
@@ -659,6 +665,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
     desktopSlideRenderer,
     desktopArtifactExporter,
     pagedDocumentPrinter,
+    pagedDocumentMeasurer,
     daemonUrlRef,
     sanitizeArchiveFilename,
   } = ctx.exports;
@@ -1570,6 +1577,48 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
     });
     if (!authority) return;
     await handleScreenshotExport(res, 'image', req.params.id, { authority, body: req.body });
+  });
+
+  // The rule check before export: the designed document is measured in the browser that prints it and compared with
+  // the rules its setup saved (page limit, paper, orientation, type size, margins), each cited with its source. It
+  // only reports; no export route reads it. A page without paper sizes has nothing to check and answers `null`.
+  app.post('/api/projects/:id/export/check', async (req, res) => {
+    const authority = await authorizeExportRead(req, res, {
+      deriveWorkspaceFromProject: true,
+      toolEndpoint: PROJECT_EXPORT_TOOL_ENDPOINT,
+    });
+    if (!authority) return;
+    const parsed = DocumentRuleCheckRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
+    const projectId = req.params.id;
+    const { fileName } = parsed.data;
+    let scratchDir: string | null = null;
+    let scope: string | null = null;
+    try {
+      const metadata = getProject(db, projectId)?.metadata ?? null;
+      const html = await readExportVersionSource(projectId, fileName, normalizeExportVersionId(parsed.data.versionId), metadata)
+        ?? (await readProjectFile(PROJECTS_DIR, projectId, fileName, metadata)).buffer.toString('utf8');
+      if (!isPagedDocumentHtml(html)) return res.json({ check: null } satisfies DocumentRuleCheckResponse);
+      let measurement: DocumentLayoutMeasurement | null = null;
+      if (typeof pagedDocumentMeasurer === 'function') {
+        scratchDir = path.join(RUNTIME_DATA_DIR_CANONICAL, 'export-render', randomId());
+        scope = ctx.projectPreviewScopes.mint(projectId, authority.previewWorkspace, { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS });
+        try {
+          measurement = await pagedDocumentMeasurer({ html, baseHref: scopedProjectPreviewBaseHref(projectId, fileName, scope), scratchDir });
+        } catch (err: any) {
+          return sendApiError(res, 502, 'UPSTREAM_UNAVAILABLE', `the system browser could not measure the document: ${String(err?.message || err)}`);
+        }
+      }
+      if (!measurement) return sendApiError(res, 503, 'UPSTREAM_UNAVAILABLE', 'no Chrome or Edge on this PC to measure the document with');
+      const inputs = await documentRuleInputs(resolveProjectDir(PROJECTS_DIR, projectId, metadata), projectId, measurement.documentId);
+      return res.json({ check: assessDocumentRules({ fileName, measurement, ...inputs }) } satisfies DocumentRuleCheckResponse);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return sendApiError(res, 404, 'FILE_NOT_FOUND', 'file not found');
+      return sendApiError(res, 400, 'BAD_REQUEST', String(err?.message || err));
+    } finally {
+      if (scope) ctx.projectPreviewScopes.revoke(scope);
+      if (scratchDir) await fs.promises.rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   // A true one-file HTML export: every required same-project dependency is

@@ -4,6 +4,7 @@ import { loadBlockoutDesign } from '../../providers/blockout-design';
 import { openBlockoutEditor } from './events';
 import { useT } from '../../i18n';
 import { Icon } from '../Icon';
+import styles from './BlockoutCompositionAction.module.css';
 
 export function visibleDesignedPage(frame: HTMLIFrameElement | null, pages: string[]): string | undefined {
   try {
@@ -47,7 +48,8 @@ export function BlockoutCompositionAction({ projectId, filePath, html, workspace
     return () => { controller.abort(); clearTimeout(timer); };
   }, [identity, html, workspaceContext, generating]);
   if (!binding || binding.key !== identity || !documentId) return null;
-  return <button type="button" aria-busy={opening} disabled={opening} onClick={() => {
+  const name = t('blockout.editComposition');
+  return <button type="button" className={`${styles.action} od-tooltip`} data-tooltip={name} data-tooltip-placement="bottom" aria-busy={opening} disabled={opening} onClick={() => {
     const pages = binding.revision.pages.map((page) => page.pageId);
     const open = (pageId?: string) => openBlockoutEditor({ projectId, documentId, variantId: binding.revision.snapshot.variant.id, pageId: pageId ?? pages[0] });
     const frame = getFrame(), direct = visibleDesignedPage(frame, pages);
@@ -63,5 +65,5 @@ export function BlockoutCompositionAction({ projectId, filePath, html, workspace
     const cancel = () => { clearTimeout(timer); window.removeEventListener('message', message); cancelRequest.current = null; };
     cancelRequest.current = cancel; window.addEventListener('message', message);
     frame.contentWindow.postMessage({ type: 'od:blockout-visible-page-request', requestId }, '*');
-  }}><Icon name="blocks" size={15} />{t('blockout.editComposition')}</button>;
+  }}><Icon name="blocks" size={15} /><span className={styles.label}>{name}</span></button>;
 }

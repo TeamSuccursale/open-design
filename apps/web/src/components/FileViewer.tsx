@@ -1,5 +1,6 @@
 import { validateCommentSaveTarget } from '../comments/validate-save-target';
-import { isBlockoutFile } from '@open-design/contracts';
+import { isBlockoutFile, isPagedDocumentHtml } from '@open-design/contracts';
+import { DocumentRuleCheckDialog } from './DocumentRuleCheckDialog';
 import { BlockoutComparisonPreview, BlockoutFilePreview } from './blockout/BlockoutFilePreview';
 import { blockoutComparisonDocumentFromHtml, isBlockoutComparisonFile } from '@open-design/contracts';
 import { useBlockoutPreviewBridge } from './blockout/useBlockoutPreviewBridge';
@@ -7872,6 +7873,8 @@ function HtmlViewer({
   const toolbarMoreTriggerRef = useRef<HTMLButtonElement | null>(null);
   useDismissOnOutsideInteraction(toolbarMoreOpen, toolbarMoreRef, () => setToolbarMoreOpen(false));
   const [versionModalOpen, setVersionModalOpen] = useState<false | 'toolbar' | 'more_menu'>(false);
+  // The PDF export waiting behind the rule check of a designed document; the check never holds it back.
+  const [ruleCheckExport, setRuleCheckExport] = useState<{ versionId?: string; run: () => void } | null>(null);
   const [exportReadyNudge, setExportReadyNudge] = useState(false);
   const exportReadyNudgeSeenRef = useRef<Set<string>>(new Set());
   // Template save UX. We surface a transient "Saved" pill in the share
@@ -15801,8 +15804,20 @@ function HtmlViewer({
     });
   }
 
+  // A designed document (pages that declare their paper size) is checked against its rules before it goes to PDF.
+  // The check only shows: its export button runs `run` at any moment, measured or not, warnings or not.
+  function exportPdfAfterRuleCheck(pdfSource: string, run: () => void, versionId?: string) {
+    if (!isPagedDocumentHtml(pdfSource)) return run();
+    setDeployMenuOpen(false);
+    setRuleCheckExport({ ...(versionId ? { versionId } : {}), run });
+  }
+
   function triggerPdfExport(context?: HtmlVersionExportContext) {
-    fireShareExport('pdf', () => exportHtmlPdf(context), context);
+    exportPdfAfterRuleCheck(
+      context?.content ?? source ?? '',
+      () => fireShareExport('pdf', () => exportHtmlPdf(context), context),
+      context?.versionId,
+    );
   }
 
   function triggerZipExport(context?: HtmlVersionExportContext) {
@@ -16236,7 +16251,7 @@ function HtmlViewer({
     // drops CJK glyphs in the packaged runtime (no embedded fonts) —
     // unacceptable for a Chinese-first product. Falls back to the
     // vector/browser print path on web or on failure.
-    fireShareExport('pdf', async () => {
+    exportPdfAfterRuleCheck(source ?? '', () => fireShareExport('pdf', async () => {
       const daemon = await exportPdfThroughDaemon(source ?? '', isOpenDesignHostAvailable(), (documentTitle) => exportProjectScreenshotPdf({
         projectId,
         fileName: file.name,
@@ -16257,7 +16272,7 @@ function HtmlViewer({
         title: exportTitle,
         workspaceContext,
       });
-    });
+    }));
   };
 
   // Component-scoped so both the save flow and the modal Cancel button can
@@ -18616,6 +18631,19 @@ function HtmlViewer({
           onClose={() => setVersionModalOpen(false)}
           onRestored={handleVersionRestored}
           viewerOnly={viewerOnly}
+        />
+      ) : null}
+      {workspaceActive && ruleCheckExport && typeof document !== 'undefined' ? (
+        <DocumentRuleCheckDialog
+          projectId={projectId}
+          fileName={file.name}
+          {...(ruleCheckExport.versionId ? { versionId: ruleCheckExport.versionId } : {})}
+          workspaceContext={workspaceContext}
+          onExport={() => {
+            setRuleCheckExport(null);
+            ruleCheckExport.run();
+          }}
+          onClose={() => setRuleCheckExport(null)}
         />
       ) : null}
       {workspaceActive && pptxExportModalOpen && typeof document !== 'undefined' ? createPortal(

@@ -87,3 +87,13 @@ it('does not poll indefinitely when completion has no pending or applied receipt
   expect(loadBlockoutDesign).toHaveBeenCalledOnce();
   expect(screen.queryByRole('button', { name: 'Edit page composition' })).toBeNull();
 });
+
+it('keeps its name as a tooltip for the narrow toolbar where only the icon fits', async () => {
+  state = { ...state, applied: revision, pending: [] };
+  render(action(false));
+  const button = await screen.findByRole('button', { name: 'Edit page composition' });
+
+  expect(button.classList.contains('od-tooltip')).toBe(true);
+  expect(button.getAttribute('data-tooltip')).toBe('Edit page composition');
+  expect(button.querySelector('span')?.textContent).toBe('Edit page composition');
+});

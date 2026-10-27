@@ -35,6 +35,7 @@ export * from './api/artifact-focus-marker.js';
 export * from './api/done-marker.js';
 export * from './api/export.js';
 export * from './api/document-print.js';
+export * from './api/document-rule-check.js';
 export * from './api/files.js';
 export * from './api/figma.js';
 export * from './api/host-tools.js';

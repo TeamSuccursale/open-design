@@ -1,6 +1,7 @@
 import { projectContextIt } from '../project-context';
 import { documentConversationIt } from '../document-conversation';
 import { documentOverviewIt } from '../document-overview';
+import { documentRuleCheckIt } from '../document-rule-check';
 import type { Dict } from '../types';
 
 export const it: Dict = {
@@ -55,6 +56,7 @@ export const it: Dict = {
 
   "blockout.chatPlaceholder": "Descrivi i materiali, modifica il brief o chiedi di rivedere le pagine.",
   ...documentOverviewIt,
+  ...documentRuleCheckIt,
   "documentStart.constraintKind.page-limit": "Limite di pagine",
   "documentStart.constraintKind.paper": "Formato carta",
   "documentStart.constraintKind.orientation": "Orientamento",

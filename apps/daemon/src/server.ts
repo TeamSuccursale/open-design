@@ -946,7 +946,12 @@ import { registerTerminalRoutes } from './routes/terminal.js';
 import { registerBrowserSessionRoutes } from './routes/browser-sessions.js';
 import { createTerminalService } from './terminals.js';
 import { createBrowserSessionService } from './browser-sessions.js';
-import { createSystemPagedDocumentPrinter, type PagedDocumentPrinter } from './paged-document-pdf.js';
+import {
+  createSystemPagedDocumentMeasurer,
+  createSystemPagedDocumentPrinter,
+  type PagedDocumentMeasurer,
+  type PagedDocumentPrinter,
+} from './paged-document-pdf.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
@@ -2635,7 +2640,7 @@ export function shouldReportRunCompletionTelemetryFallbackStatus(status: unknown
 const PROJECT_PREVIEW_SCOPE_TTL_MS = 60 * 60 * 1000;
 const PROJECT_PREVIEW_ASSET_PATH_RE = /^\/projects\/([^/]+)\/preview\/([^/]+)\/.+$/u;
 const PROJECT_RUN_SCOPED_EXPORT_PATH_RE =
-  /^\/projects\/[^/]+\/export(?:\/(?:pptx|pdf-image|image))?$/u;
+  /^\/projects\/[^/]+\/export(?:\/(?:pptx|pdf-image|image|check))?$/u;
 
 function createProjectPreviewScopeRegistry() {
   const scopes = new Map();
@@ -3195,6 +3200,8 @@ export interface StartServerOptions {
   desktopSlideRenderer?: DesktopSlideRenderer | null;
   /** Prints designed documents to PDF; defaults to the PC's own Chrome or Edge. */
   pagedDocumentPrinter?: PagedDocumentPrinter | null;
+  /** Measures designed documents for the rule check before export; same browser as the printer. */
+  pagedDocumentMeasurer?: PagedDocumentMeasurer | null;
   host?: string;
   port?: number;
   returnServer?: boolean;
@@ -3236,6 +3243,7 @@ export async function startServer({
   desktopSlideRenderer = null,
   desktopArtifactExporter = null,
   pagedDocumentPrinter = createSystemPagedDocumentPrinter(),
+  pagedDocumentMeasurer = createSystemPagedDocumentMeasurer(),
   runtime = null,
   staticDir = STATIC_DIR,
   inheritedEnvironment = () => ({}),
@@ -8991,6 +8999,7 @@ export async function startServer({
     desktopSlideRenderer,
     desktopArtifactExporter,
     pagedDocumentPrinter,
+    pagedDocumentMeasurer,
     daemonUrlRef,
     sanitizeArchiveFilename,
   };

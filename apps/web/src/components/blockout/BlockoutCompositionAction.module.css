@@ -1,0 +1,28 @@
+/* The viewer toolbar is the size container (container-type in
+   styles/viewer/core.css). Beside the mode switch, viewport menu and preview
+   tools the full label needs about 940px; on a narrower viewer it would push
+   zoom and the tools past the edge, so the action keeps its icon and names
+   itself through the tooltip. */
+.action {
+  flex: 0 0 auto;
+}
+
+@container (max-width: 960px) {
+  .action {
+    width: 36px;
+    min-width: 36px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+  .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
