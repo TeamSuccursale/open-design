@@ -72,7 +72,7 @@ export interface HeaderFooterWorkspaceResponse {
   uploadErrors?: { name: string; error: string; createdAt: string }[];
   pageContexts?: HeaderFooterPageContext[];
 }
-export const CreateHeaderFooterSetRequestSchema = z.object({ name: z.string().trim().min(1).max(240), guidance: safeText.optional(), variants: z.array(HeaderFooterVariantSchema).min(1).max(20).optional() }).strict();
+export const CreateHeaderFooterSetRequestSchema = z.object({ name: z.string().trim().min(1).max(240), guidance: safeText.optional(), logoPlan: HeaderFooterDraftSchema.shape.logoPlan, variants: z.array(HeaderFooterVariantSchema).min(1).max(20).optional() }).strict();
 export const SaveHeaderFooterDraftRequestSchema = z.object({ expectedDraftVersion: z.number().int().nonnegative(), draft: HeaderFooterDraftSchema }).strict();
 export const ValidateHeaderFooterRequestSchema = z.object({ documentId: HeaderFooterIdSchema.optional(), expectedDraftVersion: z.number().int().nonnegative().optional() }).strict();
 export interface ValidateHeaderFooterResponse { valid: true; setId: string; draftVersion: number; documentIds: string[] }

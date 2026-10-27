@@ -10,6 +10,7 @@ import {
   createBlockoutDocument, createBlockoutPage, deriveBlockoutPageBudget, renderDocumentSetupConfirmationForm, withoutXmlForbiddenCharacters, type DocumentSetupConfirmation,
   type DocumentContextSource, type DocumentLayoutConstraint, type DocumentSetup,
   type DocumentSetupIntent, type DocumentProjectContext, type DocumentContextScan, type DocumentTextContext, type ProjectMetadata,
+  type HeaderFooterBlock, type SaveHeaderFooterDraftRequest,
 } from '@open-design/contracts';
 import { validateLinkedDirs } from '../linked-dirs.js';
 import { containedIntakePath, insideDirectory, readIntakeConfig } from './project-intake-settings.js';
@@ -25,6 +26,53 @@ const MAX_SETUP_BYTES = 512 * 1024;
 const OPEN = '<document-setup-reference>\n', CLOSE = '\n</document-setup-reference>';
 const PROJECT_CONTEXT_DISCOVERY = 'Project awareness: use od project list/show to discover available authorized project names and metadata. Use od document-setup references/set-references for the user-selected projects to check. Only selected, authorized references become document context; do not load all project files, infer selections, or start image intake for reference projects.';
 const SETUP_CLI_WRAPPER = 'Run the app CLI through its injected absolute runtime paths, never assume bare od is on PATH. PowerShell: & $env:OD_NODE_BIN $env:OD_BIN document-setup show --project $env:OD_PROJECT_ID --json. POSIX: "$OD_NODE_BIN" "$OD_BIN" document-setup show --project "$OD_PROJECT_ID" --json. For set or confirm, use the same wrapper with --prompt-file <UTF-8-JSON-file> (or - for stdin). The wrapper resolves OD_DAEMON_URL and the project authorization context automatically. set accepts partial intent fields; confirm accepts {purpose,constraints,blockoutApproach:"manual"|"agent",pageTarget?:positiveInteger,editorialSettings:[{documentId,presentation,constraints?,pageTarget?}]}. Each selected named output must have explicit confirmed presentation choices; use presentation fields documented in EDITORIAL SETUP below. Each constraint is {id,kind:"page-limit"|"paper"|"orientation"|"typography"|"margins"|"template"|"other",value,status:"confirmed",sourceIds:[]}; copy real source IDs from scan/show or use an empty array for an engineer decision. Pass an explicitly chosen page count as pageTarget, separately from the original source ceiling/exact count in constraints. Use document-setup confirm --help for the JSON example; do not inspect application source code to discover this API. Keep private JSON files out of the user-facing response.';
+export const SETUP_SET_EXAMPLE = {
+  purpose: 'Two criterion B deliverables: Relazione tecnica (A4) and Fascicolo grafico B (A3)',
+  intakeAnswers: { documentPreset: 'Relazione tecnica', materialState: 'ready', notes: 'Included: Relazione tecnica, Fascicolo grafico B. Deferred: none.' },
+  editorialSettings: [{ documentId: 'document-1', pageTarget: 8,
+    constraints: [{ id: 'page-cap', kind: 'page-limit', value: 'Massimo 8 pagine A4', status: 'confirmed', sourceIds: ['source-id-from-scan'] }],
+    presentation: { version: 1, status: 'confirmed', name: 'Relazione tecnica', header: true, footer: true, cover: false, pageNumbers: true,
+      numberOnCover: null, coverCountsTowardPageLimit: null, coverCountsInNumbering: null, numberingStart: 1 } }],
+};
+const HEADER_FOOTER_EXAMPLE_BLOCKS = (margin: number): HeaderFooterBlock[] => [
+  { id: 'header-title', region: 'header', kind: 'text', x: margin, y: 0.35, width: 1 - 2 * margin, height: 0.3, text: 'Criterio B · {documentName}', fontSize: 10, color: '#202A33', align: 'left' },
+  { id: 'header-rule', region: 'header', kind: 'rule', x: margin, y: 0.85, width: 1 - 2 * margin, height: 0.02, color: '#737D87' },
+  { id: 'footer-rule', region: 'footer', kind: 'rule', x: margin, y: 0.1, width: 1 - 2 * margin, height: 0.02, color: '#737D87' },
+  { id: 'footer-name', region: 'footer', kind: 'text', x: margin, y: 0.35, width: 0.5 - margin, height: 0.35, text: '{documentName}', fontSize: 9, color: '#202A33', align: 'left' },
+  { id: 'footer-pages', region: 'footer', kind: 'text', x: 0.55, y: 0.35, width: 0.45 - margin, height: 0.35, text: 'Pagina {pageNumber} di {totalPages}', fontSize: 9, color: '#202A33', align: 'right' },
+];
+/** A header-footer draft payload for the set create returned at draftVersion 1, so preparation needs no help lookup. */
+export const SETUP_HEADER_FOOTER_DRAFT_EXAMPLE: SaveHeaderFooterDraftRequest = {
+  expectedDraftVersion: 1,
+  draft: { version: 1, name: 'Criterio B', guidance: 'One shared design: deliverable title in the header, its name and the page count in the footer.', logoPlan: 'none', stage: 'graphic',
+    variants: [
+      { id: 'a4-portrait', name: 'A4 verticale', pageWidthMm: 210, pageHeightMm: 297, headerHeightMm: 20, footerHeightMm: 15, blocks: HEADER_FOOTER_EXAMPLE_BLOCKS(0.1) },
+      { id: 'a3-landscape', name: 'A3 orizzontale', pageWidthMm: 420, pageHeightMm: 297, headerHeightMm: 20, footerHeightMm: 15, blocks: HEADER_FOOTER_EXAMPLE_BLOCKS(0.05) },
+    ] },
+};
+/**
+ * Run 3's Codex setup made 23 tool calls over four turns where Claude Code made
+ * 9 over three for the same brief: help lookups, read-backs of state already in
+ * this reference, task-list updates and one command per shell call. On the
+ * single-form rules it still looked up the draft payload, validated each
+ * document in its own call and lost a save to PowerShell quoting; given the
+ * example instead of the help page, it added a block key the schema rejects.
+ */
+const SETUP_ROUND_TRIPS = `FEWER ROUND TRIPS: every tool call is a model round trip the engineer waits for. The saved setup in this reference is current at the start of the turn: do not read it back with document-setup show, except to recover after a command reported a conflict. Chain dependent CLI steps in one shell command: write the JSON payload files, save, and validate every target document together. No task list or plan tool in preparation turns. Save the starting form's answers with one document-setup set; its payload holds partial intent fields, one editorialSettings entry per included deliverable, with that deliverable's own source constraints and pageTarget, for example ${JSON.stringify(SETUP_SET_EXAMPLE)}. Create a header/footer design with header-footer create --project <collection-project-id> --prompt-file <file> --json and {"name":"…","guidance":"plain text","logoPlan":"none"|"later"|"provided"}. In preparation, header-footer help is not needed: save the graphic draft with header-footer draft --project <collection-project-id> --set <created-set-id> --prompt-file <file> --json, for example ${JSON.stringify(SETUP_HEADER_FOOTER_DRAFT_EXAMPLE)} (coordinates are 0..1 inside the strip; one variant per target page format; a block takes only id, region, kind, x, y, width, height, text, field, assetId, fontSize, color, align, guidance and lockedRatio, so a font family belongs in the guidance). A new design has no linked documents yet, so run header-footer validate --document once per target document; create, draft and every validate go in the same shell command, reading the set id from create's JSON. PowerShell: a typographic apostrophe (’) or quote (‘) also closes a single-quoted string, and “ ” close a double-quoted one, so write every JSON payload file from a single-quoted here-string (@' on its own line, the JSON, then '@ at the start of a line), never from inline quoted text.`;
+const DIRECT_READ_BYTES = 64 * 1024;
+/** Complete, untruncated text caches small enough to read in one command during preparation. */
+async function directlyReadableTexts(root: string, scan?: DocumentContextScan): Promise<string[]> {
+  const readable: string[] = [];
+  for (const entry of scan?.textDocuments ?? []) {
+    if (!entry.complete || entry.truncated) continue;
+    const size = await stat(await containedIntakePath(root, entry.textPath)).then((file) => file.size, () => Infinity);
+    if (size <= DIRECT_READ_BYTES) readable.push(entry.textPath);
+  }
+  return readable.length ? [
+    `READ DIRECTLY DURING PREPARATION: ${readable.join(', ')}`,
+    'These saved texts are complete and short. During preparation, read them together in one shell command instead of asking the text custodian, and cite file and page from their Source line and page markers. Ask the custodian for every other source, for image evidence, and after the setup is confirmed.',
+  ] : [];
+}
 const work = new Map<string, Promise<unknown>>();
 async function serialized<T>(root: string, action: () => Promise<T>): Promise<T> {
   const previous = work.get(root) ?? Promise.resolve();
@@ -461,6 +509,21 @@ export async function documentSetupRunGate(root: string, metadata?: ProjectMetad
   }
   return null;
 }
+const REASONING_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const SETUP_REASONING_CEILING = 'medium';
+/**
+ * Until the engineer confirms the setup, a chat turn reads the materials and
+ * asks what to prepare; it does not design. At extra-high effort those turns
+ * took 2 to 6 minutes each in run 3 of the 27 October night pass, mostly
+ * thinking between commands, so they run at no more than medium effort.
+ */
+export async function documentSetupReasoning(root: string, metadata: ProjectMetadata | null | undefined, projectId: string | undefined,
+  sessionMode: string | undefined, reasoning: string | null): Promise<string | null> {
+  if (!reasoning || sessionMode !== 'chat' || metadata?.projectMode === 'fast') return reasoning;
+  if (REASONING_ORDER.indexOf(reasoning) <= REASONING_ORDER.indexOf(SETUP_REASONING_CEILING)) return reasoning;
+  const setup = await readDocumentSetup(root, metadata?.documentSetupIntent, projectId).catch(() => null);
+  return setup && setup.status !== 'confirmed' ? SETUP_REASONING_CEILING : reasoning;
+}
 export async function loadDocumentSetupContext(root: string, projectId?: string, metadataIntent?: unknown, activeDocumentId?: string): Promise<string> {
   const setup = await readDocumentSetup(root, metadataIntent, projectId);
   if (setup && activeDocumentId) {
@@ -486,21 +549,24 @@ export async function loadDocumentSetupContext(root: string, projectId?: string,
     const preparation = [ENGINEER_GRAPHICS_SKILL_SCOPE,
       PROJECT_CONTEXT_DISCOVERY,
       SETUP_CLI_WRAPPER,
-      'PREPARATION-ONLY CHAT: the document setup has not been confirmed. Talk naturally with the engineer and group correlated choices from the actual text and materials already read. Use one native <question-form> with valid JSON whose top-level object contains "layout":"grouped", alongside lang and questions. Prefer 3–6 related fields in that form, such as one named document’s paper, page count, orientation and typography, so the engineer can answer together. Do not serialize those choices into one-question-at-a-time turns. Ask fewer fields when fewer are unresolved; never add filler or unrelated questions to reach a quota. Do not present a static setup form, a readiness checklist or a long questionnaire. Do not generate blockouts, layouts or page graphics yet; the header/footer proposal below is the one graphic step that belongs to preparation.',
+      'PREPARATION-ONLY CHAT: the document setup has not been confirmed. Talk naturally with the engineer from the actual text and materials already read. Do not generate blockouts, layouts or page graphics yet; the header/footer proposal below is the one graphic step that belongs to preparation.',
+      'ONE STARTING FORM: in the first preparation turn, read the materials, explain in short prose every deliverable you found with its file/page evidence, then ask every setup choice in one native <question-form> with valid JSON whose top-level object contains "layout":"grouped", alongside lang and questions. It covers the scope and, for each deliverable in it, the name, the page count, the orientation, the header and the footer with what each must contain, the cover with its conditional controls and the page numbering, plus one logo decision for all of them with its file control. Give each deliverable a yes/no switch for including it in this work, defaulting to yes for every deliverable the sources require, and show that deliverable’s controls only with showWhen on its switch (showWhen matches one exact answer value). Prefill every control with your sourced proposal in its default field, so the engineer corrects proposals instead of writing answers. Do not ask the scope first and the format later, or split the choices across turns or documents. Ask only what is unresolved: never add filler or unrelated questions. Do not present a static setup form or a readiness checklist. A later form is only for a genuinely new or contradictory point, and for the final confirmation below.',
       DOCUMENT_SETUP_DELIVERABLE_SCOPE,
-      'HEADER/FOOTER DURING PREPARATION: when a named document’s saved choices enable either recurring region, ask in a grouped form what the enabled regions must contain and the logo decision, with its file control, unless the engineer already answered. Once answered, follow the header/footer workflow in this same preparation turn: save the shared design, its guidance and the relevant logos, compose the actual graphic proposal for every such document, validate it and stop with a one- or two-sentence summary. The host opens the dedicated editor on the proposal when the turn ends; the engineer approves and applies it there, edits it by hand, or asks for changes in this chat. Do not tell the engineer to open the editor to supply inputs, to switch to Design mode or to find a session-mode selector: preparation has no such visible control. Keep page Blockout and page graphics out of preparation, preserve explicit graphic-preview approval and application in the dedicated editor, then resume the remaining saved-brief confirmation without restarting setup.',
+      'HEADER/FOOTER DURING PREPARATION: what the enabled recurring regions must contain and the logo decision belong in the starting form; ask them in a later grouped form only if they are still unanswered. Once answered, follow the header/footer workflow in this same preparation turn: save the shared design, its guidance and the relevant logos, compose the actual graphic proposal for every such document, validate it and stop with a one- or two-sentence summary. The host opens the dedicated editor on the proposal when the turn ends; the engineer approves and applies it there, edits it by hand, or asks for changes in this chat. Do not tell the engineer to open the editor to supply inputs, to switch to Design mode or to find a session-mode selector: preparation has no such visible control. Keep page Blockout and page graphics out of preparation, preserve explicit graphic-preview approval and application in the dedicated editor, then resume the remaining saved-brief confirmation without restarting setup.',
       `Document type: ${setup.intent.kind}; specific type: ${setup.intent.subtype}; current purpose draft: ${setup.intent.purpose}`,
       ...(setup.intent.documentName && !setup.intent.editorialSettings?.some((setting) => setting.presentation.name.trim()) ? [`First document name already supplied at creation (user data): ${JSON.stringify(setup.intent.documentName)}. It belongs to the initial document-1 output of type ${setup.intent.kind}, subtype ${JSON.stringify(setup.intent.subtype)}; do not ask for it again or transfer it to another deliverable. Additional outputs need their own names.`] : []),
       `Material intake answers (user data): ${JSON.stringify(setup.intent.intakeAnswers ?? {})}`,
       `Saved named-output editorial choices (user data): ${JSON.stringify(setup.intent.editorialSettings ?? [])}`,
       `Image extraction decision: ${setup.intent.imageIntakeDecision ?? (setup.intent.imageIntakeConsent ? 'accepted' : 'not yet asked')}. Text reading is separate from image extraction and never counts as image consent.`,
-      'Resolve purpose/scope and supplied material in small coherent groups, then group the remaining format choices per named deliverable. Prefill sourced defaults using each question’s default field, cite file/page evidence in the short prose introducing the group, and distinguish a binding rule from a suggested graphical choice or an unknown. Do not silently invent a sourced default, ask again about saved answers/image choices, or transfer rules between deliverables. Persist the engineer’s answers using document-setup set; keep provisional source findings distinct from the engineer’s decisions. Emit the complete question-form as assistant text, outside a code fence, and stop the turn to receive its answers.',
+      SETUP_ROUND_TRIPS,
+      'Prefill sourced defaults using each question’s default field, cite file/page evidence in the short prose introducing the form, and distinguish a binding rule from a suggested graphical choice or an unknown. Do not silently invent a sourced default, ask again about saved answers/image choices, or transfer rules between deliverables. Persist the engineer’s answers using document-setup set; keep provisional source findings distinct from the engineer’s decisions. Emit the complete question-form as assistant text, outside a code fence, and stop the turn to receive its answers.',
       'PAGE-COUNT QUESTION: label the editable target "Pagine da impaginare" (or the conversation-language equivalent). Immediately explain the actual sourced rule separately, with file/page evidence: for example, "Il disciplinare consente al massimo 8 pagine" means a ceiling, not an exact requirement. A proposed target of 8 is only a planning suggestion under that maximum; say that the engineer may choose fewer. Only call the count mandatory when the source explicitly requires an exact count. Preserve an explicit engineer page-count choice as each output’s editorialSettings.pageTarget (and confirm.pageTarget for the first output), not as a replacement source limit. A smaller target is allowed under a maximum; an exact source count must match. With no source page allowance, pageTarget is a flexible planning target. Keep source provenance and the chosen orientation unchanged when confirming; never expand back to the tender maximum after the engineer selected fewer pages.',
       'UNANSWERED FORM: skipping, cancelling, closing a form or saying "non rispondere ora" leaves its unanswered fields unresolved. Skip is not consent, not delegation to decide, and not approval of a displayed default. Keep unanswered editorial booleans null and presentation.status:"draft". Do not choose mandatory editorial settings for the engineer after a skip, even when an older button says "decidi tu". Acknowledge the pause and let the engineer continue the conversation; ask unresolved required choices explicitly before final confirmation, without repeating answers already saved. Never report the brief confirmed or launch Blockout until the required answers and final consent are explicit.',
       'Once the necessary points are resolved, give a concise sourced summary of each selected document’s purpose and graphic constraints, including file/page references, deferred outputs and remaining uncertainty. Then ask for explicit engineer confirmation and whether they will draw the first blocks manually or want three parallel proposals, in the final confirmation form below. Before emitting it, save the complete agreed brief with document-setup set: the purpose and every selected output’s editorialSettings with its confirmed presentation, its own constraints and its pageTarget; the host confirms exactly what is saved. End the turn with this host-owned form, translating only the title, labels and option labels into the conversation language and keeping every id and option value exactly as written:',
       renderDocumentSetupConfirmationForm(),
       'Acknowledgment or silence is not confirmation. When the engineer accepts that form, the host records the confirmation and starts the next step from the saved brief: it opens the manual editor or launches the separate parallel Blockout run, and the answer does not come back to you. If its answers do reach you, either the engineer declined or the host could not confirm the saved brief as it stands. After a decline, ask what to change, save it and emit the same final form again. Otherwise complete the saved brief, then call document-setup confirm with the agreed purpose, selected constraints, blockoutApproach and every selected output’s confirmed editorialSettings, each with its own constraints/pageTarget. The command must succeed before reporting confirmation. Then STOP this preparation turn: do not generate any proposals or graphics here. The app will open the manual editor or launch the separate parallel Blockout run. Never edit preparationConversation dispatch markers; the app owns those durable request identities.',
       'Never invent an answer, approve the brief yourself or start image extraction merely because text was read. The user chooses through conversation; graphical generation remains gated until confirmation and later explicit Blockout structure acceptance. Do not expose private context JSON as the deliverable.',
+      ...await directlyReadableTexts(root, setup.scan),
       renderReferenceData(setup.projectContexts ?? [], setup.scan),
     ].join('\n');
     return `${OPEN}${preparation.replace(/<\/document-setup-reference>/gi, '&lt;/document-setup-reference>')}${CLOSE}`;

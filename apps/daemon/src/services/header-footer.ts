@@ -110,7 +110,7 @@ export class HeaderFooterStore {
     return this.serial(async () => {
       const request = CreateHeaderFooterSetRequestSchema.parse(input), state = await this.read(), time = this.time(), id = randomUUID();
       const variants = request.variants ?? [{ id: 'a4-portrait', name: 'A4 verticale', pageWidthMm: 210, pageHeightMm: 297, headerHeightMm: 20, footerHeightMm: 15, blocks: [] }, { id: 'a3-landscape', name: 'A3 orizzontale', pageWidthMm: 420, pageHeightMm: 297, headerHeightMm: 20, footerHeightMm: 15, blocks: [] }];
-      const set: HeaderFooterSet = { id, name: request.name, draft: { version: 1, name: request.name, guidance: request.guidance ?? '', stage: 'structural', variants }, draftVersion: 1, revision: 0, publishedRevision: null, archivedAt: null, createdAt: time, updatedAt: time };
+      const set: HeaderFooterSet = { id, name: request.name, draft: { version: 1, name: request.name, guidance: request.guidance ?? '', ...(request.logoPlan ? { logoPlan: request.logoPlan } : {}), stage: 'structural', variants }, draftVersion: 1, revision: 0, publishedRevision: null, archivedAt: null, createdAt: time, updatedAt: time };
       state.sets.push(set); await this.write(state, { action: 'create', setId: id, documentIds: [] }); return { ...await this.workspace(state), set: copy(set) };
     });
   }

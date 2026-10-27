@@ -140,9 +140,10 @@ export async function ensureDetectedRuntimeVersions(
  * establish the answer through this probe first; it reuses the same bounded
  * `--help` read and the same `agentCapabilities` cache as full detection.
  *
- * Returns null only when the runtime is not resolvable or declares no
- * capability metadata; a CLI whose `--help` simply omits every known flag
- * resolves to a populated map of `false` values.
+ * Returns null when the runtime is not resolvable, declares no capability
+ * metadata, or its `--help` could not be read; a failed read is not cached,
+ * so the next call asks again. A CLI whose `--help` simply omits every known
+ * flag resolves to a populated map of `false` values.
  */
 export async function ensureDetectedRuntimeCapabilities(
   agentId: string | null | undefined,
@@ -479,8 +480,10 @@ function unavailableAgent(
 // Probe the agent's `--help` once and record which advertised flags the
 // installed CLI supports, so buildArgs can consult the cache. Extracted from
 // the main probe so it can run concurrently with model + auth probing instead
-// of blocking them. Returns the capability map (or null when the agent
-// declares no help/capability metadata or the probe failed).
+// of blocking them. Returns the capability map, or null when the agent
+// declares no help/capability metadata or the help could not be read. A
+// failed read says nothing about the CLI, so callers must not cache it as
+// "no flags": that answer would outlive a passing timeout until restart.
 async function probeCapabilities(
   def: RuntimeAgentDef,
   launchPath: string,
@@ -507,9 +510,9 @@ async function probeCapabilities(
     }
     return caps;
   } catch {
-    // If --help fails, leave caps empty so buildArgs falls back to the safe
-    // baseline (no optional flags).
-    return {};
+    // Unknown, not absent: buildArgs still falls back to the safe baseline
+    // (no optional flags) for this call, and the next check probes again.
+    return null;
   }
 }
 
@@ -727,12 +730,13 @@ async function probe(
       probeAgentAuthStatus(def, launch.launchPath, probeEnv),
       probeAmrOpenCodeVersion(def, probeEnv),
     ]);
-  // `probeCapabilities` returns null when the agent declares no help metadata;
-  // hidden-flag results still deserve to land, so only collapse to null when
+  // `probeCapabilities` returns null when the agent declares no help metadata
+  // or its help could not be read; the flags an earlier probe read then stay.
+  // Hidden-flag results still deserve to land, so only collapse to null when
   // neither probe produced anything.
   const caps =
     helpCaps || Object.keys(hiddenCaps).length > 0
-      ? { ...(helpCaps ?? {}), ...hiddenCaps }
+      ? { ...(helpCaps ?? agentCapabilities.get(def.id) ?? {}), ...hiddenCaps }
       : null;
   const surfacedModelResult = withRememberedAmrModels(def, probeEnv, modelResult);
   if (caps) {

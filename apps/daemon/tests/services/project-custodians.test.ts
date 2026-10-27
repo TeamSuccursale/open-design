@@ -108,6 +108,29 @@ describe('project source custodians', () => {
     expect(receipt.result.snapshotRevision).toBe(ledger.snapshotRevision);
     expect(recordEvent).toHaveBeenCalledTimes(2);
   });
+  it('answers through the next reader when the preferred one fails, and the receipt names the reader that answered', async () => {
+    const { root, dataDir } = await fixture();
+    const claude = vi.fn(async () => { throw new Error('529 overloaded'); }), codex = vi.fn(async (request: CustodianWorkerRequest) => answer(request));
+    const service = new ProjectCustodianService({ dataDir, nativeReader, readers: async () => [
+      { name: 'claude-api', model: 'claude-opus-5-5', effort: 'medium', run: claude },
+      { name: 'codex', model: 'gpt-6.1-sol', effort: 'medium', run: codex }] });
+    const result = await service.ask(root, { domain: 'text', question: 'What area?' }, undefined, 'test');
+    expect(result.answer).toContain('25');
+    expect(claude).toHaveBeenCalledTimes(1); expect(codex).toHaveBeenCalledTimes(1);
+    const directory = (await readdir(path.join(dataDir, 'project-custodians')))[0]!;
+    const receipt = JSON.parse(await readFile(path.join(dataDir, 'project-custodians', directory, result.receiptId, 'receipt.json'), 'utf8'));
+    expect(receipt).toMatchObject({ reader: 'codex', requestedModel: 'gpt-6.1-sol', requestedEffort: 'medium',
+      readerFallbacks: [{ reader: 'claude-api', error: '529 overloaded' }] });
+  });
+  it('falls back when the preferred reader cites evidence it was never offered', async () => {
+    const { root, dataDir } = await fixture();
+    const invented = vi.fn(async () => ({ answer: 'x', citations: [{ sourceId: 'invented', title: 'x', page: 1 }], assetIds: [], gaps: [] }));
+    const service = new ProjectCustodianService({ dataDir, nativeReader, readers: async () => [
+      { name: 'claude-api', model: 'claude-opus-5-5', effort: 'medium', run: invented },
+      { name: 'codex', model: 'gpt-6.1-sol', effort: 'medium', run: async (request: CustodianWorkerRequest) => answer(request) }] });
+    const result = await service.ask(root, { domain: 'text', question: 'What area?' }, undefined, 'test');
+    expect(result.citations[0]!.title).toBe('Source');
+  });
   it('blocks visual inspection without persisted consent even when crops already exist', async () => {
     const { root, dataDir } = await fixture(), runner = vi.fn();
     const result = await new ProjectCustodianService({ dataDir, nativeReader, runner }).ask(root, { domain: 'images', question: 'Find the table' }, undefined, 'test');

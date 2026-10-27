@@ -481,7 +481,7 @@ describe('guided document setup', () => {
     expect((await readDocumentSetup(root))?.intent.preparationConversation).toMatchObject({ requestId: 'prepare-same', dispatched: true, blockoutRequestId: 'blockout-same' });
     const context = await loadDocumentSetupContext(root);
     expect(context).toContain('"layout":"grouped"');
-    expect(context).toContain('3–6 related fields');
+    expect(context).toContain('ONE STARTING FORM');
     expect(context).toContain('cite file/page evidence');
     expect(context).not.toContain('Ask ONE specific question per turn');
     expect(context).toContain('Do not present a static setup form');

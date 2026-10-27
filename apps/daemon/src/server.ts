@@ -3,7 +3,7 @@ import { registerProjectIntakeRoutes } from './routes/project-intake.js';
 import { loadIntakeAttachmentContext } from './services/project-intake-context.js';
 import { getRunBlockoutContext, getRunBlockoutDesignTargets, loadBlockoutContext } from './services/blockout-context.js';
 import { activeDocumentIdentity, getRunDocumentReferenceContext, parseDocumentReferences, resolveConversationDocument } from './services/document-reference-context.js';
-import { loadDocumentSetupContext, readDocumentSetup } from './services/document-setup.js';
+import { documentSetupReasoning, loadDocumentSetupContext, readDocumentSetup } from './services/document-setup.js';
 import { registerDocumentSetupRoutes } from './routes/document-setup.js';
 import { registerBlockoutWorkspaceRoutes } from './routes/blockout-workspaces.js';
 import { registerProjectHistoryRoutes } from './routes/project-history.js';
@@ -12628,15 +12628,18 @@ export async function startServer({
       typeof process.env[def.defaultModelEnvVar] === 'string' &&
       process.env[def.defaultModelEnvVar]?.trim(),
     );
+    const turnReasoning = cwd && projectRecord && typeof reasoning === 'string'
+      ? await documentSetupReasoning(cwd, projectRecord.metadata, projectRecord.id, runSessionMode, reasoning)
+      : reasoning;
     if (def.id === 'claude') {
       await ensureDetectedRuntimeCapabilities(def.id, configuredAgentEnv);
-      const effortError = getClaudeEffortError(safeModel, reasoning, agentCapabilities.get('claude') ?? {});
+      const effortError = getClaudeEffortError(safeModel, turnReasoning, agentCapabilities.get('claude') ?? {});
       if (effortError) return failRun(effortError.code, effortError.message);
     }
     const safeReasoning =
-      typeof reasoning === 'string' &&
-      isKnownReasoningEffort(def, safeModel, reasoning, requestedLiveModelScope)
-        ? reasoning
+      typeof turnReasoning === 'string' &&
+      isKnownReasoningEffort(def, safeModel, turnReasoning, requestedLiveModelScope)
+        ? turnReasoning
         : null;
     if (chatBody.svgExecutionPolicy && (
       safeModel !== chatBody.svgExecutionPolicy.model
