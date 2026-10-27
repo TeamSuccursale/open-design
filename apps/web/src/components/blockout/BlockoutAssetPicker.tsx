@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Input } from '@open-design/components';
-import { blockoutImageFromAsset, type BlockoutImage, type IntakeAsset, type WorkspaceCollabContext } from '@open-design/contracts';
+import { blockoutImageFromAsset, intakeSourceLabel, type BlockoutImage, type IntakeAsset, type WorkspaceCollabContext } from '@open-design/contracts';
 import { fetchProjectIntake } from '../../providers/project-intake';
 import { projectRawUrl } from '../../providers/registry';
 import { useT } from '../../i18n';
@@ -33,7 +33,7 @@ export function BlockoutAssetPicker({ projectId, workspaceContext, value, onChan
       <div className={styles.assetGrid}>{visible.map((asset) => <label key={asset.id}>
         <img src={projectRawUrl(projectId, asset.imagePath, workspaceContext)} alt="" loading="lazy" />
         <input type="checkbox" checked={value.some((image) => image.assetId === asset.id)} disabled={value.length >= 30 && !value.some((image) => image.assetId === asset.id)} onChange={() => onChange(value.some((image) => image.assetId === asset.id) ? value.filter((image) => image.assetId !== asset.id) : [...value, blockoutImageFromAsset(asset)])} />
-        <span>{asset.title}</span><small>{asset.sourceName} · {asset.page}</small>
+        <span>{asset.title}</span><small>{intakeSourceLabel(asset, (name, page) => `${name} · ${page}`)}</small>
       </label>)}</div>}
   </div>;
 }

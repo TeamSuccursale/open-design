@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@open-design/components';
-import type { WorkspaceCollabContext } from '@open-design/contracts';
+import { intakeSourceLabel, type WorkspaceCollabContext } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { projectRawUrl } from '../../providers/registry';
 import { fetchProjectIntake, OPEN_PROJECT_GALLERY_EVENT } from '../../providers/project-intake';
@@ -41,7 +41,7 @@ export function ProjectIntakeCard({ projectId, workspaceContext, snapshot, sourc
       <p>{t(`intakeCard.${state}Hint`)}</p>
       <span className={styles.counts}>{t('intakeCard.counts', { documents: names.length, images: readyImages.length })}</span>
       {active && <><progress max={100} {...(progress?.percent !== undefined ? { value: progress.percent } : {})} aria-label={t('intake.progress.bar')} /><span className={styles.steps}>{t('intakeCard.steps')}</span></>}
-      {preview && <span className={styles.source}>{t('intakeCard.source', { name: preview.sourceName, page: preview.page })}</span>}
+      {preview && <span className={styles.source}>{intakeSourceLabel(preview, (name, page) => t('intakeCard.source', { name, page }))}</span>}
       {startError && <p role="alert">{startError}</p>}
       <ProjectLogoSources projectId={projectId} context={workspaceContext} />
       <div className={styles.actions}><Button variant="secondary" disabled={starting} onClick={catalog?.documents.length ? openGallery : () => void prepare()}>{t(catalog?.documents.length ? 'intakeCard.gallery' : 'intakeCard.prepare')}<Icon name="arrow-right" size={14} /></Button></div>

@@ -1,4 +1,11 @@
-/** Project-local PDF extraction shared by the UI and the od intake CLI. */
+/** Project-local PDF and image extraction shared by the UI and the od intake CLI. */
+export const INTAKE_IMAGE_SOURCE = /\.(png|jpe?g|webp)$/i;
+/** A raster image enters the gallery whole, as one asset, instead of being split into pages and figures. */
+export function isIntakeImageSource(path: string): boolean { return INTAKE_IMAGE_SOURCE.test(path); }
+/** Where an asset came from, for labels: a whole image has no page to name, a PDF figure does. */
+export function intakeSourceLabel(asset: { sourceName: string; sourcePath: string; page: number }, paged: (name: string, page: number) => string): string {
+  return isIntakeImageSource(asset.sourcePath) ? asset.sourceName : paged(asset.sourceName, asset.page);
+}
 export type IntakeAssetKind = 'image' | 'drawing' | 'chart' | 'table' | 'page';
 export type IntakeState = 'queued' | 'processing' | 'ready' | 'failed';
 export interface IntakeTableData {

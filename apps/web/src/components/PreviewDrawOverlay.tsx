@@ -57,6 +57,8 @@ export interface AnnotationEventDetail {
   target?: CaptureTarget | null;
   /** Images the user attached in the markup composer to combine with the mark. */
   extraFiles?: File[];
+  /** Set by the image viewer: the note belongs to this project image (or to `file`, its marked copy). */
+  imageSourcePath?: string;
   ack?: (result: { ok: boolean; message?: string }) => void;
 }
 
@@ -74,6 +76,9 @@ interface Props {
   sendDisabledReason?: string;
   onToolbarClick?: (element: DrawToolbarElement, submitAction?: AnnotationAction) => void;
   toolbarHost?: HTMLElement | null;
+  imageSourcePath?: string;
+  /** Overrides the add-to-input label, e.g. "Aggiungi alla chat" on an image. */
+  addLabel?: string;
 }
 
 // Left-to-right order of the three submit buttons. Send is last so it sits
@@ -139,6 +144,8 @@ export function PreviewDrawOverlay({
   sendDisabledReason,
   onToolbarClick,
   toolbarHost,
+  imageSourcePath,
+  addLabel,
 }: Props) {
   const t = useT();
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -1025,6 +1032,7 @@ export function PreviewDrawOverlay({
           bounds: kind ? annotationBounds() : undefined,
           target: captureTarget,
           extraFiles: extraFiles.length ? extraFiles : undefined,
+          ...(imageSourcePath ? { imageSourcePath } : {}),
           ack: finish,
         };
         window.dispatchEvent(new CustomEvent(ANNOTATION_EVENT, { detail }));
@@ -1242,9 +1250,9 @@ export function PreviewDrawOverlay({
     },
     {
       action: 'draft',
-      label: t('chat.annotationAddToInput'),
+      label: addLabel ?? t('chat.annotationAddToInput'),
       pendingLabel: t('chat.annotationAddingToInput'),
-      title: t('chat.annotationAddToInput'),
+      title: addLabel ?? t('chat.annotationAddToInput'),
       icon: <RemixIcon name="input-field" size={15} />,
       enabled: canAddToInput,
     },
@@ -1535,7 +1543,9 @@ export function PreviewDrawOverlay({
               alignItems: 'center',
               justifyContent: 'center',
               alignContent: 'center',
-              flexWrap: 'nowrap',
+              // On an image the note is the point, so in a narrow viewer the
+              // tools wrap instead of squeezing the note field shut.
+              flexWrap: imageSourcePath ? 'wrap' : 'nowrap',
               gap: 6,
               boxSizing: 'border-box',
               width: 'max-content',
@@ -1646,7 +1656,7 @@ export function PreviewDrawOverlay({
                 flexGrow: 1,
                 flexShrink: 1,
                 flexBasis: 240,
-                minWidth: 0,
+                minWidth: imageSourcePath ? 160 : 0,
                 width: 'clamp(160px, 28vw, 320px)',
                 maxWidth: '100%',
                 padding: '5px 10px',
@@ -1661,7 +1671,8 @@ export function PreviewDrawOverlay({
               }}
               onKeyDown={(e) => {
                 if (isImeComposing(e, composingRef.current)) return;
-                if (e.key === 'Enter') void send('queue');
+                // On an image, Enter adds the note to the chat; on a preview it queues it.
+                if (e.key === 'Enter') void send(imageSourcePath ? 'draft' : 'queue');
               }}
             />
             {/* Three independent buttons, ordered add-to-input → queue → send.

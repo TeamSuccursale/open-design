@@ -17,7 +17,7 @@ import { getHeaderFooterWorkspace } from '../providers/header-footer';
 import { DOCUMENT_PREPARATION_RESUME_EVENT, documentSetupRequest } from '../providers/document-setup';
 import { buildDocumentPreparationResumePrompt } from '../runtime/document-preparation-continuation';
 import { hasActiveQuestionForm } from '../runtime/chat/active-question-form';
-import { isFastProject, projectDocumentForConversation } from '@open-design/contracts';
+import { isFastProject, projectDocumentForConversation, withImageNotes } from '@open-design/contracts';
 import { useProjectDocuments } from './project-documents/useProjectDocuments';
 import { useProjectDocumentRegistrySync } from './project-documents/useProjectDocumentRegistrySync';
 import type { ProjectDocument } from '@open-design/contracts';
@@ -9098,7 +9098,8 @@ export function ProjectView({
       const userMsg: ChatMessage = retryTarget?.userMsg ?? {
         id: meta?.userMessageId ?? randomUUID(),
         role: 'user',
-        content: prompt,
+        // Image notes travel in the turn text so every agent path sees them; the chat hides the block.
+        content: withImageNotes(prompt, effectiveAttachments),
         createdAt: startedAt,
         clientRequestId,
         sessionMode: runSessionMode,

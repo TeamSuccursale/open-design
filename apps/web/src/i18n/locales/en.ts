@@ -5869,7 +5869,7 @@ export const en: Dict = {
   "intake.moveBottom": "Move to bottom",
   "intake.search": "Search descriptions, tags or documents…",
   "intake.filter": "Asset type",
-  "intake.addDocuments": "Add PDFs",
+  "intake.addDocuments": "Add PDFs or images",
   "intake.scanFolder": "Scan project folder",
   "intake.uploadFailed": "The document upload failed. Try again.",
   "intake.processing": "Intake is running in the background…",

@@ -17,7 +17,7 @@ import { Button } from '@open-design/components';
 import { ThinkingOrb } from './composer/ThinkingOrb';
 import sizingStyles from './ChatComposerSizing.module.css';
 import { ProjectDocumentContext } from './project-documents/ProjectDocumentContext';
-import { isBlockoutFile, mergeBlockoutBriefDraft } from '@open-design/contracts';
+import { isBlockoutFile, isIntakeImageSource, mergeBlockoutBriefDraft } from '@open-design/contracts';
 import { BlockoutWorkspace } from './blockout/BlockoutWorkspace';
 import { BLOCKOUT_OPEN_EVENT, BLOCKOUT_QUESTION_EVENT, openBlockoutProposals, pendingBlockoutQuestion, type BlockoutAgentRequest, type BlockoutOpenRequest, type BlockoutQuestionEvent, type BlockoutQuestionRequest } from './blockout/events';
 import { useI18n } from '../i18n';
@@ -77,7 +77,9 @@ import { LibraryPicker } from './LibraryPicker';
 import { ProjectGalleryDrawer } from './ProjectGalleryDrawer';
 import { ProjectContextActions } from './chat/ProjectContextActions';
 import { ActiveFileTarget } from './chat/ActiveFileTarget';
-import { OPEN_PROJECT_GALLERY_EVENT } from '../providers/project-intake';
+import { fetchProjectIntake, OPEN_PROJECT_GALLERY_EVENT } from '../providers/project-intake';
+import { imageViewerAttachment, stageImageAnnotation } from '../runtime/chat/image-annotation';
+import { ImageNoteCard, ImageNoteList } from './chat/ImageNoteCard';
 import { FigmaImportModal } from './FigmaImportModal';
 import { FigmaHelpModal } from './FigmaHelpModal';
 import {
@@ -2483,6 +2485,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         if (uploaded) {
           appendOrderedStagedAttachments([{ ...uploaded, order: entry.order }]);
           dropPendingUpload(entry.id);
+          // An image added to the chat also enters the project gallery.
+          if (uploaded.kind === 'image' && isIntakeImageSource(uploaded.path)) {
+            void fetchProjectIntake(projectIdForUpload, workspaceContext, { paths: [uploaded.path] })
+              .catch((error: unknown) => console.warn('Could not add the image to the gallery', error));
+          }
           return { ok: true };
         }
         const detail = result.error ?? result.failed[0]?.error;
@@ -2665,6 +2672,56 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       }
     }
 
+    /**
+     * A note from the image viewer stays paired with its image: the marked copy
+     * when the engineer drew on it, the image itself otherwise. It never enters
+     * the draft text; the agent reads it from the turn (`withImageNotes`).
+     */
+    async function stageImageViewerNote(
+      detail: AnnotationEventDetail,
+      sourcePath: string,
+      ack: (result: { ok: boolean; message?: string }) => void,
+    ) {
+      const id = await ensureProject();
+      if (!id) {
+        ack({ ok: false, message: t('chat.annotationProjectCreateFailed') });
+        return;
+      }
+      const extraFiles = detail.extraFiles ?? [];
+      const orderStart = reserveAttachmentOrders(1 + extraFiles.length);
+      let marked: ChatAttachment | null = null;
+      let extras: ChatAttachment[] = [];
+      const files = [detail.file, ...extraFiles].filter((file): file is File => Boolean(file));
+      if (files.length > 0) {
+        setUploading(true);
+        const result = await uploadProjectFiles(id, files, undefined, workspaceContext);
+        if (result.uploaded.length === 0) {
+          ack({ ok: false, message: t('chat.annotationUploadFailed') });
+          return;
+        }
+        marked = detail.file ? result.uploaded[0] ?? null : null;
+        extras = assignChatAttachmentOrders(result.uploaded.slice(detail.file ? 1 : 0), orderStart + 1);
+      }
+      const noted = imageViewerAttachment({ sourcePath, note: detail.note, marked, order: orderStart });
+      // The image the engineer looked at enters the gallery; its marked copy does not.
+      void fetchProjectIntake(id, workspaceContext, { paths: [sourcePath] }).catch((error: unknown) => console.warn('Could not add the image to the gallery', error));
+      if (detail.action === 'draft' || (detail.action === 'send' && streaming)) {
+        setStaged((current) => sortChatAttachmentsByOrder(stageImageAnnotation(current, noted)));
+        appendOrderedStagedAttachments(extras);
+        editorRef.current?.focus();
+        if (detail.action === 'send') {
+          streamingAnnotationSendEntryFromRef.current = 'mark';
+          setStreamingAnnotationSendPending(true);
+        }
+        ack({ ok: true });
+        return;
+      }
+      const attachments = sortChatAttachmentsByOrder([...stageImageAnnotation(staged, noted), ...extras]);
+      const meta = detail.action === 'queue' ? queueMeta(currentRunContextMeta()) : currentRunContextMeta();
+      sendComposedTurn(composeOutgoingPrompt(draft.trim()), attachments, currentCommentAttachments(), { ...meta, entryFrom: 'mark' });
+      ack({ ok: true });
+    }
+
     useEffect(() => {
       function onAnnotation(e: Event) {
         const detail = (e as CustomEvent<AnnotationEventDetail>).detail;
@@ -2680,6 +2737,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           let visualAttachmentInput: Parameters<typeof buildVisualAnnotationAttachment>[0] | null = null;
           let visualAttachment: ChatCommentAttachment | null = null;
           try {
+            if (detail.imageSourcePath) {
+              await stageImageViewerNote(detail, detail.imageSourcePath, ack);
+              return;
+            }
             // Upload the annotation screenshot together with any images the
             // user attached in the markup composer. The screenshot (when
             // present) is first so it keeps backing the structured visual
@@ -4163,12 +4224,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             pendingSessionModeRef.current = mode; onSessionModeChange?.(mode);
           }} /> : null}
         {projectId ? <ProjectGalleryDrawer key={projectId} projectId={projectId} open={projectGalleryOpen} workspaceContext={workspaceContext} onClose={() => setProjectGalleryOpen(false)} onAdd={(selection) => {
-          const attachments = selection.map(({ asset, attachmentPath }) => ({ path: attachmentPath ?? asset.imagePath, name: asset.title, kind: 'image' as const }));
+          // A plain pick keeps its note with the image; a quick action (draftText) is a request to edit, not a note.
+          const attachments = selection.map(({ asset, attachmentPath, note, draftText }) => ({ path: attachmentPath ?? asset.imagePath, name: asset.title, kind: 'image' as const,
+            ...(!draftText && note.trim() ? { annotation: { note: note.trim() } } : {}) }));
           const orderStart = reserveAttachmentOrders(attachments.length);
           appendOrderedStagedAttachments(assignChatAttachmentOrders(attachments, orderStart));
-          const context = selection.map(({ asset, note, draftText }) => draftText ?? [t('intake.visibleAsset', { title: asset.title }), note.trim()].filter(Boolean).join('\n')).join('\n\n');
+          const context = selection.flatMap(({ draftText }) => draftText ? [draftText] : []).join('\n\n');
           const next = [draftRef.current.trimEnd(), context].filter(Boolean).join('\n\n');
-          draftRef.current = next; setDraft(next); editorRef.current?.setText(next); editorRef.current?.focus();
+          if (next !== draftRef.current) { draftRef.current = next; setDraft(next); editorRef.current?.setText(next); }
+          editorRef.current?.focus();
         }} /> : null}
         {figmaModalOpen && projectId ? (
           <FigmaImportModal
@@ -4769,8 +4833,11 @@ export function StagedAttachmentTray({
   t: TranslateFn;
 }) {
   const { workspaceContext } = useProjectCollabContext();
+  // A noted image waits as one card with its note; the thumbnail row keeps the rest.
+  const notedCards = cards.filter((card) => card.note);
+  const rowCards = cards.filter((card) => !card.note);
   const rowRef = useRef<HTMLDivElement>(null);
-  const { prev, next, page } = useStagedTrayNav(rowRef, cards.length);
+  const { prev, next, page } = useStagedTrayNav(rowRef, rowCards.length);
   // 点缩略图看大图 —— 这是产品**已有**的能力,稿子那一格把卡画成了不可点的
   // `<span>`。删掉一个人已经在用的入口要产品拍板,所以这里保留(报告里记着)。
   const [preview, setPreview] = useState<StagedAttachmentCard | null>(null);
@@ -4792,11 +4859,27 @@ export function StagedAttachmentTray({
   };
   return (
     <>
+      {notedCards.length > 0 ? (
+        <ImageNoteList placement="composer">
+          {notedCards.map((card) => (
+            <ImageNoteCard
+              key={card.key}
+              src={card.previewUrl ?? (card.path && projectId ? projectRawUrl(projectId, card.path, workspaceContext) : null)}
+              name={card.name}
+              note={card.note!}
+              openLabel={t('chat.attachments.preview', { name: card.name })}
+              onOpen={() => setPreview(card)}
+              removeLabel={t('chat.removeAria', { name: card.name })}
+              onRemove={() => removeCard(card)}
+            />
+          ))}
+        </ImageNoteList>
+      ) : null}
       {/* 壳子只为箭头存在:箭头要绝对定位压在这一行的两端,而滚动容器自己
           不能 `position: relative` —— 那样绝对定位的孩子会跟着内容一起滚走。 */}
-      <div className={`composer-att-wrap${prev ? ' is-prev' : ''}${next ? ' is-next' : ''}`}>
+      {rowCards.length > 0 ? <div className={`composer-att-wrap${prev ? ' is-prev' : ''}${next ? ' is-next' : ''}`}>
         <div className="composer-att" data-testid="staged-attachments" ref={rowRef}>
-          {cards.map((card) => {
+          {rowCards.map((card) => {
             const removeLabel = card.state === 'uploading'
               ? t('chat.att.cancelUpload', { name: card.name })
               : t('chat.removeAria', { name: card.name });
@@ -4891,7 +4974,7 @@ export function StagedAttachmentTray({
             <Icon name="chevron-down" size={14} />
           </i>
         </button>
-      </div>
+      </div> : null}
       {preview && previewUrl ? createPortal(
         <div
           className="staged-preview-modal"

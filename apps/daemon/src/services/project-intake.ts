@@ -6,11 +6,11 @@ import { withProjectHistoryMutation } from '../project-history-observer.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import type { IntakeAsset, IntakeAssetKind, IntakeDocument, IntakeTableData, ProjectIntakeCatalog, ProjectIntakeConfig, ProjectIntakeSettings, StartProjectIntakeRequest } from '@open-design/contracts';
+import { isIntakeImageSource, type IntakeAsset, type IntakeAssetKind, type IntakeDocument, type IntakeTableData, type ProjectIntakeCatalog, type ProjectIntakeConfig, type ProjectIntakeSettings, type StartProjectIntakeRequest } from '@open-design/contracts';
 import { createCommandInvocation } from '@open-design/platform';
 import { createCodexCliInvocation } from '../codex-cli.js';
 import { codexWorkerPermissionArgs } from '../runtimes/codex-permissions.js';
-import { intakeCropPrompt, intakePagePrompt } from '../prompts/project-intake.js';
+import { intakeCropPrompt, intakeImagePrompt, intakePagePrompt } from '../prompts/project-intake.js';
 import { containedIntakePath, INTAKE_CATALOG_DIR, insideDirectory, intakeSettings, readIntakeConfig, resolveIntakeSource, validateIntakeConfig, writeIntakeConfig } from './project-intake-settings.js';
 import { withIntakeVectors } from './project-intake-vectors.js';
 
@@ -124,7 +124,15 @@ function cropNeedsRepair(asset: IntakeAsset): boolean {
     && /ritagli|crop|margine|tagliat/i.test(asset.tableData.notes.join(' '));
 }
 
+/** The two steps of an added image that leave the process; tests replace them. */
+export interface ProjectIntakeImageSteps {
+  /** Writes the image as a PNG the gallery can show and returns its size. */
+  normalizeImage?: (source: string, output: string, cwd: string) => Promise<{ width: number; height: number }>;
+  analyze?: (image: string, prompt: string, schema: unknown, directory: string, name: string) => Promise<unknown>;
+}
+
 export class ProjectIntakeService {
+  constructor(private readonly steps: ProjectIntakeImageSteps = {}) {}
   private catalogs = new Map<string, ProjectIntakeCatalog>();
   private loads = new Map<string, Promise<ProjectIntakeCatalog>>();
   private starts = new Map<string, Promise<unknown>>();
@@ -253,12 +261,13 @@ export class ProjectIntakeService {
     const jobs: Array<{ document: IntakeDocument; absolute: string }> = [];
     const verified: Array<{ relative: string; absolute: string; digest: string; sha256: string }> = [];
     for (const relative of [...new Set(paths)]) {
-      if (!/\.pdf$/i.test(relative)) throw new Error('PDF documents are required');
+      const image = isIntakeImageSource(relative);
+      if (!image && !/\.pdf$/i.test(relative)) throw new Error('PDF documents or images (PNG, JPEG, WebP) are required');
       const absolute = await resolveIntakeSource(root, relative, config);
       const info = await stat(absolute);
-      if (!info.isFile()) throw new Error('PDF input must be a file');
+      if (!info.isFile()) throw new Error('Intake input must be a file');
       const size = info.size;
-      if (size > 200 * 1024 * 1024) throw new Error('PDF exceeds the 200 MB intake limit');
+      if (size > (image ? 50 : 200) * 1024 * 1024) throw new Error(image ? 'Image exceeds the 50 MB intake limit' : 'PDF exceeds the 200 MB intake limit');
       const hash = createHash('sha256');
       for await (const chunk of createReadStream(absolute)) hash.update(chunk);
       const sha256 = hash.digest('hex');
@@ -315,6 +324,7 @@ export class ProjectIntakeService {
     return results;
   }
   private async process(root: string, catalog: ProjectIntakeCatalog, document: IntakeDocument, source: string, selectedPages?: number[]): Promise<void> {
+    if (isIntakeImageSource(source)) return this.processImage(root, catalog, document, source);
     const directory = await this.outputDirectory(root, document.id);
     const snapshot = path.join(directory, '.source.pdf');
     await copyFile(source, snapshot);
@@ -393,6 +403,49 @@ export class ProjectIntakeService {
     if (failedWorker?.status === 'rejected') throw failedWorker.reason;
     document.status = catalog.assets.some((asset) => asset.documentId === document.id && asset.status === 'failed') ? 'failed' : 'ready';
     if (document.status === 'failed') document.error = 'Some pages or figures could not be analyzed. Retry the document.';
+    await this.save(root, catalog);
+  }
+  /** An image is already the figure: one page, one asset, one description pass. */
+  private async processImage(root: string, catalog: ProjectIntakeCatalog, document: IntakeDocument, source: string): Promise<void> {
+    const directory = await this.outputDirectory(root, document.id);
+    const snapshot = path.join(directory, `.source${path.extname(source).toLowerCase()}`);
+    await copyFile(source, snapshot);
+    const sourceSha256 = createHash('sha256').update(await readFile(snapshot)).digest('hex');
+    if (document.sha256 && document.sha256 !== sourceSha256) throw new Error('Source changed before intake; rescan this image');
+    document.sha256 = sourceSha256;
+    document.status = 'processing'; document.pageCount = 1; document.updatedAt = new Date().toISOString();
+    await this.save(root, catalog);
+    const imagePath = path.join(directory, 'image.png');
+    const normalize = this.steps.normalizeImage ?? (async (input: string, output: string, cwd: string) =>
+      JSON.parse(await execute(python(), [worker, 'crop', '--input', input, '--output', output, '--box', '[0,0,1000,1000]'], cwd)) as { width: number; height: number });
+    const { width, height } = await normalize(snapshot, imagePath, root);
+    const id = `${document.id}-image`;
+    let asset = catalog.assets.find((item) => item.id === id);
+    if (!asset) {
+      asset = { id, documentId: document.id, sourcePath: document.sourcePath, sourceName: document.name, page: 1, box: [0, 0, 1000, 1000],
+        imagePath: path.relative(root, imagePath).replaceAll('\\', '/'), width, height, kind: 'image', title: document.name, description: '', tags: [], status: 'processing' };
+      catalog.assets.push(asset);
+    }
+    asset.width = width; asset.height = height; asset.status = 'processing'; delete asset.error;
+    await this.save(root, catalog);
+    try {
+      const result = await (this.steps.analyze ?? analyze)(imagePath, intakeImagePrompt(document.name), cropSchema, directory, 'image') as CropAnalysis;
+      if (!result || typeof result.description !== 'string' || !Array.isArray(result.tags)) throw new Error('Invalid image description');
+      asset.title = String(result.title).slice(0, 200); asset.kind = KINDS.includes(result.kind) ? result.kind : 'image';
+      asset.description = result.description.slice(0, 4000); asset.tags = result.tags.filter((tag) => typeof tag === 'string').slice(0, 16);
+      asset.analysis = { stage: 'crop', sourceSha256, model: 'gpt-6.1-sol', effort: 'low', analyzedAt: new Date().toISOString() };
+      if (asset.kind === 'table') {
+        asset.tableData = validatedIntakeTable(result.tableData);
+        asset.tableDataPath = asset.imagePath.replace(/\.png$/i, '.table.json');
+        await writeFile(await containedIntakePath(root, asset.tableDataPath), JSON.stringify(asset.tableData, null, 2));
+      }
+      asset.status = 'ready';
+      document.indexedPages = [1]; document.completedPages = 1; document.status = 'ready'; delete document.error;
+    } catch (error) {
+      asset.status = 'failed'; asset.error = errorText(error);
+      document.status = 'failed'; document.error = 'The image could not be analyzed. Retry it.';
+    }
+    document.updatedAt = new Date().toISOString();
     await this.save(root, catalog);
   }
 }

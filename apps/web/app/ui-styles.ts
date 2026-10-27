@@ -24,6 +24,7 @@ import '../src/components/chat/ChatScrollEdge.module.css';
 import '../src/components/chat/QueuedSendStack.module.css';
 import '../src/components/chat/QuoteBar.module.css';
 import '../src/components/chat/QuotedRefs.module.css';
+import '../src/components/chat/ImageNoteCard.module.css';
 import '../src/components/chat/RunErrorCard.module.css';
 import '../src/components/chat/Reconnect.module.css';
 import '../src/components/chat/PauseLine.module.css';

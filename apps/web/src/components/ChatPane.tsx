@@ -1,4 +1,4 @@
-import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, type ProjectDocument } from '@open-design/contracts';
+import { DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT, withoutImageNotes, type ProjectDocument } from '@open-design/contracts';
 import { blockoutHandoffAttachmentDocument } from './blockout/handoff-attachment';
 import { openBlockoutProposals } from './blockout/events';
 import { allowQuestionTimeout } from '../runtime/chat/question-timeout-policy';
@@ -150,6 +150,7 @@ import {
 } from '../runtime/chat/host-authored-message';
 import { Reconnect } from './chat/Reconnect';
 import { UserStatusCard } from './chat/UserStatusCard';
+import { ImageNoteCard, ImageNoteList, isNotedImage } from './chat/ImageNoteCard';
 import type { ChatReconnectView } from '../runtime/chat/reconnect-state';
 import { TodoCard } from './ToolCard';
 import type { BrandBrowserAssistConfirm } from './OdCard';
@@ -5046,7 +5047,7 @@ function ChatMessageRail({
           role="tooltip"
         >
           <p>
-            {previewItem.message.content.trim() || t('chat.messageRail.empty')}
+            {withoutImageNotes(previewItem.message.content).trim() || t('chat.messageRail.empty')}
           </p>
         </div>
       ) : null}
@@ -6580,7 +6581,10 @@ const UserMessage = memo(UserMessageImpl);
   highlighted?: boolean;
 }) {
   const { workspaceContext } = useProjectCollabContext();
-  const attachments = sortChatAttachmentsForDisplay(message.attachments ?? []);
+  const sortedAttachments = sortChatAttachmentsForDisplay(message.attachments ?? []);
+  // A noted image shows as its card; the thumbnail row keeps the rest.
+  const notedImages = sortedAttachments.filter(isNotedImage);
+  const attachments = sortedAttachments.filter((attachment) => !isNotedImage(attachment));
   const commentAttachments = message.commentAttachments ?? [];
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -6612,7 +6616,7 @@ const UserMessage = memo(UserMessageImpl);
       ? t(headerFooterRequest.action === 'propose' ? 'documentChat.headerFooterPropose' : 'documentChat.headerFooterRefine', { name: headerFooterRequest.name })
       : blockoutSetupRequest ? t('documentChat.blockoutStart')
         : preparationResume ? preparationResume.names ? t('documentChat.preparationResume', { name: preparationResume.names }) : t('documentChat.preparationResumeDocument')
-          : formAnswersDisplayBody(message.content);
+          : formAnswersDisplayBody(withoutImageNotes(message.content));
 
   useEffect(() => {
     return () => {
@@ -6659,6 +6663,23 @@ const UserMessage = memo(UserMessageImpl);
             t={t}
           />
         ) : null}
+        {notedImages.length > 0 ? (
+          <ImageNoteList placement="message">
+            {notedImages.map((a) => {
+              const localPreviewUrl = attachmentLocalPreviewUrl(a);
+              return (
+                <ImageNoteCard
+                  key={a.path}
+                  src={localPreviewUrl ?? (projectId ? projectRawUrl(projectId, a.path, workspaceContext) : null)}
+                  name={a.name}
+                  note={a.annotation!.note.trim()}
+                  openLabel={t('chat.openFile', { name: a.name })}
+                  {...(onRequestOpenFile ? { onOpen: () => onRequestOpenFile(a.path) } : {})}
+                />
+              );
+            })}
+          </ImageNoteList>
+        ) : null}
         {commentAttachments.some((attachment) => attachment.selectionKind !== 'visual') ? (
           <div className="user-attachments comment-history-attachments">
             {commentAttachments.filter((attachment) => attachment.selectionKind !== 'visual').map((a) => (
@@ -6671,9 +6692,10 @@ const UserMessage = memo(UserMessageImpl);
             ))}
           </div>
         ) : null}
-        {message.content ? (
+        {/* An image-only turn carries just the notes block, which the cards above already show. */}
+        {message.content && (displayContent || message.sendFailed) ? (
           <div className="user-text-wrap">
-            {isDesignSystemWorkspaceRequest ? (
+            {!displayContent ? null : isDesignSystemWorkspaceRequest ? (
               <UserStatusCard
                 title={t('chat.designSystemStatus.title')}
                 description={t('chat.designSystemStatus.description')}

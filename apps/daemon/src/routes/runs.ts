@@ -59,6 +59,7 @@ import {
   conversationTurnIndexForRun,
   getFirstProjectConversation,
   getConversation,
+  getMessage,
   getProject,
   listProjectsAwaitingInput,
   normalizeConversationSessionMode,
@@ -285,6 +286,29 @@ function withSeededSlideIndex(
     );
     const slideIndex = seededSlideIndexFromRaw(rawById ?? rawCommentAttachments[index]);
     return slideIndex === undefined ? item : { ...item, slideIndex };
+  });
+}
+
+/**
+ * The request names attachments by path only, while the client may already
+ * have saved this turn with more: the note pinned to an image and the name its
+ * card shows. A seed that lands after that save keeps both for the same file.
+ */
+function keepClientImageNotes<T extends { path: string; name: string }>(
+  seeded: readonly T[] | undefined,
+  stored: readonly unknown[] | undefined,
+): T[] | undefined {
+  if (!seeded?.length || !stored?.length) return seeded ? [...seeded] : seeded;
+  const notes = new Map<string, { name?: unknown; annotation: unknown }>();
+  for (const entry of stored) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { path: storedPath, name, annotation } = entry as Record<string, unknown>;
+    if (typeof storedPath === 'string' && annotation && typeof annotation === 'object') notes.set(storedPath, { name, annotation });
+  }
+  return seeded.map((attachment) => {
+    const note = notes.get(attachment.path);
+    if (!note) return attachment;
+    return { ...attachment, ...(typeof note.name === 'string' && note.name ? { name: note.name } : {}), annotation: note.annotation };
   });
 }
 
@@ -2349,6 +2373,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const seedRunUserMessage = () => {
       if (!runUserSeed) return;
       const now = Date.now();
+      const clientAttachments = getMessage(db, runUserSeed.id, runUserSeed.conversationId)?.attachments;
+      const seededAttachments = runUserSeed.attachments.attachments
+        ? { ...runUserSeed.attachments, attachments: keepClientImageNotes(runUserSeed.attachments.attachments, clientAttachments) }
+        : runUserSeed.attachments;
       upsertMessage(db, runUserSeed.conversationId, {
         id: runUserSeed.id,
         role: 'user',
@@ -2361,7 +2389,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         // Preserve request attachments/commentAttachments on the seeded user
         // turn so reload/listMessages still show chips and annotation context
         // for omit-pin / headless clients (same columns as PUT /messages).
-        ...runUserSeed.attachments,
+        ...seededAttachments,
       });
       // Bump parent project updatedAt so listProjects reorders (same as
       // PUT /messages). Headless/API turns that never hit that route would

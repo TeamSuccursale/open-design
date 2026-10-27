@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Select } from '@open-design/components';
-import type { BlockoutBlock, IntakeAsset, WorkspaceCollabContext } from '@open-design/contracts';
+import { intakeSourceLabel, type BlockoutBlock, type IntakeAsset, type WorkspaceCollabContext } from '@open-design/contracts';
 import { fetchProjectIntake } from '../../providers/project-intake';
 import { projectRawUrl } from '../../providers/registry';
 import { useT } from '../../i18n';
@@ -54,7 +54,7 @@ export function BlockoutGalleryDrawer({ projectId, workspaceContext, selectedBlo
             <img src={projectRawUrl(projectId, asset.imagePath, workspaceContext)} alt="" loading="lazy" draggable={false} />
             <span className={styles.galleryCheck}>{selected.includes(asset.id) ? <Icon name="check" size={14} /> : null}</span>
           </button>
-          <strong>{asset.title}</strong><small>{asset.sourceName} · {asset.page}</small>
+          <strong>{asset.title}</strong><small>{intakeSourceLabel(asset, (name, page) => `${name} · ${page}`)}</small>
         </article>)}</div>
       </>}
     </div>

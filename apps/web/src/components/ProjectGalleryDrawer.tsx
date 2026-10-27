@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input } from '@open-design/components';
-import { canProposeIntakeVector, type IntakeAsset, type IntakeSelection, type ProjectIntakeCatalog, type WorkspaceCollabContext } from '@open-design/contracts';
+import { canProposeIntakeVector, intakeSourceLabel, type IntakeAsset, type IntakeSelection, type ProjectIntakeCatalog, type WorkspaceCollabContext } from '@open-design/contracts';
 import { useI18n, useT } from '../i18n';
 import { projectRawUrl, uploadProjectFiles } from '../providers/registry';
 import { fetchProjectIntake, proposeIntakeVector } from '../providers/project-intake';
@@ -143,7 +143,7 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
           <select aria-label={t('intake.filter')} value={kind} onChange={(event) => setKind(event.target.value)}>
             {['all', 'image', 'drawing', 'chart', 'table', 'page'].map((value) => <option key={value} value={value === 'all' ? '' : value}>{t(`intake.kind.${value}` as 'intake.kind.all')}</option>)}
           </select>
-          <input ref={upload} className={styles.fileInput} type="file" accept="application/pdf,.pdf" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void intake(files); }} />
+          <input ref={upload} className={styles.fileInput} type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void intake(files); }} />
           <Button variant="secondary" disabled={busy} onClick={() => upload.current?.click()}><Icon name="attach" size={16} />{t('intake.addDocuments')}</Button>
           <Button variant="ghost" disabled={busy} onClick={() => void intake()}>{t('intake.scanFolder')}</Button>
         </div>
@@ -157,7 +157,7 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
             {loading ? <p className={styles.empty}>{t('intake.loading')}</p> : visible.length ? <div className={styles.grid}>
               {visible.map((asset) => <label key={asset.id} className={`${styles.asset} ${Object.hasOwn(selection, asset.id) ? styles.selected : ''}`}>
                 <div className={styles.picture}><img src={projectRawUrl(projectId, asset.imagePath, workspaceContext)} alt={asset.title} loading="lazy" /><input type="checkbox" aria-label={t('intake.select', { title: asset.title })} checked={Object.hasOwn(selection, asset.id)} onChange={() => toggle(asset)} /></div>
-                <strong>{asset.title}</strong><span>{asset.sourceName} · {t('intake.page', { page: asset.page })}</span>
+                <strong>{asset.title}</strong><span>{intakeSourceLabel(asset, (name, page) => `${name} · ${t('intake.page', { page })}`)}</span>
                 {asset.vectorVersions?.length ? <span>{t('intake.vectorCount', { count: asset.vectorVersions.length })}{asset.vectorPreference?.available ? ` · ${t('intake.preferred')}` : ''}</span> : null}
                 <span className={styles.description}>{asset.description || t(`intake.status.${asset.status}` as 'intake.status.ready')}</span>
                 {asset.error ? <span className={styles.errorText}>{t('intake.analysisFailed')}</span> : null}

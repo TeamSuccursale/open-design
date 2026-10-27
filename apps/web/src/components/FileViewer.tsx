@@ -227,6 +227,7 @@ import {
   sourceLooksLikeNavigableDeck,
   type ExportProgress,
   type ImageExportFormat,
+  type PreviewSnapshot,
 } from '../runtime/exports';
 import { fetchAppVersionInfo } from '../providers/registry';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
@@ -19464,6 +19465,10 @@ function ImageViewer({
     projectFileUrl(projectId, file.name, workspaceContext),
     `v=${Math.round(file.mtime)}`,
   );
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [annotating, setAnnotating] = useState(false);
+  const imageBox = useImageBox(imgRef, annotating);
+  const captureImage = useCallback(async () => imageSnapshot(imgRef.current), []);
   return (
     <div className="viewer image-viewer">
       <div className="viewer-toolbar">
@@ -19475,6 +19480,19 @@ function ImageViewer({
           </span>
         </div>
         <div className="viewer-toolbar-actions">
+          <button
+            className={`viewer-action viewer-action-icon od-tooltip${annotating ? ' active' : ''}`}
+            type="button"
+            data-testid="image-annotate-toggle"
+            data-tooltip={t('fileViewer.mark')}
+            data-tooltip-placement="bottom"
+            title={t('fileViewer.mark')}
+            aria-label={t('fileViewer.mark')}
+            aria-pressed={annotating}
+            onClick={() => setAnnotating((open) => !open)}
+          >
+            <RemixIcon name="mark-pen-line" size={15} />
+          </button>
           <a
             className="ghost-link"
             href={projectFileUrl(projectId, file.name, workspaceContext)}
@@ -19493,10 +19511,75 @@ function ImageViewer({
         </div>
       </div>
       <div className="viewer-body image-body">
-        <img alt={file.name} src={url} />
+        <img ref={imgRef} alt={file.name} src={url} />
+        {annotating && imageBox ? (
+          <div style={imageBox} data-testid="image-annotate-frame">
+            <PreviewDrawOverlay
+              active
+              onActiveChange={setAnnotating}
+              captureSnapshot={captureImage}
+              filePath={file.name}
+              imageSourcePath={file.name}
+              addLabel={t('designBrowser.addImageToChatButton')}
+            >
+              {null}
+            </PreviewDrawOverlay>
+          </div>
+        ) : null}
       </div>
     </div>
   );
+}
+
+/**
+ * Where the image sits inside the viewer body, so the mark-up overlay covers
+ * the picture and nothing else: marks then map one-to-one onto its pixels.
+ */
+function useImageBox(imgRef: { current: HTMLImageElement | null }, enabled: boolean): CSSProperties | null {
+  const [box, setBox] = useState<CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    const img = imgRef.current;
+    if (!enabled || !img) {
+      setBox(null);
+      return;
+    }
+    const measure = () => {
+      if (img.offsetWidth <= 0 || img.offsetHeight <= 0) return;
+      setBox({ position: 'absolute', left: img.offsetLeft, top: img.offsetTop, width: img.offsetWidth, height: img.offsetHeight });
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(img);
+    if (img.parentElement) observer?.observe(img.parentElement);
+    img.addEventListener('load', measure);
+    return () => {
+      observer?.disconnect();
+      img.removeEventListener('load', measure);
+    };
+  }, [enabled, imgRef]);
+  return box;
+}
+
+// The marked copy is drawn from the image itself, not from a screen capture,
+// so it keeps the picture's own resolution (up to a size the model can read).
+const IMAGE_ANNOTATION_MAX_SIDE = 2400;
+
+function imageSnapshot(img: HTMLImageElement | null): PreviewSnapshot | null {
+  if (!img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return null;
+  const scale = Math.min(1, IMAGE_ANNOTATION_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  try {
+    ctx.drawImage(img, 0, 0, w, h);
+    return { dataUrl: canvas.toDataURL('image/png'), w, h };
+  } catch {
+    return null;
+  }
 }
 
 function SketchViewer({

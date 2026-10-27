@@ -963,6 +963,14 @@ export interface ChatAttachment {
    * consumers should fall back to array position.
    */
   order?: number;
+  /** The engineer's note on this image; see `withImageNotes`. */
+  annotation?: ChatAttachmentAnnotation;
+}
+
+export interface ChatAttachmentAnnotation {
+  note: string;
+  /** The project image the marks were drawn on, when this attachment is a marked copy of it. */
+  sourcePath?: string;
 }
 
 export interface ChatCommentAttachment {

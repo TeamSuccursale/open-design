@@ -45,6 +45,7 @@ export interface StagedAttachmentInput {
   kind: 'image' | 'file';
   size?: number;
   order?: number;
+  annotation?: { note: string };
 }
 
 export interface StagedAttachmentCard {
@@ -59,6 +60,8 @@ export interface StagedAttachmentCard {
   previewUrl?: string | null;
   /** `uploading` / `failed` 才有:重试和移除要按它找回本地 `File` */
   pendingId?: string;
+  /** The engineer's note on this image; the tray shows the two as one card. */
+  note?: string;
 }
 
 /**
@@ -83,6 +86,7 @@ export function buildStagedAttachmentCards(
       order: item.order ?? index,
       state: 'ready',
       path: item.path,
+      ...(item.annotation?.note.trim() ? { note: item.annotation.note.trim() } : {}),
     });
   });
   pending.forEach((item, index) => {

@@ -18,7 +18,23 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 describe('intake metadata is private in the composer and user message', () => {
-  it.each(['Attach map', 'SVG request', 'Saved SVG'])('keeps %s metadata out of the editor and sent user text', async (action) => {
+  it('pairs a gallery note with its image as a card, not as editor text', async () => {
+    const onSend = vi.fn();
+    render(<I18nProvider initial="en"><ChatComposer projectId="project" projectFiles={[]} streaming={false} skills={[]} onEnsureProject={async () => 'project'} onSend={onSend} onStop={vi.fn()} /></I18nProvider>);
+    await flushMounts();
+    fireEvent.click(screen.getByRole('button', { name: 'Project gallery' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Attach map' }));
+    const card = await screen.findByTestId('image-note-card');
+    expect(card.textContent).toContain('Keep the legend');
+    expect(card.textContent).toContain('Site map');
+    for (const hidden of ['private/source.pdf', 'Private description', 'private-tag', 'intake-assets/map.png']) expect(card.textContent).not.toContain(hidden);
+    expect(composerText().trim()).toBe('');
+    fireEvent.click(screen.getByTestId('chat-send'));
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(onSend.mock.calls[0]![0]).toBe('');
+    expect(onSend.mock.calls[0]![1]).toEqual([expect.objectContaining({ name: 'Site map', path: 'intake-assets/map.png', kind: 'image', annotation: { note: 'Keep the legend' } })]);
+  });
+  it.each(['SVG request', 'Saved SVG'])('keeps %s metadata out of the editor and sent user text', async (action) => {
     const onSend = vi.fn();
     render(<I18nProvider initial="en"><ChatComposer projectId="project" projectFiles={[]} streaming={false} skills={[]} onEnsureProject={async () => 'project'} onSend={onSend} onStop={vi.fn()} /></I18nProvider>);
     await flushMounts();

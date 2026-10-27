@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@open-design/components';
-import type { IntakeAsset, WorkspaceCollabContext } from '@open-design/contracts';
+import { intakeSourceLabel, type IntakeAsset, type WorkspaceCollabContext } from '@open-design/contracts';
 import { fetchProjectIntake, OPEN_PROJECT_GALLERY_EVENT } from '../providers/project-intake';
 import { projectRawUrl } from '../providers/registry';
 import { useT } from '../i18n';
@@ -29,7 +29,7 @@ export function ProjectIntakeExplorer({ projectId, workspaceContext, onOpenFile 
     <header><h3>{t('intake.recognizedAssets')} <span>{assets.length}</span></h3><Button variant="ghost" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_PROJECT_GALLERY_EVENT, { detail: { projectId } }))}>{t('intake.openGallery')}</Button></header>
     <div className={styles.explorerGrid}>{assets.map((asset) => <button type="button" key={asset.id} className={styles.explorerAsset} aria-label={t('intake.previewAsset', { title: asset.title })} title={asset.description} onClick={() => onOpenFile(asset.imagePath)}>
       <img src={projectRawUrl(projectId, asset.imagePath, workspaceContext)} alt="" loading="lazy" />
-      <strong>{asset.title}</strong><span>{asset.sourceName} · {t('intake.page', { page: asset.page })}</span>
+      <strong>{asset.title}</strong><span>{intakeSourceLabel(asset, (name, page) => `${name} · ${t('intake.page', { page })}`)}</span>
     </button>)}</div>
   </section>;
 }

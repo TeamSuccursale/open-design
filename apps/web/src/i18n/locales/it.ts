@@ -5854,7 +5854,7 @@ export const it: Dict = {
   "intake.moveBottom": "Sposta in basso",
   "intake.search": "Cerca descrizioni, tag o documenti…",
   "intake.filter": "Tipo di elemento",
-  "intake.addDocuments": "Aggiungi PDF",
+  "intake.addDocuments": "Aggiungi PDF o immagini",
   "intake.scanFolder": "Analizza cartella",
   "intake.uploadFailed": "Il caricamento del documento non è riuscito. Riprova.",
   "intake.processing": "Acquisizione in corso in background…",

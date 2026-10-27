@@ -86,7 +86,7 @@ export function registerProjectIntakeRoutes(app: Express, ctx: RegisterProjectIn
         || (input.retry !== undefined && typeof input.retry !== 'boolean')
         || (input.paths !== undefined && (!Array.isArray(input.paths) || !input.paths.every((entry) => typeof entry === 'string')))
         || (input.pages !== undefined && (!Array.isArray(input.pages) || !input.pages.length || !input.pages.every((page) => Number.isInteger(page) && page > 0)))) {
-        ctx.http.sendApiError(res, 400, 'BAD_REQUEST', 'Expected PDF paths and optional positive page numbers'); return;
+        ctx.http.sendApiError(res, 400, 'BAD_REQUEST', 'Expected PDF or image paths and optional positive page numbers'); return;
       }
       const root = resolveProjectDir(ctx.paths.PROJECTS_DIR, project.id, project.metadata);
       await ctx.history?.store(project.id, root);

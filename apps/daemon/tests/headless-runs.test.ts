@@ -368,6 +368,47 @@ describe('POST /api/runs headless fallbacks', () => {
     }
   }
 
+  // The request lists attachment paths only, so a seed that lands after the
+  // client's PUT must not drop the note pinned to an image or the name shown on its card.
+  it('keeps an image note saved by the client before the run seed', async () => {
+    started = await startTestServer();
+    const { projectId, conversationId } = await createProject(started.url, 'Image note seed');
+    const upload = new FormData();
+    upload.append('files', new File([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64')], 'drawing-1.png', { type: 'image/png' }));
+    const uploadResponse = await fetch(`${started.url}/api/projects/${encodeURIComponent(projectId)}/upload`, { method: 'POST', body: upload });
+    expect(uploadResponse.status).toBe(200);
+    const marked = (await uploadResponse.json() as { files: Array<{ path: string; size: number }> }).files[0]!;
+    const attachment = {
+      path: marked.path,
+      name: 'pianta.png',
+      kind: 'image' as const,
+      size: marked.size,
+      order: 0,
+      annotation: { note: 'Allarga la cucina di 60 cm', sourcePath: 'pianta.png' },
+    };
+    const userMessageId = randomUUID();
+    const messagesUrl = `${started.url}/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`;
+    const saved = await fetch(`${messagesUrl}/${encodeURIComponent(userMessageId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: userMessageId, role: 'user', content: '', attachments: [attachment] }),
+    });
+    expect(saved.status).toBe(200);
+    const runResponse = await fetch(`${started.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentId: `missing-agent-${randomUUID()}`,
+        projectId, conversationId, userMessageId, assistantMessageId: randomUUID(),
+        message: '', currentPrompt: '', attachments: [attachment.path],
+      }),
+    });
+    expect(runResponse.status).toBe(202);
+    const reload = await (await fetch(messagesUrl)).json() as { messages: ChatMessage[] };
+    const row = reload.messages.find((message) => message.id === userMessageId);
+    expect(row?.attachments).toEqual([expect.objectContaining({ path: marked.path, name: 'pianta.png', annotation: attachment.annotation })]);
+  });
+
   it('preserves attachments and commentAttachments on omit-pin seeded user turns', async () => {
     started = await startTestServer();
     const { projectId, conversationId } = await createProject(
