@@ -1773,6 +1773,8 @@ interface Props {
   streaming?: boolean;
   /** Actual run state; unlike streaming, excludes read-only/loading UI locks. */
   motionPreviewMuted?: boolean;
+  /** A run may still be writing Blockout proposals. Defaults to motionPreviewMuted. */
+  blockoutGenerating?: boolean;
   commentQueueOnSend?: boolean;
   commentSendDisabled?: boolean;
   previewComments?: PreviewComment[];
@@ -1887,6 +1889,7 @@ export const FileViewer = memo(function FileViewer({
   isDeck,
   streaming,
   motionPreviewMuted = false,
+  blockoutGenerating = motionPreviewMuted,
   commentQueueOnSend = false,
   commentSendDisabled = false,
   previewComments = [],
@@ -1984,8 +1987,8 @@ export const FileViewer = memo(function FileViewer({
     return <FileViewerLoadingSkeleton />;
   }
 
-  if (isBlockoutFile(file.path ?? file.name)) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} generating={motionPreviewMuted} />;
-  if (isBlockoutComparisonFile(file.path ?? file.name)) return <BlockoutComparisonPreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} onOpenComparison={onOpenFileReplacing ? (path) => onOpenFileReplacing(path, file.name) : undefined} generating={motionPreviewMuted} />;
+  if (isBlockoutFile(file.path ?? file.name)) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} generating={blockoutGenerating} />;
+  if (isBlockoutComparisonFile(file.path ?? file.name)) return <BlockoutComparisonPreview projectId={projectId} path={file.path ?? file.name} revision={file.mtime} onOpenComparison={onOpenFileReplacing ? (path) => onOpenFileReplacing(path, file.name) : undefined} generating={blockoutGenerating} />;
   if (rendererMatch?.renderer.id === 'html' || rendererMatch?.renderer.id === 'deck-html') {
     return (
       <HtmlViewer
@@ -2005,6 +2008,7 @@ export const FileViewer = memo(function FileViewer({
         isDeck={rendererMatch.renderer.id === 'deck-html'}
         streaming={Boolean(streaming)}
         motionPreviewMuted={motionPreviewMuted}
+        blockoutGenerating={blockoutGenerating}
         commentQueueOnSend={commentQueueOnSend}
         commentSendDisabled={commentSendDisabled}
         previewComments={previewComments}
@@ -7252,6 +7256,7 @@ function HtmlViewer({
   isDeck,
   streaming,
   motionPreviewMuted = false,
+  blockoutGenerating = motionPreviewMuted,
   commentQueueOnSend = false,
   commentSendDisabled = false,
   previewComments = [],
@@ -7303,6 +7308,7 @@ function HtmlViewer({
   isDeck: boolean;
   streaming: boolean;
   motionPreviewMuted?: boolean;
+  blockoutGenerating?: boolean;
   commentQueueOnSend?: boolean;
   commentSendDisabled?: boolean;
   previewComments?: PreviewComment[];
@@ -17209,7 +17215,7 @@ function HtmlViewer({
   ) : null;
 
   const blockoutComparisonDocumentId = routingSourceIdentity === currentSourceIdentity ? blockoutComparisonDocumentFromHtml(routingSource) : null;
-  if (blockoutComparisonDocumentId) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} documentId={blockoutComparisonDocumentId} revision={file.mtime} generating={motionPreviewMuted} />;
+  if (blockoutComparisonDocumentId) return <BlockoutFilePreview projectId={projectId} path={file.path ?? file.name} documentId={blockoutComparisonDocumentId} revision={file.mtime} generating={blockoutGenerating} />;
   return (
     <div ref={viewerRootRef} className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
       <div className="viewer-toolbar" style={workspaceActive ? undefined : { visibility: 'hidden' }}>

@@ -5,6 +5,7 @@ import { allowQuestionTimeout } from '../runtime/chat/question-timeout-policy';
 import { reportExperienceEvent } from '../observability/experience-diagnostics';
 import { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { headerFooterRequestDisplay } from '../runtime/chat/header-footer-request-display';
+import { userSendFailureCanRetry, userSendFailureMessageKey } from '../runtime/chat/send-failure';
 import { documentPreparationResumeDisplay } from '../runtime/document-preparation-continuation';
 export { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { QuoteBar } from './chat/QuoteBar';
@@ -6546,6 +6547,8 @@ const UserMessage = memo(UserMessageImpl);
   const headerFooterRequest = headerFooterRequestDisplay(message.content);
   const blockoutSetupRequest = message.content === DOCUMENT_BLOCKOUT_PROPOSALS_PROMPT;
   const preparationResume = documentPreparationResumeDisplay(message.content);
+  const sendFailureKey = userSendFailureMessageKey(message.sendFailure);
+  const sendFailureText = sendFailureKey ? t(sendFailureKey) : message.sendFailure?.message;
   const displayContent = isDesignSystemWorkspaceRequest
     ? t('chat.designSystemStatus.title')
     : headerFooterRequest
@@ -6638,7 +6641,7 @@ const UserMessage = memo(UserMessageImpl);
               {/* 发送失败那颗「重试」(稿子第 49 / 50 格的 `.msg-act .keep`):
                   和时间 / 复制**同一行**,但不跟着 hover 出没 —— 第 50 格的状态名
                   写的就是「时间与复制浮出,重试常驻」。 */}
-              {message.sendFailed ? (
+              {message.sendFailed && userSendFailureCanRetry(message.sendFailure) ? (
                 <button
                   type="button"
                   className="user-keep-btn"
@@ -6653,7 +6656,7 @@ const UserMessage = memo(UserMessageImpl);
                 </button>
               ) : null}
             </div>
-            {message.sendFailed && message.sendFailure?.message ? <UserSendFailure message={message.sendFailure.message} /> : null}
+            {message.sendFailed && sendFailureText ? <UserSendFailure message={sendFailureText} /> : null}
           </div>
         ) : null}
       </div>

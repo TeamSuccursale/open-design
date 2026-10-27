@@ -51,6 +51,18 @@ const XML_ATTRIBUTE_ENTITIES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Source-derived text is data, and the code points XML 1.0 forbids carry no meaning in it: PDF extraction leaves
+ * U+FFFE inside words and form feeds between pages. Drop noncharacters, turn control characters into spaces and
+ * unpaired surrogates into U+FFFD, so one stray character cannot make the strict serializer refuse a whole prompt.
+ */
+export function withoutXmlForbiddenCharacters(value: string): string {
+  return value
+    .replace(/[￾￿]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�');
+}
+
+/**
  * Reject every code point XML 1.0 forbids and normalize newlines, so the same
  * logical text cannot produce two different byte strings.
  */

@@ -24,6 +24,20 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
 };
 
 describe('Blockout mode across prompt stacks', () => {
+  it('talks to the engineer about the document, not the machinery', () => {
+    // Live run, 27 Oct 2026: the preparation turn told the engineer "Uso la skill linguaggio-umano per le indicazioni in italiano".
+    expect(ENGINEER_GRAPHICS_SKILL_SCOPE).toContain('without naming skills, tools, commands or internal files');
+  });
+  it.each(['legacy BYOK', 'OD Next BYOK', 'OD Next filesystem'] as const)('names proposals as the comparison shows them in %s', (path) => {
+    // The agent wrote "proposta A" while the screen said "Lettura continua", and a blind reader lost track of which structure changed.
+    const prompt = path === 'OD Next filesystem'
+      ? composeOdNextStrategyRequestPromptV2(recipe, { sessionMode: 'blockout' })
+      : composeSystemPrompt({
+        sessionMode: 'blockout',
+        ...(path === 'OD Next BYOK' ? { odNextStrategyRecipe: { ...recipe, executionProfile: 'text_artifact' } } : {}),
+      });
+    expect(prompt).toContain('call a proposal by that label exactly as the comparison shows it, never by a letter, a number or its id');
+  });
   it('keeps design revision and page-wide decoration free across both composers', () => {
     for (const prompt of [composeSystemPrompt({ sessionMode: 'design' }), composeOdNextStrategyRequestPromptV2(recipe, { sessionMode: 'design' })]) {
       expect(prompt).toContain(BLOCKOUT_DESIGN_DIRECTIVE);

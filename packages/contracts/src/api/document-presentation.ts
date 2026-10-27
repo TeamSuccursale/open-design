@@ -40,6 +40,11 @@ export function documentPresentationPageState(presentation: DocumentPresentation
     visibleNumber: isCover && presentation?.numberOnCover !== true ? null : sequenceNumber };
 }
 
+/** The "of N" a page prints: the number the last page carries, so a cover kept out of the sequence is not counted. */
+export function documentPresentationPrintedTotal(presentation: DocumentPresentation | undefined, pageCount: number): number {
+  return documentPresentationPageState(presentation, { index: pageCount - 1 }).sequenceNumber ?? pageCount;
+}
+
 export const DOCUMENT_PRESENTATION_GROUPING_PROMPT = 'Keep each named output’s related editorial choices together: include its conditional cover-counting and numbering controls in the same grouped form as its header/footer/cover choices when relevant. For conditional cover controls use showWhen:{questionId:"cover-question-id",equals:"yes"} (or equals:true for a switch), matching the controlling question’s exact answer value. Hidden controls are neither required nor submitted. Do not ask cover-dependent questions when cover was already explicitly declined. This document-specific group may contain up to ten related controls; do not split it solely to meet a generic discovery question cap. Reuse the answers already given and include source-supported values once in the final summary instead of asking the same count or orientation twice. Ordinary font, spacing and margin choices without a source prescription or stated user preference are graphical decisions for the designer; propose them rather than adding another setup interview.';
 export const DOCUMENT_PRESENTATION_PROMPT = [
   'EDITORIAL SETUP PER NAMED OUTPUT: before final confirmation, ask the engineer to name EACH selected document and explicitly choose header yes/no, footer yes/no, cover yes/no and page numbering yes/no. Use related grouped question-form fields in chat; keep the folder/type wizard unchanged. Do not merge a report and graphical booklet into one editorial configuration.',

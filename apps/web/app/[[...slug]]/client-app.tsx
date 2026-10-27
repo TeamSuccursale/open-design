@@ -1,12 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useEffect, useState } from 'react';
 
 import { installErrorHandlers } from '../../src/analytics/error-tracking';
 import { MatrixLoader } from '../../src/components/MatrixLoader';
 import { installWebObservability } from '../../src/observability/install';
 import { installChatScrollExperiments } from '../../src/runtime/chat-scroll-experiments';
 import { installChatScrollTakeover } from '../../src/runtime/chat-scroll-takeover';
+import { startupLabel } from '../../src/runtime/startup-label';
 
 // Install browser exception handlers at module-load time, before any other
 // client code can throw. The hooks buffer events until AnalyticsProvider
@@ -50,10 +52,18 @@ const App = dynamic(() => import('../../src/App').then((m) => m.App), {
   loading: () => (
     <div className="od-loading-shell">
       <MatrixLoader />
-      <span>Loading MelilloDesign…</span>
+      <StartupLabel />
     </div>
   ),
 });
+
+// This shell is also rendered when the static HTML is built, where the browser's languages are unknown: the label
+// settles after mount so the build-time text never has to match the browser's.
+function StartupLabel() {
+  const [label, setLabel] = useState('MelilloDesign');
+  useEffect(() => setLabel(startupLabel(navigator.languages?.length ? navigator.languages : [navigator.language])), []);
+  return <span>{label}</span>;
+}
 
 export function ClientApp() {
   return <App />;

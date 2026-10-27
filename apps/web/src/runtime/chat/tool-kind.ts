@@ -45,15 +45,25 @@ const RANK: Record<ClassifiedKind, number> = {
 export function unwrapShell(command: string): string {
   let c = String(command ?? '').trim();
   for (let i = 0; i < 2; i += 1) {
-    const m = c.match(/^(?:\/bin\/|\/usr\/bin\/)?(?:sh|bash|zsh|dash)\s+(?:-[a-zA-Z]+\s+)*(['"])([\s\S]*)$/);
+    const posix = c.match(/^(?:\/bin\/|\/usr\/bin\/)?(?:sh|bash|zsh|dash)\s+(?:-[a-zA-Z]+\s+)*(['"])([\s\S]*)$/);
+    const powershell = posix ? null : c.match(POWERSHELL_WRAPPER);
+    const m = posix ?? powershell;
     if (!m) break;
     const quote = m[1] ?? '';
     let inner = m[2] ?? '';
     if (quote && inner.endsWith(quote)) inner = inner.slice(0, -1);
+    // PowerShell escapes a single quote inside '…' by doubling it.
+    if (powershell && quote === "'") inner = inner.replaceAll("''", "'");
     c = inner.trim();
   }
   return c;
 }
+
+/**
+ * Codex on Windows runs every command as `"C:\…\pwsh.exe" -NoProfile -Command '…'`. Without unwrapping it, every
+ * row read the same executable path and the part that says what was done was cut off.
+ */
+const POWERSHELL_WRAPPER = /^(?:"[^"]*?(?:pwsh|powershell)(?:\.exe)?"|(?:\S*[\\/])?(?:pwsh|powershell)(?:\.exe)?)\s+(?:-(?:NoProfile|NoLogo|NonInteractive|ExecutionPolicy\s+\S+)\s+)*-(?:Command|c)\s+(['"])([\s\S]*)$/i;
 
 interface SimpleCommand {
   text: string;

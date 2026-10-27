@@ -70,8 +70,10 @@ import {
 } from "./sidecar-client.js";
 import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
+import { formatDoctorReport, localDoctorProbes, runDoctor } from "./doctor.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
+import { applyUpdate, formatUpdatePlan, gitIn, planUpdate } from "./update.js";
 import { resolveDevVelaEnv } from "./vela-runtime.js";
 import { resolveWebRuntimeNodeEnv, WEB_MAX_OLD_SPACE_SIZE_ENV } from "./web-node-options.js";
 
@@ -1262,6 +1264,49 @@ addSharedOptions(cli.command("check [app]", "Print status and recent logs for qu
       await Promise.all(targets.map(async (target) => [target, await readLogs(config, target)] as const)),
     );
     printCheckResult({ apps, diagnostics: createLogDiagnostics(logs), logs, namespace: config.namespace }, options);
+  },
+);
+
+addPortOptions(addSharedOptions(cli.command("doctor", "Check this PC's setup and say in Italian what to fix"))).action(
+  async (options: CliOptions) => {
+    const results = await runDoctor(localDoctorProbes(), {
+      daemonPort: Number(options.daemonPort ?? 17456),
+      webPort: Number(options.webPort ?? 17573),
+    }, WORKSPACE_ROOT);
+    if (options.json === true) process.stdout.write(`${JSON.stringify({ ok: results.every((result) => result.ok), results }, null, 2)}
+`);
+    else process.stdout.write(`${formatDoctorReport(results)}
+`);
+    if (!results.every((result) => result.ok)) process.exitCode = 1;
+  },
+);
+
+addSharedOptions(cli.command("update", "Fast-forward this checkout to its team branch; MelilloDesign.cmd update installs and starts after it")).action(
+  async (options: CliOptions) => {
+    const config = resolveToolDevConfig(options);
+    const git = gitIn(WORKSPACE_ROOT);
+    const plan = await planUpdate(git);
+    process.stdout.write(`${formatUpdatePlan(plan)}
+`);
+    if (plan.kind === "blocked") { process.exitCode = 1; return; }
+    try {
+      process.stdout.write(`${await applyUpdate(git, plan, {
+        activeRuns: async () => {
+          const url = (await inspectDaemonRuntime(runtimeLookup(config)))?.url;
+          if (!url) return 0;
+          try {
+            const response = await fetch(new URL("/api/runs/active-count", url), { signal: AbortSignal.timeout(5_000) });
+            return response.ok ? Number((await response.json() as { activeRunCount?: unknown }).activeRunCount) || 0 : 0;
+          } catch { return 0; }
+        },
+        stopApps: async () => { await runSequential(resolveStopApps(undefined), (target) => stopApp(config, target)); },
+      })}
+`);
+    } catch (error) {
+      process.stdout.write(`${error instanceof Error ? error.message : String(error)}
+`);
+      process.exitCode = 1;
+    }
   },
 );
 

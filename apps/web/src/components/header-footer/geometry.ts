@@ -46,6 +46,11 @@ export function freeRecurringPlacement(blocks: readonly RecurringBlockGeometry[]
   const length = widest.end - widest.start, inset = Math.min(.02, length / 10), width = Math.min(preferredWidth, length - 2 * inset);
   return width < .025 ? null : { x: fourPlaces(widest.start + inset), width: fourPlaces(width) };
 }
+/** Width of a page at print scale: CSS defines 96 px per inch, so one millimetre of paper is one CSS millimetre. */
+export function printRecurringPageWidth(pageWidthMm: number): number {
+  return pageWidthMm * 96 / 25.4;
+}
+
 export function fitRecurringPageWidth(availableWidth: number, availableHeight: number, pageWidthMm: number, pageHeightMm: number, zoom = 1): number {
   return Math.max(1, Math.min(availableWidth, availableHeight * pageWidthMm / pageHeightMm)) * zoom;
 }

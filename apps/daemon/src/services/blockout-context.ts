@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { BLOCKOUT_ALTERNATIVES_DIRECTIVE, BlockoutDocumentSchema, BlockoutHandoffSchema, renderBlockoutBrief, blockoutWorkspacePath, blockoutComparisonFilePath, blockoutFileTarget, type ProjectDocument, type ProjectMetadata } from '@open-design/contracts';
+import { BLOCKOUT_ALTERNATIVES_DIRECTIVE, BlockoutDocumentSchema, withoutXmlForbiddenCharacters, BlockoutHandoffSchema, renderBlockoutBrief, blockoutWorkspacePath, blockoutComparisonFilePath, blockoutFileTarget, type ProjectDocument, type ProjectMetadata } from '@open-design/contracts';
 import { containedIntakePath } from './project-intake-settings.js';
 import { resolveProjectDir } from '../projects.js';
 import { ProjectDocumentsStore } from './project-documents.js';
@@ -153,6 +153,6 @@ export async function prepareBlockoutContextFiles(root: string, attachments: rea
 }
 export function renderFrozenBlockoutContext(files: readonly { mediaType: string; content: Buffer }[]): string {
   const latest = files.filter((file) => file.mediaType === 'text/plain' && file.content.length <= MAX_BYTES)
-    .map((file) => file.content.toString('utf8')).filter((text) => text.startsWith(OPEN) && text.endsWith(CLOSE)).at(-1);
+    .map((file) => withoutXmlForbiddenCharacters(file.content.toString('utf8'))).filter((text) => text.startsWith(OPEN) && text.endsWith(CLOSE)).at(-1);
   return latest ? `<od-next-context kind="fact" name="blockout-saved-brief">\n${latest.replace(/<\/od-next-context>/gi, '&lt;/od-next-context>')}\n</od-next-context>` : '';
 }

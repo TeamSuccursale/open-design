@@ -189,6 +189,10 @@
 
 .chat-log {
   flex: 1;
+  /* The positioning box for what the log scrolls: absolutely positioned rows
+     (screen-reader spans) otherwise escape its clip and make the pane above it
+     programmatically scrollable. See chat-log-contains-positioned-descendants. */
+  position: relative;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 24px 20px;

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { formatIntakeAttachmentContext, INTAKE_VECTOR_WORKFLOW_DIRECTIVE, type ProjectIntakeCatalog } from '@open-design/contracts';
+import { formatIntakeAttachmentContext, INTAKE_VECTOR_WORKFLOW_DIRECTIVE, withoutXmlForbiddenCharacters, type ProjectIntakeCatalog } from '@open-design/contracts';
 import { intakeProjectFile } from './project-intake.js';
 import { containedIntakePath } from './project-intake-settings.js';
 import { withIntakeVectors } from './project-intake-vectors.js';
@@ -9,7 +9,7 @@ import { withIntakeVectors } from './project-intake-vectors.js';
 /** Inline verified frozen reference bytes so a model need not discover a second text attachment. */
 export function renderFrozenIntakeContext(files: readonly { mediaType: string; content: Buffer }[]): string {
   const references = files.filter((file) => file.mediaType === 'text/plain' && file.content.length <= 40000)
-    .map((file) => file.content.toString('utf8').trim())
+    .map((file) => withoutXmlForbiddenCharacters(file.content.toString('utf8')).trim())
     .filter((text) => text.startsWith('<project-intake-reference>\n') && text.endsWith('</project-intake-reference>'));
   if (!references.length) return '';
   // Follow-up snapshots can retain older context attachments. The last one

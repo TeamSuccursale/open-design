@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
-import { lstat, mkdir, open, opendir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, opendir, realpath, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProjectHistoryFile } from '@open-design/contracts';
 import type { ProjectHistoryGit } from './project-history-git.js';
@@ -55,7 +56,19 @@ export async function ensureHistoryParents(root: string, relative: string): Prom
   }
 }
 
-async function stableHistoryFile(root: string, relative: string, git: ProjectHistoryGit): Promise<StoredHistoryFile | null> {
+/** The id `git hash-object --no-filters` gives in the store's sha256 format, read without starting git. */
+async function gitBlobId(handle: FileHandle, size: number): Promise<string> {
+  const hash = createHash('sha256').update(`blob ${size}\0`), buffer = Buffer.allocUnsafe(Math.min(Math.max(size, 1), 1 << 20));
+  for (let position = 0; position < size;) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, size - position), position);
+    if (!bytesRead) break;
+    hash.update(buffer.subarray(0, bytesRead)); position += bytesRead;
+  }
+  return hash.digest('hex');
+}
+
+/** `stored` holds ids already in the object store: content that matches one is not written again. */
+async function stableHistoryFile(root: string, relative: string, git: ProjectHistoryGit, stored: ReadonlySet<string>): Promise<StoredHistoryFile | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const target = await safeHistoryTarget(root, relative);
     let handle;
@@ -64,8 +77,9 @@ async function stableHistoryFile(root: string, relative: string, git: ProjectHis
     try {
       const before = await handle.stat();
       if (!before.isFile()) throw new ProjectHistoryError(`History refuses special files: ${relative}`);
-      const stream = createReadStream(target, { fd: handle.fd, autoClose: false, highWaterMark: 64 * 1024 });
-      const hash = await git.blob(stream);
+      // One git process per file made a rescan of an unchanged project cost seconds on Windows.
+      const known = stored.size ? await gitBlobId(handle, before.size) : null;
+      const hash = known && stored.has(known) ? known : await git.blob(createReadStream(target, { fd: handle.fd, autoClose: false, start: 0, highWaterMark: 64 * 1024 }));
       const after = await handle.stat(), current = await lstat(target).catch((error) => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
       if (current?.isSymbolicLink()) throw new ProjectHistoryError(`History refuses linked paths: ${relative}`);
       if (current && current.ino === before.ino && current.size === before.size && current.mtimeMs === before.mtimeMs && current.ctimeMs === before.ctimeMs && after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs) return { path: relative, hash, size: before.size, mode: before.mode & 0o777 };
@@ -78,6 +92,7 @@ async function stableHistoryFile(root: string, relative: string, git: ProjectHis
 export async function scanHistoryFiles(root: string, git: ProjectHistoryGit, selected?: string[], previous: StoredHistoryFile[] = []): Promise<StoredHistoryFile[]> {
   const paths = selected?.map(normalizeHistoryPath).filter(eligibleHistoryPath);
   if (paths && !paths.length) return previous;
+  const stored = new Set(previous.map((file) => file.hash));
   const files = new Map(previous.filter((file) => paths && !paths.some((prefix) => file.path === prefix || file.path.startsWith(`${prefix}/`))).map((file) => [file.path, file]));
   const visit = async (relative: string): Promise<void> => {
     if (relative && !eligibleHistoryPath(relative)) return;
@@ -89,7 +104,7 @@ export async function scanHistoryFiles(root: string, git: ProjectHistoryGit, sel
     if (info.isDirectory()) {
       for await (const item of await opendir(target)) await visit(relative ? `${relative}/${item.name}` : item.name);
     } else if (info.isFile()) {
-      const file = await stableHistoryFile(root, relative, git);
+      const file = await stableHistoryFile(root, relative, git, stored);
       if (file) files.set(relative, file);
       if (files.size > 50_000) throw new ProjectHistoryError('Project history exceeds its 50,000-file metadata limit', 413);
     } else throw new ProjectHistoryError(`History refuses special files: ${relative}`);

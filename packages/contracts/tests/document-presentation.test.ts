@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDocumentPresentation, DocumentPresentationSchema, documentPresentationPageState } from '../src/api/document-presentation.js';
+import { createDocumentPresentation, DocumentPresentationSchema, documentPresentationPageState, documentPresentationPrintedTotal } from '../src/api/document-presentation.js';
 import { BlockoutDocumentSchema, createBlockoutDocument, renderBlockoutBrief } from '../src/api/blockout.js';
 import { blockoutHandoffSnapshot } from '../src/api/blockout-handoff.js';
 
@@ -21,6 +21,14 @@ describe('per-document editorial presentation', () => {
     expect(documentPresentationPageState(confirmed(), { index: 1 })).toMatchObject({ sequenceNumber: 2, visibleNumber: 2 });
     expect(documentPresentationPageState({ ...confirmed(), coverCountsInNumbering: false }, { index: 1 })).toMatchObject({ sequenceNumber: 1, visibleNumber: 1 });
     expect(documentPresentationPageState(createDocumentPresentation(), { index: 0 })).toMatchObject({ header: null, footer: null, visibleNumber: null });
+  });
+  it('prints the total that the last numbered page shows, so it never reads "7 di 8"', () => {
+    // Flow run 27 Oct 2026: 8 A4 pages, cover excluded from the sequence; the footer read "Pagina 7 di 8" on the last page.
+    expect(documentPresentationPrintedTotal({ ...confirmed(), coverCountsInNumbering: false }, 8)).toBe(7);
+    expect(documentPresentationPrintedTotal(confirmed(), 8)).toBe(8);
+    expect(documentPresentationPrintedTotal({ ...confirmed(), cover: false, coverCountsInNumbering: null, coverCountsTowardPageLimit: null, numberOnCover: null }, 4)).toBe(4);
+    expect(documentPresentationPrintedTotal(createDocumentPresentation(), 3)).toBe(3);
+    expect(documentPresentationPrintedTotal(undefined, 5)).toBe(5);
   });
   it('carries confirmed presentation into a saved blockout, readable brief and feedback snapshot', () => {
     const document = BlockoutDocumentSchema.parse({ ...createBlockoutDocument(), presentation: confirmed() });

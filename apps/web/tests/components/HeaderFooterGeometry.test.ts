@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeRecurringBlockSize, equivalentRecurringGeometry, fitRecurringPageWidth, freeRecurringPlacement, recurringBlockOutsideSafeArea, snapRecurringGeometry } from '../../src/components/header-footer/geometry';
+import { changeRecurringBlockSize, equivalentRecurringGeometry, fitRecurringPageWidth, printRecurringPageWidth, freeRecurringPlacement, recurringBlockOutsideSafeArea, snapRecurringGeometry } from '../../src/components/header-footer/geometry';
 const a4Footer = { widthMm: 210, heightMm: 20 }, a3Footer = { widthMm: 420, heightMm: 20 };
 describe('recurring elements across page formats', () => {
   it('keeps a block spanning most of the strip at its share of the page', () => {
@@ -37,6 +37,10 @@ describe('recurring strip transforms', () => {
     expect(fit).toBe(180);
     expect(fit * 297 / 420).toBeLessThanOrEqual(300);
     expect(fitRecurringPageWidth(180, 300, 420, 297, 2)).toBe(fit * 2);
+  });
+  it('sizes a page at print scale: one millimetre of paper is one CSS millimetre on screen', () => {
+    expect(printRecurringPageWidth(210)).toBeCloseTo(210 * 96 / 25.4);
+    expect(printRecurringPageWidth(420)).toBeCloseTo(2 * printRecurringPageWidth(210));
   });
   it('keeps logo proportions and allows crossing the border to remain visible as a warning', () => {
     const original = { x: .7, y: .2, width: .2, height: .4 };

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertCanonicalXmlText,
   type CanonicalXmlNode,
   indexCanonicalXmlChildren,
   parseCanonicalXml,
   requireCanonicalXmlElement,
   serializeCanonicalXml,
+  withoutXmlForbiddenCharacters,
 } from '../src/prompts/canonical-xml.js';
 
 const tree: CanonicalXmlNode = {
@@ -168,5 +170,17 @@ describe('canonical XML keyed sibling lists', () => {
         { kind: 'marker', tag: 'atom', attributes: [['name', 'todo-write']] },
       ],
     })).toThrow(/repeats child atom\[name=todo-write\]/);
+  });
+});
+
+describe('withoutXmlForbiddenCharacters', () => {
+  // A tender PDF read on 27 Oct 2026 gave "DELL'OF\uFFFEFERTA"; that one character made every OD Next run of the project fall back.
+  it('drops what XML 1.0 forbids from source text and keeps the words readable', () => {
+    expect(withoutXmlForbiddenCharacters('DELL\u2019OF\uFFFEFERTA')).toBe('DELL\u2019OFFERTA');
+    expect(withoutXmlForbiddenCharacters('pagina 1\fpagina 2\u0002')).toBe('pagina 1 pagina 2 ');
+    expect(withoutXmlForbiddenCharacters('lone \uD800 surrogate')).toBe('lone \uFFFD surrogate');
+    const cleaned = withoutXmlForbiddenCharacters('a\u0000b\uFFFFc\t\r\nd \u{1F600}');
+    expect(cleaned).toBe('a bc\t\r\nd \u{1F600}');
+    expect(() => assertCanonicalXmlText(cleaned, 'text')).not.toThrow();
   });
 });

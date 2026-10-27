@@ -11,3 +11,16 @@ export function userSendFailureFromError(error: Error): ChatMessage['sendFailure
     ...(typeof detail.retryable === 'boolean' ? { retryable: detail.retryable } : {}),
   };
 }
+
+/**
+ * A refusal the same request can never get past. The resend reuses the failed turn's request id, so after an
+ * idempotency conflict it could only meet the same 409: the request already ran under that id.
+ */
+export function userSendFailureCanRetry(failure: ChatMessage['sendFailure']): boolean {
+  return failure?.code !== 'IDEMPOTENCY_CONFLICT';
+}
+
+/** The engineer-facing explanation for a refusal whose daemon text names internals, or null to show that text. */
+export function userSendFailureMessageKey(failure: ChatMessage['sendFailure']): 'chat.sendAlreadySent' | null {
+  return failure?.code === 'IDEMPOTENCY_CONFLICT' ? 'chat.sendAlreadySent' : null;
+}

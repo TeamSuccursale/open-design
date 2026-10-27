@@ -5,7 +5,7 @@ import { FileViewer } from '../../src/components/FileViewer';
 import type { ProjectFile } from '../../src/types';
 
 vi.mock('../../src/components/blockout/BlockoutFilePreview', () => ({
-  BlockoutComparisonPreview: () => <section aria-label="Native structure comparison" />,
+  BlockoutComparisonPreview: ({ generating }: { generating?: boolean }) => <section aria-label="Native structure comparison" data-generating={String(Boolean(generating))} />,
   BlockoutFilePreview: ({ documentId }: { documentId?: string }) => <section aria-label={`Native blockout ${documentId ?? 'page'}`} />,
 }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -15,6 +15,13 @@ describe('Blockout selection renderer boundary', () => {
     render(<FileViewer projectId="project" projectKind="prototype" file={file('documents/report/blockout-comparison.html')} />);
     expect(screen.getByRole('region', { name: 'Native structure comparison' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Source' })).toBeNull();
+  });
+  it('locks a comparison only while Blockout proposals may still be written, not for any run in flight', () => {
+    const comparison = file('documents/report/blockout-comparison.html');
+    const view = render(<FileViewer projectId="project" projectKind="prototype" file={comparison} motionPreviewMuted blockoutGenerating={false} />);
+    expect(screen.getByRole('region', { name: 'Native structure comparison' }).getAttribute('data-generating')).toBe('false');
+    view.rerender(<FileViewer projectId="project" projectKind="prototype" file={comparison} motionPreviewMuted />);
+    expect(screen.getByRole('region', { name: 'Native structure comparison' }).getAttribute('data-generating')).toBe('true');
   });
   it('uses an explicit document marker for a legacy index entry without exposing old HTML controls', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));

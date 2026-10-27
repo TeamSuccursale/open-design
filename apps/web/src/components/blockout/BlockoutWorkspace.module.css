@@ -377,6 +377,7 @@
 .questionLabel { display: block; margin-bottom: 12px; color: var(--accent); font-size: 12px; font-weight: 600; }
 .questionPanel :global(.question-form) { width: 100%; max-width: none; margin: 0; box-shadow: none; }
 .approvalHint { margin: 0 0 14px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.approvalActions { display: flex; flex-wrap: wrap; gap: 8px; }
 .actionDock { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 24px; border-top: 1px solid var(--border-soft); }
 .actionSummary { min-width: 0; }
 .actionSummary strong { font-size: 13px; font-weight: 600; }

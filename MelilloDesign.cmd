@@ -26,8 +26,36 @@ if /i "%~1"=="stop" set "MELILLO_ACTION=stop"
 if /i "%~1"=="stop" set "MELILLO_SCOPE="
 if /i "%~1"=="stop" set "MELILLO_PORTS="
 if /i "%~1"=="stop" goto launch
-echo Usage: MelilloDesign.cmd [start^|restart^|status^|stop]
+if /i "%~1"=="doctor" set "MELILLO_ACTION=doctor"
+if /i "%~1"=="doctor" set "MELILLO_SCOPE="
+if /i "%~1"=="doctor" goto launch
+if /i "%~1"=="update" goto update
+echo Usage: MelilloDesign.cmd [start^|restart^|status^|stop^|doctor^|update]
 exit /b 2
+:update
+rem tools-dev refuses, or stops the app and fast-forwards the checkout. Only a moved checkout needs an
+rem install, and an install that failed leaves a marker so the next update repeats it.
+set "MELILLO_BEFORE="
+for /f %%h in ('git rev-parse HEAD 2^>nul') do set "MELILLO_BEFORE=%%h"
+call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 tools-dev update --namespace project-workspace
+if errorlevel 1 exit /b 1
+set "MELILLO_AFTER="
+for /f %%h in ('git rev-parse HEAD 2^>nul') do set "MELILLO_AFTER=%%h"
+if not "%MELILLO_BEFORE%"=="%MELILLO_AFTER%" goto install
+if exist ".tmp\melillo-install-pending" goto install
+exit /b 0
+:install
+if not exist ".tmp" mkdir ".tmp"
+type nul > ".tmp\melillo-install-pending"
+echo Installazione e ricompilazione in corso: servono alcuni minuti.
+call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 install --frozen-lockfile
+if errorlevel 1 goto install_failed
+del ".tmp\melillo-install-pending"
+set "MELILLO_ACTION=start"
+goto launch
+:install_failed
+echo Installazione non riuscita. MelilloDesign.cmd doctor dice che cosa manca; poi rilancia MelilloDesign.cmd update, che ripete l'installazione.
+exit /b 1
 :launch
 call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 tools-dev %MELILLO_ACTION% %MELILLO_SCOPE% --namespace project-workspace %MELILLO_PORTS%
 exit /b %ERRORLEVEL%

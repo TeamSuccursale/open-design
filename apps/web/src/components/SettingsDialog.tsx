@@ -6160,6 +6160,18 @@ export function SettingsDialog({
                     <dt>{t('settings.appArchitecture')}</dt>
                     <dd>{appVersionInfo.arch}</dd>
                   </div>
+                  {appVersionInfo.build ? (
+                    <div>
+                      <dt>{t('settings.appBuild')}</dt>
+                      <dd>
+                        {[
+                          appVersionInfo.build.tag,
+                          appVersionInfo.build.commit,
+                          appVersionInfo.build.localChanges ? t('settings.appBuildLocalChanges') : null,
+                        ].filter(Boolean).join(' · ')}
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
               ) : (
                 <div className="empty-card">{t('settings.versionUnavailable')}</div>

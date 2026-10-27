@@ -113,6 +113,22 @@ describe('unwrapShell · codex 把每条命令都包一层(踩坑 #16)', () => {
   });
 });
 
+describe('unwrapShell · Codex on Windows wraps every command in PowerShell', () => {
+  // Live run, 27 Oct 2026: every row read Eseguito "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -Command…,
+  // so the part that says what was done was always cut off.
+  it('strips the quoted pwsh.exe wrapper and PowerShell quote escaping', () => {
+    const wrapped = String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -Command 'Get-Content -Raw ''brief.md'''`;
+    expect(unwrapShell(wrapped)).toBe("Get-Content -Raw 'brief.md'");
+    expect(toolTitle('Bash', { command: wrapped })).toBe("Get-Content -Raw 'brief.md'");
+  });
+  it('strips a bare powershell.exe with flags before -Command', () => {
+    expect(unwrapShell('powershell.exe -NoLogo -NonInteractive -ExecutionPolicy Bypass -Command "Get-ChildItem -Name"')).toBe('Get-ChildItem -Name');
+  });
+  it('leaves a PowerShell call without -Command alone', () => {
+    expect(unwrapShell('pwsh.exe -File build.ps1')).toBe('pwsh.exe -File build.ps1');
+  });
+});
+
 describe('toolKind · 工具名能说明问题的直接认', () => {
   it.each([
     ['Write', 'write'],

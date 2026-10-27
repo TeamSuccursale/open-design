@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { load } from 'cheerio';
@@ -74,6 +74,19 @@ describe('applied header/footer runtime', () => {
     expect(after.document!.presentation?.headerFooter?.revision).toBe(1);
     const comparison = await readFile(path.join(report.workingDirectory, 'documents/relazione-con-alternativa/blockout-comparison.html'), 'utf8');
     expect(comparison).toContain('Alternativa aggiunta');
+  });
+  it('leaves unchanged recurring-graphic files untouched when the same revision is re-applied', async () => {
+    // A Blockout save re-applies the footer. Rewriting identical bytes moved
+    // their mtime, so the run that saved listed the footer preview as its own
+    // output and the chat showed a footer card for a change that never touched it.
+    const f = await fixture(), report = await f.make('Relazione riapplicata', 3), p = await publish(f, report);
+    const folder = path.join(report.workingDirectory, 'header-footer', report.id);
+    const derived = [path.join(folder, 'preview.html'), path.join(folder, 'applied.json'), path.join(report.workingDirectory, 'elaborato.html')];
+    const old = new Date('2026-01-01T00:00:00Z');
+    for (const file of derived) await utimes(file, old, old);
+    const result = await p.store.apply(report.id, { setId: p.set.id, followUpdates: true, header: true, footer: true, showOnCover: false });
+    expect(result.bindings[0]).toMatchObject({ status: 'applied', appliedRevision: 1 });
+    for (const file of derived) expect((await stat(file)).mtime.toISOString(), file).toBe(old.toISOString());
   });
   it('rejects literal and resolved field overflow before publishing, binding, or writing document assets', async () => {
     const f = await fixture(), report = await f.make('Relazione descrittiva con un nome completo da mantenere leggibile', 8);
@@ -224,6 +237,17 @@ describe('applied header/footer runtime', () => {
       const page = workspace.variants[0]!.pages[firstBody]!, state = documentPresentationPageState(workspace.presentation, { index: firstBody });
       expect(renderAppliedHeaderFooterSvg(applied, { widthMm: page.widthMm, heightMm: page.heightMm, documentName: document.name, index: firstBody, totalPages: count, visibleNumber: state.visibleNumber })).toContain(document.name);
     }
+  });
+  it('prints on every page the total the last page carries, not the page count, when the cover stays out of the sequence', async () => {
+    // Flow run 27 Oct 2026: 8 pages with the cover excluded from numbering read "Pagina 7 di 8" on the last page.
+    const f = await fixture(), report = await f.make('Relazione B', 8, false, true), store = await f.runtime.store('parent');
+    const asset = await store.addAsset({ name: 'Studio', filename: 'studio.svg', mimeType: 'image/svg+xml', source: 'upload', width: 80, height: 20 }, Buffer.from(svg));
+    const draft = design(asset.id); for (const variant of draft.variants) variant.blocks.push({ id: 'total', region: 'footer', kind: 'field', field: 'totalPages', x: .7, y: .2, width: .1, height: .5, fontSize: 10 });
+    const created = await store.create({ name: 'Studio Antro' }); await store.saveDraft(created.set.id, { expectedDraftVersion: 1, draft });
+    await store.publish(created.set.id, { expectedDraftVersion: 2, expectedRevision: 0, stage: 'graphic-approved', originDocumentId: report.id, binding: { documentId: report.id, followUpdates: true, header: true, footer: true, showOnCover: false } });
+    const $ = load(await readFile(path.join(report.workingDirectory, 'elaborato.html'), 'utf8')), last = $('[data-melillodesign-document-page]').eq(7).children('[data-melillodesign-recurring-region]');
+    expect(last.find('[data-header-footer-block="page"]').text()).toBe('7');
+    expect(last.find('[data-header-footer-block="total"]').text()).toBe('7');
   });
   it('updates linked outputs from the second document, preserves independent output and marks larger regions for body review', async () => {
     const f = await fixture(), report = await f.make('Relazione B', 8), booklet = await f.make('Fascicolo B', 4, true), independent = await f.make('Copia indipendente', 2), p = await publish(f, report);

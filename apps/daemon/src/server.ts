@@ -346,8 +346,10 @@ export {
   verifyDesktopImportToken,
 } from './desktop-auth.js';
 import {
+  isPackagedRuntime,
   normalizeTelemetryAppVersionInfo,
   readCurrentAppVersionInfo,
+  readSourceBuildInfo,
   UNKNOWN_APP_VERSION,
 } from './app-version.js';
 import {
@@ -8725,8 +8727,11 @@ export async function startServer({
     });
   });
 
+  // Read when the daemon starts, not per request: a later pull does not change the code this process already loaded.
+  const sourceBuild = isPackagedRuntime() ? Promise.resolve(null) : readSourceBuildInfo(PROJECT_ROOT);
   app.get('/api/version', async (_req, res) => {
     const version = await readCurrentAppVersionInfo();
+    const build = await sourceBuild;
     // Now that this payload carries a runtime capability it is no longer a
     // near-static fact about the build: the same URL answers differently
     // depending on which daemon is behind it. A cached response therefore
@@ -8742,6 +8747,7 @@ export async function startServer({
     res.json({
       version: {
         ...version,
+        ...(build ? { build } : {}),
         capabilities: { slideRenderer: typeof desktopSlideRenderer === 'function' },
       },
     });

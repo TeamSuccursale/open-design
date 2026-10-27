@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, parse as parsePath } from 'node:path';
@@ -16,6 +17,13 @@ export interface AppVersionInfo {
   packaged: boolean;
   platform: string;
   arch: string;
+  build?: AppBuildInfo;
+}
+
+export interface AppBuildInfo {
+  commit: string;
+  tag: string | null;
+  localChanges: boolean;
 }
 
 export function normalizeTelemetryAppVersion(value: unknown): string | null {
@@ -169,4 +177,26 @@ export async function readCurrentAppVersionInfo({
   const metadata = packageMetadata
     ?? (resolvedUrl ? await readPackageMetadata(resolvedUrl) : null);
   return resolveAppVersionInfo({ env, packageMetadata: metadata, resourcesPath, execPath, platform, arch });
+}
+
+function gitOutput(root: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true, timeout: 5000 }, (error, stdout) => {
+      resolve(error ? null : stdout.trim());
+    });
+  });
+}
+
+/**
+ * Which source build a checkout runs: the commit, the round tag when HEAD sits exactly on one, and whether tracked
+ * files were edited. Null outside a git checkout, as in a packaged app, so a report always names a build it can trust.
+ */
+export async function readSourceBuildInfo(root: string): Promise<AppBuildInfo | null> {
+  const commit = await gitOutput(root, ['rev-parse', '--short=8', 'HEAD']);
+  if (!commit) return null;
+  const [tag, status] = await Promise.all([
+    gitOutput(root, ['describe', '--tags', '--exact-match', 'HEAD']),
+    gitOutput(root, ['status', '--porcelain', '--untracked-files=no']),
+  ]);
+  return { commit, tag: tag || null, localChanges: Boolean(status) };
 }

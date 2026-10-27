@@ -52,6 +52,12 @@ describe('canonical header/footer host workflow', () => {
       expect(prompt).not.toContain('name="header-footer-workflow"');
     });
   }
+  it('asks what an enabled region contains in the same form, prefilled with a proposal', () => {
+    // A bare Sì/No per region left the contents to another full agent turn (about two minutes in the flow run).
+    expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).toContain('shown only when that region is enabled');
+    expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).toContain('prefilled with your proposal from the sources');
+    expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).not.toContain('or the next one, when the region choice was just made');
+  });
   it('keeps the shared grouped editorial rule in Blockout and the OD Next stable host context', () => {
     expectWorkflow(composeSystemPrompt({ sessionMode: 'blockout' }));
     const stable = composeOdNextStrategyStableRequestContextV2({ agentId: 'codex', sessionMode: 'blockout', metadata: { projectMode: 'fast' } });

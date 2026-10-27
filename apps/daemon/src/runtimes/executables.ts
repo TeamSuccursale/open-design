@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, statSync } from 'node:fs';
 import { delimiter } from 'node:path';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -326,7 +326,8 @@ function packagedBuiltInExecutable(
 // neither PATH nor the user-toolchain search dirs cover the app bundle. Probe
 // the well-known bundle locations so app-only installs are detected. This is a
 // last-resort fallback that ranks below PATH, so an explicit `npm i -g` /
-// Homebrew / version-manager install always wins.
+// Homebrew / version-manager install always wins. The Windows app has the same
+// problem with a different layout; see `codexWindowsAppCandidates`.
 function codexAppBundleExecutable(def: RuntimeAgentDef): string | null {
   if (def?.id !== 'codex') return null;
   for (const candidate of codexAppBundleCandidates()) {
@@ -342,8 +343,8 @@ function codexAppBundleExecutable(def: RuntimeAgentDef): string | null {
 // candidate list directly to catch a path typo or ordering regression in the
 // common real-world install case.
 export function codexAppBundleCandidates(): string[] {
-  // The Codex app bundle is a macOS-only concept; other platforms have no
-  // analogous standalone install of the `codex` CLI to probe for here.
+  if (process.platform === 'win32') return codexWindowsAppCandidates();
+  // Linux has no standalone app install of the `codex` CLI to probe for.
   if (process.platform !== 'darwin') return [];
   const { home, hasOverride } = resolveDetectionHome();
   const bundleSuffix = ['Codex.app', 'Contents', 'Resources', 'codex'];
@@ -356,6 +357,40 @@ export function codexAppBundleCandidates(): string[] {
     candidates.unshift(path.join('/Applications', ...bundleSuffix));
   }
   return candidates;
+}
+
+// The Windows Codex app is a Store package. It unpacks its CLI into a
+// per-build folder, %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe, and does
+// not put it on PATH. The folder name is a hash, not a version; an update
+// leaves the previous build's folder behind, and a sibling folder can hold
+// only helpers such as rg.exe. So the folders are listed and the most recently
+// built codex.exe ranks first. An override home is searched under its own
+// AppData\Local, never the real machine's LOCALAPPDATA.
+function codexWindowsAppCandidates(): string[] {
+  const { home, hasOverride } = resolveDetectionHome();
+  const localAppData =
+    (!hasOverride && process.env.LOCALAPPDATA?.trim()) ||
+    path.join(home, 'AppData', 'Local');
+  const binRoot = path.join(localAppData, 'OpenAI', 'Codex', 'bin');
+  let builds: string[];
+  try {
+    builds = readdirSync(binRoot);
+  } catch {
+    return [];
+  }
+  const found: Array<{ file: string; builtAt: number }> = [];
+  for (const build of builds) {
+    const file = path.join(binRoot, build, 'codex.exe');
+    try {
+      const stat = statSync(file);
+      if (stat.isFile()) found.push({ file, builtAt: stat.mtimeMs });
+    } catch {
+      // A build folder without the CLI.
+    }
+  }
+  return found
+    .sort((a, b) => b.builtAt - a.builtAt || a.file.localeCompare(b.file))
+    .map(({ file }) => file);
 }
 
 export function resolveAgentExecutable(

@@ -132,8 +132,7 @@ describe('Blockout overview to page-editing flow', () => {
     const copyId = (screen.getByRole('combobox', { name: 'Proposal' }) as HTMLSelectElement).value;
     fireEvent.click(screen.getByRole('button', { name: 'Move to design' }));
     expect(view.onUseBrief).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('radio', { name: /accept.*graphic design/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^(next|submit|continue)$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /accept.*graphic design/i }));
     await waitFor(() => expect(view.onUseBrief).toHaveBeenCalledOnce());
     expect(stored.approval?.variantId).toBe(copyId);
     expect(vi.mocked(saveBlockoutStartingPoint).mock.calls.at(-1)![1].activeVariantId).toBe(copyId);
@@ -222,7 +221,7 @@ describe('Blockout overview to page-editing flow', () => {
     expect(accept.disabled).toBe(true);
     expect(accept.title).toBe('Resolve the page allowance warning before accepting this structure.');
     fireEvent.click(accept);
-    expect(screen.queryByRole('radio', { name: /accept.*graphic design/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /accept.*graphic design/i })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Edit Page 1 · Proposal A' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Feedback for the agent' }), { target: { value: 'Retain this draft while the page allowance is resolved.' } });
     await waitForAutosave();

@@ -131,8 +131,7 @@ describe('editable blockout workspace', () => {
     expect(screen.getByTestId('blockout-paper').getAttribute('data-question-target')).toBe('true');
     expect(screen.getByText(/graphic design request opens in chat; press Send/i)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('What should go here?'), { target: { value: 'Include the current edits when starting graphic design.' } });
-    fireEvent.click(screen.getByRole('radio', { name: /accept.*graphic design/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^(next|submit|continue)$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /accept.*graphic design/i }));
     await waitFor(() => expect(onPhaseChange).toHaveBeenCalledWith('design'));
     expect(vi.mocked(saveBlockout).mock.calls.at(-1)![1].approval?.variantId).toBe('proposal-a');
     expect(vi.mocked(saveBlockoutStartingPoint).mock.calls.at(-1)![1].variants[1]!.pages[0]!.expectation).toContain('current edits');
@@ -224,7 +223,7 @@ describe('editable blockout workspace', () => {
     const { onUseBrief } = setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Move to design' }));
     fireEvent.change(screen.getByLabelText('Proposal'), { target: { value: 'proposal-a' } });
-    expect(screen.queryByRole('radio', { name: /accept.*graphic design/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /accept.*graphic design/i })).toBeNull();
     expect(onUseBrief).not.toHaveBeenCalled(); expect(saveBlockout).not.toHaveBeenCalled();
     cleanup();
     localStorage.clear();
@@ -234,8 +233,7 @@ describe('editable blockout workspace', () => {
     openGeometry();
     fireEvent.change(screen.getByRole('spinbutton', { name: 'X (%)' }), { target: { value: '19' } });
     fireEvent.click(screen.getByRole('button', { name: 'Move to design' }));
-    fireEvent.click(screen.getByRole('radio', { name: /accept.*graphic design/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^(next|submit|continue)$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /accept.*graphic design/i }));
     await waitFor(() => expect(saveBlockoutStartingPoint).toHaveBeenCalled());
     expect(vi.mocked(saveBlockoutStartingPoint).mock.calls[0]![1]).toMatchObject({ needsReadaptation: false, approval: {variantId:'brief'} });
     expect(vi.mocked(saveBlockoutStartingPoint).mock.calls[0]![1].variants[0]!.pages[0]!.blocks[0]!.box.x).toBe(19);
@@ -285,12 +283,22 @@ describe('editable blockout workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
     expect(onClose).toHaveBeenCalledOnce(); expect(saveBlockout).not.toHaveBeenCalled();
   });
+  it('approves with one button, since Move to design already says what the engineer wants', async () => {
+    const { onUseBrief } = setup(); await addBlock();
+    fireEvent.click(screen.getByRole('button', { name: 'Move to design' }));
+    const panel = screen.getByRole('region', { name: 'Use this structure for graphic design' });
+    expect(within(panel).queryAllByRole('radio')).toEqual([]);
+    expect(within(panel).queryByRole('textbox')).toBeNull();
+    expect(within(panel).getAllByRole('button').map((button) => button.textContent)).toEqual(['Accept and move to graphic design', 'Keep refining the blockout']);
+    fireEvent.click(within(panel).getByRole('button', { name: 'Accept and move to graphic design' }));
+    await waitFor(() => expect(onUseBrief).toHaveBeenCalledOnce());
+    expect(onUseBrief.mock.calls[0]![2]).toBe('design');
+  });
   it('keeps refinement in Blockout when approval is declined', async () => {
     const { onUseBrief, onClose } = setup(); await addBlock();
     fireEvent.click(screen.getByRole('button', { name: 'Move to design' }));
-    fireEvent.click(screen.getByRole('radio', { name: 'Keep refining the blockout' }));
-    fireEvent.click(screen.getByRole('button', { name: /^(next|submit|continue)$/i }));
-    expect(screen.queryByRole('radio', { name: 'Keep refining the blockout' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep refining the blockout' }));
+    expect(screen.queryByRole('button', { name: 'Keep refining the blockout' })).toBeNull();
     expect(onUseBrief).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled(); expect(saveBlockout).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Edit in chat' })).toBeTruthy();
   });
@@ -298,11 +306,10 @@ describe('editable blockout workspace', () => {
     vi.mocked(saveBlockoutStartingPoint).mockRejectedValue(new Error('Brief write failed'));
     const { onUseBrief, onClose } = setup(); await addBlock();
     fireEvent.click(screen.getByRole('button', { name: 'Move to design' }));
-    fireEvent.click(screen.getByRole('radio', { name: /accept.*graphic design/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^(next|submit|continue)$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /accept.*graphic design/i }));
     expect((await screen.findByRole('alert')).textContent).toContain('Brief write failed');
     expect(onUseBrief).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole('radio', { name: /accept.*graphic design/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /accept.*graphic design/i })).toBeTruthy();
     expect(screen.getByTestId('blockout-paper').getAttribute('data-question-target')).toBe('true');
   });
   it('opens the scoped block question and saves flexibility and answers through the existing form callback', async () => {

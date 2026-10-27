@@ -1,6 +1,6 @@
 # MelilloDesign UI/UX testing roadmap
 
-Baseline: [26 October checkpoint](../../docs/checkpoints/2026-10-26.md), implementation `71e48b9454db58219ee4eff279ef3c0f9c217090`. This is the testing backlog, not a record that the scenarios below have passed. Existing checks are linked so the next run can target missing evidence rather than repeat every test indiscriminately.
+Baseline: [26 October checkpoint](../../docs/checkpoints/2026-10-26.md), implementation `71e48b9454db58219ee4eff279ef3c0f9c217090`. This is the testing backlog, not a record that the scenarios below have passed. Existing checks are linked so the next run can target missing evidence rather than repeat every test indiscriminately. The order of work before engineers test the app on their own PCs is in the [team test roadmap](melillodesign-team-test-roadmap.md).
 
 The immediate goal is a coherent journey from project creation to a selected, edited Blockout and a designed document that can be recomposed later. A functional pass requires correct saved state; a usability pass also requires the user to understand what will happen without an implementation explanation. Both are needed.
 

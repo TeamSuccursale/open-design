@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import type http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
@@ -39,9 +40,17 @@ describe('/api/version', () => {
         packaged: expect.any(Boolean),
         platform: expect.any(String),
         arch: expect.any(String),
+        build: { commit: expect.any(String), tag: expect.toBeOneOf([null, expect.any(String)]), localChanges: expect.any(Boolean) },
         capabilities: { slideRenderer: expect.any(Boolean) },
       },
     });
+  });
+
+  it('names the commit this daemon was started from, so a Settings screenshot identifies the build', async () => {
+    const res = await fetch(`${baseUrl}/api/version`);
+    const json = await res.json() as { version: { build?: { commit: string } } };
+
+    expect(json.version.build?.commit).toBe(execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim());
   });
 
   // The export routes 501 on exactly `typeof desktopSlideRenderer !== 'function'`.

@@ -54,6 +54,7 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   "documentWorkspace.approved": string;
   "documentWorkspace.approvalHint": string;
   "documentWorkspace.editSelected": string;
+  "documentWorkspace.editApproved": string;
   "documentWorkspace.interrupted": string;
   "documentWorkspace.interruptedHint": string;
   "documentWorkspace.manualTitle": string;
@@ -115,6 +116,7 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   "documentStart.useFolder": string;
   "documentStart.managed": string;
   "documentStart.workingFolder": string;
+  "documentStart.workingFolderHint": string;
   "documentStart.browse": string;
   "documentStart.extraFolders": string;
   "documentStart.extraFoldersHint": string;
@@ -813,6 +815,8 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   'settings.appRuntime': string;
   'settings.appPlatform': string;
   'settings.appArchitecture': string;
+  'settings.appBuild': string;
+  'settings.appBuildLocalChanges': string;
   'settings.runtimePackaged': string;
   'settings.runtimeDevelopment': string;
   'settings.versionUnavailable': string;
@@ -3319,6 +3323,7 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   'chat.support.join': string;
   'chat.sendFailedRetryAria': string;
   'chat.sendTargetMissing': string;
+  'chat.sendAlreadySent': string;
   'chat.audio.play': string;
   'chat.audio.pause': string;
   'chat.audio.download': string;

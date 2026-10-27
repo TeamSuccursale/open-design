@@ -59,6 +59,11 @@ describe('new document project setup', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent).toMatchObject({ documentName: 'Relazione B — metodo' });
   });
+  it('says what goes in the empty working-folder field', async () => {
+    setup(); await goToFolders();
+    fireEvent.click(screen.getByRole('radio', { name: text('useFolder') }));
+    expect(screen.getByLabelText(text('workingFolder')).getAttribute('placeholder')).toBe(text('workingFolderHint'));
+  });
   it('shows the actual daemon-provided storage parent when app storage is selected', async () => {
     setup(); await goToFolders(); chooseManaged();
     expect(await screen.findByText('C:/TestRuntime/projects')).toBeTruthy();

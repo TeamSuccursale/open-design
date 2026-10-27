@@ -26,7 +26,18 @@ export interface AppVersionInfo {
   packaged: boolean;
   platform: string;
   arch: string;
+  /** The source build a git checkout runs; absent in a packaged app and from older daemons. */
+  build?: AppBuildInfo;
   capabilities?: AppRuntimeCapabilities;
+}
+
+export interface AppBuildInfo {
+  /** Short commit hash of HEAD when the daemon started. */
+  commit: string;
+  /** The tag HEAD sits exactly on, such as a test round; null between tags. */
+  tag: string | null;
+  /** Tracked files differ from the commit, so the commit alone does not describe the build. */
+  localChanges: boolean;
 }
 
 export interface AppVersionResponse {

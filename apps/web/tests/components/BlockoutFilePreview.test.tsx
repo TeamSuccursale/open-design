@@ -50,6 +50,18 @@ describe('visual Blockout deliverables', () => {
     expect(await screen.findByRole('button', { name: 'Choose Saved model ready' })).toBeEnabled();
     expect(loadBlockout).toHaveBeenCalledTimes(2); expect(saveBlockout).not.toHaveBeenCalled();
   });
+  it('says the chosen structure is approved once it is, instead of the stale choice status', async () => {
+    const doc = createBlockoutDocument(); doc.variants[0]!.label = 'Linear'; doc.selectedVariantId = 'brief'; doc.activeVariantId = 'brief';
+    vi.mocked(loadBlockout).mockResolvedValue({ document: doc, raw: 'chosen' });
+    const view = (revision: number) => <I18nProvider initial="en"><BlockoutFilePreview projectId="p" path="blockout/layout.json" revision={revision} /></I18nProvider>;
+    const { rerender } = render(view(1));
+    expect(await screen.findByRole('button', { name: 'Edit or approve the structure' })).toBeTruthy();
+    doc.approval = { variantId: 'brief', acceptedAt: '2026-10-27T01:30:00.000Z' };
+    rerender(view(2));
+    expect(await screen.findByRole('button', { name: 'Edit the structure' })).toBeTruthy();
+    expect(screen.getByText(/Structure accepted/)).toBeTruthy();
+    expect(screen.queryByText(/has not been approved/)).toBeNull();
+  });
   it('shows appended alternatives beside the selected edited baseline without choosing them automatically', async () => {
     const doc=createBlockoutDocument(); doc.selectedVariantId='brief'; doc.variants[0]!.label='Edited baseline';
     doc.variants.push({...structuredClone(doc.variants[0]!),id:'new-variant',label:'New text-led alternative'});

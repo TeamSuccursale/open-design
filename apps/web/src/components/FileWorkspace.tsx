@@ -1,6 +1,7 @@
 import { useExperienceError } from '../observability/use-experience-error';
 import { blockoutFileTarget, isBlockoutFile, isInternalBlockoutFile } from '@open-design/contracts';
 import type { RecoveryActionBlockReason } from '../runtime/chat/recovery-gating';
+import { blockoutProposalsInFlight } from '../runtime/blockout-run';
 import {
   memo,
   useCallback,
@@ -1706,6 +1707,7 @@ export function FileWorkspace({
   // streamed event by design — a tool call landing IS the update the pane is
   // there to show.
   const runSteps = useMemo(() => runProgressSteps(messages), [messages]);
+  const blockoutGenerating = useMemo(() => blockoutProposalsInFlight(messages, runInFlight), [messages, runInFlight]);
   const runStartedAt = useMemo(() => {
     if (!runInFlight) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -3517,6 +3519,7 @@ export function FileWorkspace({
       isDeck={isDeck}
       streaming={streaming}
       motionPreviewMuted={runInFlight}
+      blockoutGenerating={blockoutGenerating}
       commentQueueOnSend={commentQueueOnSend}
       commentSendDisabled={commentSendDisabled}
       previewComments={previewCommentsByFile.get(file.name) ?? NO_PREVIEW_COMMENTS}

@@ -11,7 +11,6 @@ import { PROJECT_HISTORY_UPDATED_EVENT } from '../../providers/project-history';
 import { useT } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 import { Icon } from '../Icon';
-import { QuestionFormView } from '../QuestionForm';
 import { BlockoutCanvas } from './BlockoutCanvas';
 import { BlockoutInspector } from './BlockoutInspector';
 import { BlockoutDocumentOverview, type OverviewBlockSelection } from './BlockoutDocumentOverview';
@@ -519,15 +518,15 @@ export function BlockoutWorkspace({ projectId, workspaceContext: suppliedContext
             onClose={() => setGalleryOpen(false)} onAssets={(assets) => { galleryAssets.current = new Map(assets.map((asset) => [asset.id, asset])); }}
             onUse={(ids) => { if (block) dropImages(block.id, ids); }} onRemove={(assetId) => { if (block) patchBlock({ images: block.images.filter((image) => image.assetId !== assetId) }); }} /> : <BlockoutInspector key={`${variant.id}-${page.id}-${block?.id ?? 'page'}`} page={page} block={block} projectId={projectId} workspaceContext={workspaceContext}
             onOpenGallery={() => setGalleryOpen(true)}
-            approval={confirming ? <section className={styles.questionPanel} aria-label={t('blockout.useForDesign')}><p className={styles.approvalHint}>{t('blockout.approvalDraftHint')}</p><QuestionFormView form={{ id: 'accept-blockout', title: t('blockout.useForDesign'), questions: [{ id: 'decision', type: 'radio', label: t('blockout.acceptQuestion'), required: true, options: [{ value: 'accept', label: t('blockout.acceptYes') }, { value: 'revise', label: t('blockout.acceptNo') }] }] }} interactive autoContinueAfterTimeout={false} submitDisabled={saving} onSubmit={async (_text, answers) => {
-              if (answers.decision !== 'accept') { setConfirming(false); return; }
+            // The engineer already chose Move to design: this asks only to confirm, so it is two buttons rather than a form.
+            approval={confirming ? <section className={styles.questionPanel} aria-label={t('blockout.useForDesign')}><strong className={styles.questionLabel}>{t('blockout.useForDesign')}</strong><p className={styles.approvalHint}>{t('blockout.approvalDraftHint')}</p><div className={styles.approvalActions}><Button variant="primary" disabled={saving} onClick={async () => {
               const current = draft.current;
               if (!current) return;
               const status = getBlockoutPageBudgetStatus(current); if (status.over > 0 || status.unfilled > 0) { setConfirming(false); setView('overview'); return; }
               const next = { ...current, approval: { variantId: current.activeVariantId, acceptedAt: new Date().toISOString() }, needsReadaptation: false };
               if (!await persist(next, true)) return; draft.current = next; dirty.current = false; setSaved(true); setDoc(next); setConfirming(false); onPhaseChange?.('design');
               publishHandoff(t('blockout.handoffDesign', { title: next.title || t('blockout.document') }), 'design'); onClose();
-            }} /></section> : undefined}
+            }}>{t('blockout.acceptYes')}</Button><Button variant="secondary" disabled={saving} onClick={() => setConfirming(false)}>{t('blockout.acceptNo')}</Button></div></section> : undefined}
             question={questionHere && (question?.target.blockId ? question.target.blockId === block?.id : !block) ? question : null} busy={saving} onPage={patchPage} onBlock={patchBlock} onPageSelect={() => setSelectedBlock(null)}
             onAnswer={async (text, answers, source, files) => {
               if (!question || !questionFound) return;

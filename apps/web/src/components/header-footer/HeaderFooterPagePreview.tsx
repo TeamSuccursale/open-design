@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { headerFooterDateText, renderAppliedHeaderFooterSvg, type HeaderFooterAsset, type HeaderFooterBlock, type HeaderFooterVariant } from '@open-design/contracts';
-import { changeRecurringBlockSize, fitRecurringPageWidth, recurringBlockOutsideSafeArea, snapRecurringGeometry } from './geometry';
+import { changeRecurringBlockSize, fitRecurringPageWidth, printRecurringPageWidth, recurringBlockOutsideSafeArea, snapRecurringGeometry } from './geometry';
 import styles from './HeaderFooterWorkspace.module.css';
 
 const fieldLabels: Record<string, string> = { projectName: 'Nome progetto', documentName: 'Nome documento', pageNumber: '1', totalPages: '—', revision: '1' };
@@ -8,13 +8,14 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
   variant: HeaderFooterVariant; assets: readonly HeaderFooterAsset[]; selectedId?: string | null;
   onSelect?: (id: string | null) => void; onTransform?: (id: string, change: Pick<HeaderFooterBlock, 'x' | 'y' | 'width' | 'height'>) => void;
   structural?: boolean; snap?: boolean; highlight?: { region?: 'header' | 'footer'; blockId?: string }; projectName?: string; documentName?: string;
-  header?: boolean; footer?: boolean; italian?: boolean; fit?: boolean; zoom?: number;
+  header?: boolean; footer?: boolean; italian?: boolean; fit?: boolean; zoom?: number | 'print';
   totalPages?: number | null; pageIndex?: number; visibleNumber?: number | null; revision?: number; appliedAt?: string; isCover?: boolean;
 }) {
   const paperRef = useRef<HTMLDivElement>(null); const [fitWidth, setFitWidth] = useState<number | undefined>();
   // A draft not yet applied previews today's date: the day its revision will carry once approved.
   const stamp = appliedAt ?? new Date().toISOString();
   useEffect(() => {
+    if (zoom === 'print') { setFitWidth(printRecurringPageWidth(variant.pageWidthMm)); return; }
     const container = paperRef.current?.parentElement; if (!fit || !container) return;
     const measure = () => { const bounds = container.getBoundingClientRect(); const computed = getComputedStyle(container); const width = bounds.width - parseFloat(computed.paddingLeft || '0') - parseFloat(computed.paddingRight || '0'), height = bounds.height - parseFloat(computed.paddingTop || '0') - parseFloat(computed.paddingBottom || '0'); if (width > 0 && height > 0) setFitWidth(fitRecurringPageWidth(width, height, variant.pageWidthMm, variant.pageHeightMm, zoom)); };
     measure(); if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', measure); return () => window.removeEventListener('resize', measure); }

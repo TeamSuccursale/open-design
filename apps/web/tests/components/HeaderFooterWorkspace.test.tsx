@@ -56,7 +56,7 @@ function deferredPreviewImages() {
 }
 
 describe('header and footer logo readiness gate', () => {
-  const approval = () => screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.') as HTMLInputElement;
+  const approval = () => screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.') as HTMLInputElement;
   const apply = () => screen.getByRole('button', { name: 'Applica intestazione e piè di pagina' }) as HTMLButtonElement;
 
   it('blocks approval and the publish handler while decode is pending', async () => {
@@ -187,7 +187,7 @@ describe('header and footer workflow', () => {
     expect(screen.getByTestId('header-footer-canonical-graphics').querySelector('image')?.getAttribute('href')).toBe('/logo.svg'); expect(screen.getByRole('button', { name: 'Intestazione: Logo dello studio' })).toBeTruthy(); expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Salva bozza' }));
     await waitFor(() => expect(mocks.saveHeaderFooterDraft).toHaveBeenCalled());
-    const confirm = screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.') as HTMLInputElement;
+    const confirm = screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.') as HTMLInputElement;
     await waitFor(() => expect(confirm.disabled).toBe(false));
     const apply = screen.getByRole('button', { name: 'Applica intestazione e piè di pagina' }) as HTMLButtonElement;
     expect(apply.disabled).toBe(true); fireEvent.click(confirm); fireEvent.click(apply);
@@ -278,7 +278,7 @@ describe('header and footer workflow', () => {
     set.draft.variants[0]!.blocks.push({ id: 'rule', region: 'footer', kind: 'rule', x: .1, y: .1, width: .8, height: .02 });
     mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
     mount();
-    expect(await screen.findByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.')).toBeTruthy();
+    expect(await screen.findByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Rivedi la proposta' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Piè di pagina: Separatore' })).toBeTruthy();
     expect(screen.getByTestId('header-footer-canonical-graphics')).toBeTruthy();
@@ -301,7 +301,7 @@ describe('header and footer workflow', () => {
     expect(scope.textContent).toContain('Relazione tecnica B'); expect(scope.textContent).toContain('Fascicolo grafico B');
     // The other document's version is reached through the document picker; a format switch alone keeps this document's name and pages.
     expect(screen.getByText(/scegli in alto l’altro documento per vedere la sua versione/)).toBeTruthy();
-    const confirm = screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.') as HTMLInputElement;
+    const confirm = screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.') as HTMLInputElement;
     await waitFor(() => expect(confirm.disabled).toBe(false)); fireEvent.click(confirm);
     fireEvent.click(screen.getByRole('button', { name: 'Applica intestazione e piè di pagina' }));
     await waitFor(() => expect(mocks.applyHeaderFooterSet).toHaveBeenCalledWith('project', 'booklet', expect.objectContaining({ setId: 'studio', revision: 1, followUpdates: true, header: false, footer: true }), undefined));
@@ -363,7 +363,7 @@ describe('header and footer workflow', () => {
     const changed = workspace(); changed.sets[0]!.draft.stage = 'graphic'; changed.sets[0]!.draftVersion = 2; mocks.getHeaderFooterWorkspace.mockResolvedValue(changed);
     view.rerender(<I18nProvider initial="it"><HeaderFooterWorkspace projectId="project" documentId="report" startAt="editor" busy={false} onClose={vi.fn()} /></I18nProvider>);
     expect(await screen.findByText('Composizione aggiornata dall’agente. Controlla la nuova bozza prima di applicarla.')).toBeTruthy();
-    expect(screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.')).toBeTruthy(); expect(screen.getByTestId('header-footer-canonical-graphics')).toBeTruthy(); expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.')).toBeTruthy(); expect(screen.getByTestId('header-footer-canonical-graphics')).toBeTruthy(); expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
   });
   it('preserves local edits and warns about the concurrent agent revision', async () => {
     mount({ startAt: 'editor' }); fireEvent.click(await screen.findByRole('button', { name: 'Modello' })); fireEvent.change(screen.getByLabelText('Indicazioni'), { target: { value: 'Mia indicazione locale.' } });
@@ -383,8 +383,8 @@ describe('header and footer workflow', () => {
     mount(); expect(await screen.findByText(/Aggiornamento da completare.*Unsupported page geometry/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Correggi il modello in attesa' }));
     expect(screen.getByTestId('header-footer-canonical-graphics')).toBeTruthy();
-    await waitFor(() => expect(screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.')).toBeEnabled());
-    fireEvent.click(screen.getByLabelText('Ho controllato la vera anteprima grafica e approvo questa revisione.'));
+    await waitFor(() => expect(screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.')).toBeEnabled());
+    fireEvent.click(screen.getByLabelText('Ho controllato intestazione e piè di pagina e approvo questa revisione.'));
     fireEvent.click(screen.getByRole('button', { name: 'Applica intestazione e piè di pagina' }));
     await waitFor(() => expect(mocks.publishHeaderFooterSet).toHaveBeenCalledWith('project', 'studio', expect.objectContaining({ stage: 'graphic-approved', expectedDraftVersion: 7 }), undefined));
   });
@@ -536,6 +536,21 @@ describe('header and footer workflow', () => {
     expect(screen.getByTestId('header-footer-page').getAttribute('data-page-index')).toBe('1'); expect(screen.getByRole('button', { name: 'Piè di pagina: 1' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Pagina da controllare'), { target: { value: '0' } }); expect(screen.getByTestId('header-footer-page').getAttribute('data-cover')).toBe('true'); expect(screen.queryByTestId('header-footer-block-logo')).toBeNull(); expect(screen.getByTestId('header-footer-canonical-graphics').querySelector('image')).toBeNull();
     fireEvent.change(screen.getByLabelText('Pagina da controllare'), { target: { value: '7' } }); expect(screen.getByRole('button', { name: 'Piè di pagina: 7' })).toBeTruthy(); expect(mocks.publishHeaderFooterSet).not.toHaveBeenCalled();
+  });
+  it('offers a print-size zoom, so the texts can be read at the size they will print', async () => {
+    // At "Adatta" an A4 page is about 240 px wide and 10 pt footer text renders about 4 px tall.
+    const state = workspace(); state.sets[0]!.draft.stage = 'graphic'; mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount({ startAt: 'editor', totalPages: 8 }); const zoom = await screen.findByLabelText('Zoom della pagina') as HTMLSelectElement;
+    fireEvent.change(zoom, { target: { value: 'print' } });
+    expect(parseFloat(screen.getByTestId('header-footer-page').style.width)).toBeCloseTo(210 * 96 / 25.4);
+    expect(screen.getByText(/100% stampa/, { selector: 'option' })).toBeTruthy();
+  });
+  it('prints as total the number the last page carries when the cover stays out of the sequence', async () => {
+    // Flow run 27 Oct 2026: 8 pages with the cover excluded from numbering read "Pagina 7 di 8" on the last page.
+    const state = workspace(); state.documents[0]!.presentation = { ...createDocumentPresentation('Relazione tecnica B'), cover: true, pageNumbers: true, numberOnCover: false, coverCountsInNumbering: false }; state.sets[0]!.draft.stage = 'graphic'; state.sets[0]!.draft.variants[0]!.blocks.push({ id: 'total', region: 'footer', kind: 'field', field: 'totalPages', x: .8, y: .2, width: .1, height: .5 }); mocks.getHeaderFooterWorkspace.mockResolvedValue(state);
+    mount({ startAt: 'editor', totalPages: 8 }); await screen.findByLabelText('Pagina da controllare');
+    fireEvent.change(screen.getByLabelText('Pagina da controllare'), { target: { value: '7' } });
+    expect(screen.getByTestId('header-footer-block-total').getAttribute('aria-label')).toBe('Piè di pagina: 7');
   });
   it('offers the next named unconfigured document after an applied design instead of an ambiguous return', async () => {
     const state = workspace(), set = state.sets[0]!; set.draft.stage = 'graphic'; set.draft.guidance = set.publishedRevision!.guidance; state.bindings[0]!.snapshot = structuredClone(set.publishedRevision);

@@ -7,7 +7,7 @@ import path from 'node:path';
 import {
   BLOCKOUT_START_PATH, documentSetupPath, DOCUMENT_SETUP_DELIVERABLE_SCOPE, ENGINEER_GRAPHICS_SKILL_SCOPE,
   DocumentSetupConfirmationSchema, DocumentSetupIntentSchema, DocumentSetupSchema, DocumentSetupSavedBriefConfirmationSchema, DocumentPresentationSchema, documentPresentationMissingChoices,
-  createBlockoutDocument, createBlockoutPage, deriveBlockoutPageBudget, renderDocumentSetupConfirmationForm, type DocumentSetupConfirmation,
+  createBlockoutDocument, createBlockoutPage, deriveBlockoutPageBudget, renderDocumentSetupConfirmationForm, withoutXmlForbiddenCharacters, type DocumentSetupConfirmation,
   type DocumentContextSource, type DocumentLayoutConstraint, type DocumentSetup,
   type DocumentSetupIntent, type DocumentProjectContext, type DocumentContextScan, type DocumentTextContext, type ProjectMetadata,
 } from '@open-design/contracts';
@@ -280,6 +280,12 @@ function markConflicts(constraints: DocumentLayoutConstraint[]): DocumentLayoutC
   return constraints;
 }
 
+/** Extracted text reaches both prompt paths; OD Next's strict XML refuses a whole context over one stray PDF character. */
+function withoutForbiddenSourceCharacters(text: DocumentContextText): DocumentContextText {
+  return { ...text, pages: text.pages.map((page) => ({ ...page, excerpt: withoutXmlForbiddenCharacters(page.excerpt) })),
+    ...(text.documents ? { documents: text.documents.map((document) => ({ ...document, text: withoutXmlForbiddenCharacters(document.text) })) } : {}) };
+}
+
 async function scanContextSources(root: string, intent: DocumentSetupIntent, projectContexts: DocumentProjectContext[], reader?: (files: string[]) => Promise<DocumentContextText>): Promise<DocumentContextScan> {
     const roots = [...new Set([await realpath(root), ...intent.contextRoots, ...projectContexts.map((entry) => entry.workingDirectory)])];
     const discovery = await discover(roots, intent);
@@ -290,7 +296,7 @@ async function scanContextSources(root: string, intent: DocumentSetupIntent, pro
         return { ...candidate, file };
       } catch { discovery.warnings.push(`Documento non accessibile nella cartella autorizzata: ${candidate.relative}`); return null; }
     }))).filter((candidate): candidate is Candidate => candidate !== null);
-    const extracted = reader ? await reader(discovery.candidates.map((candidate) => candidate.file)) : await extractText(discovery.candidates);
+    const extracted = withoutForbiddenSourceCharacters(reader ? await reader(discovery.candidates.map((candidate) => candidate.file)) : await extractText(discovery.candidates));
     const sources: DocumentContextSource[] = extracted.pages.slice(0, 100).map((page) => {
       const candidate = discovery.candidates.find((entry) => entry.file === page.file)!;
       return { id: `source-${identity(`${page.file}:${page.page}`)}`, path: candidate.relative, root: candidate.root,
@@ -565,6 +571,6 @@ export async function prepareDocumentSetupContextFiles(root: string, projectId?:
 }
 export function renderFrozenDocumentSetupContext(files: readonly { mediaType: string; content: Buffer }[]): string {
   const latest = files.filter((file) => file.mediaType === 'text/plain' && file.content.length <= MAX_SETUP_BYTES)
-    .map((file) => file.content.toString('utf8')).filter((text) => text.startsWith(OPEN) && text.endsWith(CLOSE)).at(-1);
+    .map((file) => withoutXmlForbiddenCharacters(file.content.toString('utf8'))).filter((text) => text.startsWith(OPEN) && text.endsWith(CLOSE)).at(-1);
   return latest ? `<od-next-context kind="fact" name="confirmed-document-setup">\n${latest.replace(/<\/od-next-context>/gi, '&lt;/od-next-context>')}\n</od-next-context>` : '';
 }

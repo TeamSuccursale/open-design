@@ -6,7 +6,7 @@ import path from 'node:path';
 import { PDFDict, PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BlockoutDocumentSchema, DOCUMENT_SETUP_CONFIRMATION_FORM, type DocumentContextSource, type DocumentSetupIntent, type ProjectMetadata } from '@open-design/contracts';
+import { assertCanonicalXmlText, BlockoutDocumentSchema, DOCUMENT_SETUP_CONFIRMATION_FORM, type DocumentContextSource, type DocumentSetupIntent, type ProjectMetadata } from '@open-design/contracts';
 import { confirmDocumentSetup as confirmDocumentSetupRaw, confirmedBlockoutDispatch, documentSetupRunGate, extractLayoutConstraints, loadDocumentSetupContext,
   prepareDocumentSetupContextFiles, readDocumentSetup, renderFrozenDocumentSetupContext,
   saveDocumentSetupIntent, scanDocumentSetupContext, type DocumentContextText } from '../src/services/document-setup.js';
@@ -430,6 +430,25 @@ describe('guided document setup', () => {
     expect(await documentSetupRunGate(root, undefined, undefined, 'design')).toBeNull();
   });
 
+  it('keeps characters XML 1.0 forbids out of the saved source text, so OD Next can carry it', async () => {
+    // A tender PDF read on 27 Oct 2026 gave "DELL'OF￾FERTA"; OD Next refused the frozen context on every run.
+    const root = await folder(); await writeFile(path.join(root, 'disciplinare.pdf'), 'pdf');
+    const dirty = 'Schede grafiche - Formato A3 B CARATTERISTICHE METODOLOGICHE DELL’OF￾FERTA\f massimo 4 pagine';
+    const reader = async (files: string[]): Promise<DocumentContextText> => ({ pages: [{ file: files[0]!, page: 37, excerpt: dirty, readable: true }], warnings: [], pagesRead: 1, pagesTotal: 1,
+      documents: [{ file: files[0]!, text: dirty, pagesRead: 1, pagesTotal: 1, complete: true, truncated: false }] });
+    await saveDocumentSetupIntent(root, intent);
+    const scan = await scanDocumentSetupContext(root, null, reader);
+    expect(scan.scan.sources[0]!.excerpt).toContain('DELL’OFFERTA');
+    const saved = await readFile(path.join(root, scan.scan.textDocuments![0]!.textPath), 'utf8');
+    expect(saved).toContain('DELL’OFFERTA');
+    expect(saved).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/);
+  });
+  it('keeps already saved setups with a stray PDF character usable by OD Next', () => {
+    const frozen = Buffer.from('<document-setup-reference>\nDELL’OF￾FERTA\f\n</document-setup-reference>');
+    const rendered = renderFrozenDocumentSetupContext([{ mediaType: 'text/plain', content: frozen }]);
+    expect(rendered).toContain('DELL’OFFERTA');
+    expect(() => assertCanonicalXmlText(rendered, 'stable_request_context')).not.toThrow();
+  });
   it('saves complete searchable TXT/DOCX text beyond short findings and freezes it privately without image intake', async () => {
     const root = await folder();
     const original = `Formato A4, massimo 8 pagine.\n${'Testo tecnico da conservare. '.repeat(80)}\nUna conclusione lontana dagli estratti di formattazione.`;

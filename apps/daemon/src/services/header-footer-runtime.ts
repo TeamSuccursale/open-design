@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
-import { AppliedHeaderFooterSchema, assessBlockoutStructure, blockoutOutsideSafeArea, documentPresentationPageState, fitBlockoutPageToReserve, headerFooterReservations, headerFooterVariantForFormat, renderAppliedHeaderFooterSvg,
+import { AppliedHeaderFooterSchema, assessBlockoutStructure, blockoutOutsideSafeArea, documentPresentationPageState, documentPresentationPrintedTotal, fitBlockoutPageToReserve, headerFooterReservations, headerFooterVariantForFormat, renderAppliedHeaderFooterSvg,
   type AppliedHeaderFooter, type BlockoutDocument, type BlockoutReserveAdjustment, type HeaderFooterBinding, type HeaderFooterRevision, type HeaderFooterPageContext, type ProjectDocument } from '@open-design/contracts';
 import { getProject, type openDatabase } from '../db.js';
 import { resolveProjectDir } from '../projects.js';
@@ -116,10 +116,13 @@ export class HeaderFooterRuntime {
     }
     return [...new Map(formats.map((format) => [`${format.widthMm}:${format.heightMm}`, format])).values()];
   }
+  /** Derived files are rewritten only when their bytes change: a re-apply of the same revision must not look like new run output. */
   private async write(root: string, relative: string, bytes: string | Buffer): Promise<void> {
     const parent = path.posix.dirname(relative);
     if (parent !== '.') await containedIntakePath(root, parent, true);
     const destination = await containedIntakePath(root, relative), temporary = `${destination}.${randomUUID()}.tmp`;
+    const current = await readFile(destination).catch(() => null);
+    if (current?.equals(typeof bytes === 'string' ? Buffer.from(bytes) : bytes)) return;
     await withProjectHistoryMutation({ root, paths: [relative] }, async () => {
       try { await writeFile(temporary, bytes, { flag: 'wx' }); await replaceFileAtomically(temporary, destination); }
       finally { await rm(temporary, { force: true }); }
@@ -168,7 +171,7 @@ export class HeaderFooterRuntime {
     }
     if (applied) {
       const variant = applied.design.variants[0]!;
-      const svg = renderAppliedHeaderFooterSvg(applied, { widthMm: variant.pageWidthMm, heightMm: variant.pageHeightMm, documentName: document.name, index: 0, totalPages: previous.document?.variants[0]?.pages.length ?? 1, visibleNumber: 1,
+      const svg = renderAppliedHeaderFooterSvg(applied, { widthMm: variant.pageWidthMm, heightMm: variant.pageHeightMm, documentName: document.name, index: 0, totalPages: documentPresentationPrintedTotal(document.presentation, previous.document?.variants[0]?.pages.length ?? 1), visibleNumber: 1,
         assetUrl: (file) => path.posix.relative(folder, file) });
       await this.write(root, `${folder}/preview.html`, `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(document.name)} · Intestazione e piè di pagina</title><style>body{margin:0;background:#f4f1e9;font-family:Arial,sans-serif;padding:24px}main{position:relative;background:white;max-width:900px;margin:auto;aspect-ratio:${variant.pageWidthMm}/${variant.pageHeightMm}}svg{position:absolute;inset:0}p{padding:12%;color:#54645b}</style></head><body><h1>${escape(document.name)}</h1><p>Intestazione e piè di pagina applicati · revisione ${applied.revision}. Il corpo resta disponibile per il Blockout.</p><main>${svg}</main></body></html>`);
       needsReview = await this.materializeHtml(root, document, applied) || needsReview;
@@ -287,7 +290,7 @@ export class HeaderFooterRuntime {
           if (!headerFooterVariantForFormat(applied.design.variants, widthMm, heightMm)) throw new HeaderFooterError(`Aggiungi una variante per ${widthMm} × ${heightMm} mm prima di aggiornare ${path.basename(file)}.`, 409, 'HEADER_FOOTER_FORMAT_REQUIRED');
           const pageRole = node.attr('data-page-role');
           const pageState = documentPresentationPageState(document.presentation, { index, ...(pageRole ? { role: pageRole } : {}) });
-          const svg = renderAppliedHeaderFooterSvg(applied, { widthMm, heightMm, documentName: document.name, index, totalPages: pages.length, isCover: pageState.isCover, visibleNumber: pageState.visibleNumber,
+          const svg = renderAppliedHeaderFooterSvg(applied, { widthMm, heightMm, documentName: document.name, index, totalPages: documentPresentationPrintedTotal(document.presentation, pages.length), isCover: pageState.isCover, visibleNumber: pageState.visibleNumber,
             assetUrl: (asset) => unix(path.relative(path.dirname(file), path.join(root, asset))) });
           const next = $('<div data-melillodesign-recurring-region></div>').attr('data-header-footer-set', applied.setId ?? 'independent').attr('data-header-footer-revision', String(applied.revision)).attr('style', 'position:absolute;inset:0;pointer-events:none').html(svg);
           next.attr('data-content-hash', createHash('sha256').update(next.html() ?? '').digest('hex'));

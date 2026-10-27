@@ -18,7 +18,7 @@
 // this machine.
 
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import type { OdNextRolloutMode } from '@open-design/contracts';
@@ -928,6 +928,26 @@ function assertWritableControlValues(partial: Record<string, unknown>): void {
   );
 }
 
+/**
+ * Windows refuses to replace a file another process holds open (an indexer, an antivirus, a concurrent reader) with
+ * EPERM, EBUSY or EACCES, usually for a few milliseconds. Retry briefly; if it still fails, remove the temporary
+ * file so a failed save leaves nothing behind.
+ */
+async function replaceWithRetry(tmp: string, file: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(tmp, file); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt < 6 && (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')) {
+        await new Promise((resolve) => setTimeout(resolve, 15 * 2 ** attempt));
+        continue;
+      }
+      await unlink(tmp).catch(() => undefined);
+      throw error;
+    }
+  }
+}
+
 async function doWrite(
   dataDir: string,
   partial: Record<string, unknown>,
@@ -948,7 +968,7 @@ async function doWrite(
   await mkdir(path.dirname(file), { recursive: true });
   const tmp = file + '.' + randomBytes(4).toString('hex') + '.tmp';
   await writeFile(tmp, JSON.stringify(normalizedNextWithoutRetiredAgents, null, 2), 'utf8');
-  await rename(tmp, file);
+  await replaceWithRetry(tmp, file);
   for (const observer of configObservers.get(dataDir) ?? []) {
     try { observer(); } catch { /* preference persistence must not depend on background consumers */ }
   }

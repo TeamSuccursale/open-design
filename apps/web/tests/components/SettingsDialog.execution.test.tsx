@@ -6053,6 +6053,22 @@ describe('SettingsDialog about interactions', () => {
     ))).toBe(false);
   });
 
+  it('names the source build, so a screenshot of About identifies it', () => {
+    renderSettingsDialog(
+      { mode: 'daemon', agentId: 'codex' },
+      {
+        initialSection: 'about',
+        appVersionInfo: {
+          version: '0.25.1', channel: 'development', packaged: false, platform: 'win32', arch: 'x64',
+          build: { commit: 'a0f9af34', tag: 'team-r1', localChanges: true },
+        },
+      },
+    );
+
+    expect(screen.getByText('Build')).toBeTruthy();
+    expect(screen.getByText('team-r1 · a0f9af34 · with local changes')).toBeTruthy();
+  });
+
   it('renders the unavailable fallback when app version info is missing', () => {
     renderSettingsDialog(
       { mode: 'daemon', agentId: 'codex' },

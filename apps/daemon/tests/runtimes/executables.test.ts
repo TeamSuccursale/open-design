@@ -1,4 +1,5 @@
 import { test } from 'vitest';
+import { utimesSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import {
   assert, chmodSync, claude, codex, deepseek, join, minimalAgentDef, mkdirSync, mkdtempSync, resolveAgentExecutable, rmSync, tmpdir, withEnvSnapshot, withPlatform, writeFileSync,
@@ -822,10 +823,71 @@ fsTest(
   },
 );
 
-// On non-darwin platforms there is no app bundle to probe, so the candidate
-// list must be empty regardless of home override.
-fsTest('codexAppBundleCandidates is empty on non-darwin platforms', () => {
+// Linux has no app install to probe, so the candidate list must be empty
+// regardless of home override. Windows is covered by the LocalAppData tests.
+fsTest('codexAppBundleCandidates is empty on Linux', () => {
   return withPlatform('linux', () => {
     assert.deepEqual(codexAppBundleCandidates(), []);
   });
+});
+
+// The Windows Codex app (a Store package) unpacks its CLI into a per-build
+// folder, %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe, and does not put it
+// on PATH. A sibling folder can hold only helpers such as rg.exe, and an update
+// leaves the previous build's folder behind, so the newest codex.exe must win.
+// Without this every Windows install needs CODEX_BIN pinned by hand, and the
+// pin breaks at the next Codex update.
+function writeCodexAppBuild(home: string, hash: string, file: string, mtime: Date): string {
+  const dir = join(home, 'AppData', 'Local', 'OpenAI', 'Codex', 'bin', hash);
+  mkdirSync(dir, { recursive: true });
+  const target = join(dir, file);
+  writeFileSync(target, '');
+  utimesSync(target, mtime, mtime);
+  return target;
+}
+
+test('resolveAgentExecutable finds the newest Codex app CLI under LocalAppData on Windows', () => {
+  const home = mkdtempSync(join(tmpdir(), 'od-codex-windows-app-'));
+  try {
+    return withEnvSnapshot(['PATH', 'PATHEXT', 'OD_AGENT_HOME', 'OD_SANDBOX_MODE', 'OD_DATA_DIR'], () =>
+      withPlatform('win32', () => {
+        writeCodexAppBuild(home, '2d8a5d5756dbf318', 'rg.exe', new Date('2026-10-23T08:25:15Z'));
+        writeCodexAppBuild(home, '1a2b3c4d5e6f7081', 'codex.exe', new Date('2026-09-02T10:00:00Z'));
+        const newest = writeCodexAppBuild(home, '37f54d68e5533a51', 'codex.exe', new Date('2026-10-23T08:25:14Z'));
+        delete process.env.OD_SANDBOX_MODE;
+        delete process.env.OD_DATA_DIR;
+        process.env.OD_AGENT_HOME = home;
+        process.env.PATH = '';
+        process.env.PATHEXT = '.EXE';
+
+        assert.equal(resolveAgentExecutable(codex), newest);
+      }),
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a PATH codex outranks the Windows Codex app CLI', () => {
+  const home = mkdtempSync(join(tmpdir(), 'od-codex-windows-app-precedence-'));
+  try {
+    return withEnvSnapshot(['PATH', 'PATHEXT', 'OD_AGENT_HOME', 'OD_SANDBOX_MODE', 'OD_DATA_DIR'], () =>
+      withPlatform('win32', () => {
+        writeCodexAppBuild(home, '37f54d68e5533a51', 'codex.exe', new Date('2026-10-23T08:25:14Z'));
+        const pathBin = join(home, 'path-bin');
+        mkdirSync(pathBin, { recursive: true });
+        const pathCodex = join(pathBin, 'codex.EXE');
+        writeFileSync(pathCodex, '');
+        delete process.env.OD_SANDBOX_MODE;
+        delete process.env.OD_DATA_DIR;
+        process.env.OD_AGENT_HOME = home;
+        process.env.PATH = pathBin;
+        process.env.PATHEXT = '.EXE';
+
+        assert.equal(resolveAgentExecutable(codex), pathCodex);
+      }),
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
