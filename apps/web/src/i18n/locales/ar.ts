@@ -3952,6 +3952,8 @@ export const ar: Dict = {
   'chat.runError.actionBlocked.busy': "لا تزال هناك مهمة قيد التشغيل في هذه المحادثة. ستتاح إعادة المحاولة بعد انتهائها.",
   'chat.support.channel.feishu': "مجتمع Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "مطوّر MelilloDesign (GitHub)",
+  'chat.support.openReport': "الإبلاغ عن مشكلة",
   'chat.amrBalanceOwner.title': 'رصيد الفريق غير كافٍ',
   'chat.amrBalanceOwner.message': 'رصيد الفريق غير كافٍ. اطلب من مسؤول الفريق شحن الرصيد أو ترقية الاشتراك.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'رصيد الفريق غير كافٍ. اطلب من مسؤول الفريق شحن الرصيد أو ترقية الاشتراك.',

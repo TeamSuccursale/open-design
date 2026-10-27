@@ -3952,6 +3952,8 @@ export const fa: Dict = {
   'chat.runError.actionBlocked.busy': "در این گفت‌وگو هنوز یک کار در حال اجراست. پس از پایان آن می‌توانید دوباره تلاش کنید.",
   'chat.support.channel.feishu': "انجمن Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "توسعه‌دهنده MelilloDesign (GitHub)",
+  'chat.support.openReport': "گزارش مشکل",
   'chat.amrBalanceOwner.title': 'موجودی تیم کافی نیست',
   'chat.amrBalanceOwner.message': 'موجودی تیم کافی نیست. از مدیر تیم بخواهید موجودی را شارژ کند یا اشتراک را ارتقا دهد.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'موجودی تیم کافی نیست. از مدیر تیم بخواهید موجودی را شارژ کند یا اشتراک را ارتقا دهد.',

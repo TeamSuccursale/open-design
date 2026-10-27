@@ -20,6 +20,8 @@ export interface SupportChannel {
   name: string;
   href: string;
   icon: ReactElement;
+  /** The row's button text; a community channel defaults to «join». */
+  actionLabel?: string;
 }
 
 export interface SupportDialogProps {
@@ -85,7 +87,7 @@ export function SupportDialog({ channels, onClose, inline }: SupportDialogProps)
                 size="sm"
                 onClick={() => window.open(channel.href, '_blank', 'noopener,noreferrer')}
               >
-                {t('chat.support.join')}
+                {channel.actionLabel ?? t('chat.support.join')}
               </Button>
             </div>
           ))}

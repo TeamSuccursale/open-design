@@ -3939,6 +3939,8 @@ export const it: Dict = {
   'chat.runError.actionBlocked.busy': "In questa conversazione c'è ancora un'attività in corso. Potrai riprovare quando sarà terminata.",
   'chat.support.channel.feishu': "Community Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Sviluppatore di MelilloDesign (GitHub)",
+  'chat.support.openReport': "Apri segnalazione",
   'chat.amrBalanceOwner.title': 'Saldo del team insufficiente',
   'chat.amrBalanceOwner.message': 'Il saldo del team è insufficiente. Chiedi all’amministratore del team di ricaricare o aggiornare l’abbonamento.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Il saldo del team è insufficiente. Chiedi all’amministratore del team di ricaricare o aggiornare l’abbonamento.',

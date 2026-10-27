@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppliedHeaderFooterSchema, headerFooterDateText, headerFooterReservations, renderAppliedHeaderFooterSvg } from '../src/api/header-footer-presentation.js';
+import { AppliedHeaderFooterSchema, fillHeaderFooterText, headerFooterDateText, headerFooterReservations, renderAppliedHeaderFooterSvg } from '../src/api/header-footer-presentation.js';
 import { blockoutOutsideSafeArea, blockoutSafeArea } from '../src/api/blockout-geometry.js';
 import { createBlockoutPage } from '../src/api/blockout.js';
 
@@ -34,6 +34,15 @@ describe('applied recurring graphics', () => {
     const svg = renderAppliedHeaderFooterSvg(design, { widthMm: 210, heightMm: 297, documentName: 'Report', index: 0, totalPages: 8, visibleNumber: 1 });
     expect(svg).toContain('>24/10/2026</tspan>'); expect(svg).not.toContain('2026-10-24');
     expect(headerFooterDateText('2026-10-24T12:00:00.000Z')).toBe('24/10/2026');
+  });
+  // Run 3 of 27 October printed «pagina 3 / 8» as four boxes, each aligned inside its own width, so the
+  // gaps between number and words depended on the box widths. One text block now carries the fields.
+  it('fills field placeholders inside a text block, so a numbering phrase prints as one line', () => {
+    const design = structuredClone(applied);
+    design.design.variants[0]!.blocks.push({ id: 'numbering', region: 'footer', kind: 'text', text: 'Pagina {pageNumber} di {totalPages} · {documentName} {sconosciuto}', x: .5, y: .3, width: .45, height: .4, align: 'right' });
+    const svg = renderAppliedHeaderFooterSvg(design, { widthMm: 210, heightMm: 297, documentName: 'Relazione <B>', index: 2, totalPages: 8, visibleNumber: 3 });
+    expect(svg).toContain('>Pagina 3 di 8 · Relazione &lt;B&gt; {sconosciuto}</tspan>');
+    expect(fillHeaderFooterText('{projectName} — rev. {revision}, {date}', { projectName: 'Antro', revision: '2', date: '24/10/2026' })).toBe('Antro — rev. 2, 24/10/2026');
   });
   it('never stretches an A4 design into an unsupported A3 format', () => {
     expect(renderAppliedHeaderFooterSvg(applied, { widthMm: 420, heightMm: 297, documentName: 'Booklet', index: 0, totalPages: 4 })).toBe('');

@@ -4895,6 +4895,8 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   'chat.runError.actionBlocked.busy': string;
   'chat.support.channel.feishu': string;
   'chat.support.channel.discord': string;
+  'chat.support.channel.developer': string;
+  'chat.support.openReport': string;
   'chat.amrBalanceOwner.title': string;
   /** {name} = the workspace owner's display name. */
   'chat.amrBalanceOwner.message': string;

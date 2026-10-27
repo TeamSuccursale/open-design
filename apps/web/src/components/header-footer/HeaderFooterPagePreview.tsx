@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
-import { headerFooterDateText, renderAppliedHeaderFooterSvg, type HeaderFooterAsset, type HeaderFooterBlock, type HeaderFooterVariant } from '@open-design/contracts';
+import { HEADER_FOOTER_FIELDS, fillHeaderFooterText, headerFooterDateText, renderAppliedHeaderFooterSvg, type HeaderFooterAsset, type HeaderFooterBlock, type HeaderFooterVariant } from '@open-design/contracts';
 import { changeRecurringBlockSize, fitRecurringPageWidth, printRecurringPageWidth, recurringBlockOutsideSafeArea, snapRecurringGeometry } from './geometry';
 import styles from './HeaderFooterWorkspace.module.css';
 
@@ -44,7 +44,7 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
     gesture.current = null;
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
-  function fieldText(block: HeaderFooterBlock) {
+  function fieldText(block: Pick<HeaderFooterBlock, 'field'>) {
     if (block.field === 'projectName') return projectName ?? (italian ? 'Nome progetto' : 'Project name');
     if (block.field === 'documentName') return documentName ?? (italian ? 'Nome documento' : 'Document name');
     if (block.field === 'date') return headerFooterDateText(stamp);
@@ -53,6 +53,7 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
     if (block.field === 'revision') return String(revision);
     return fieldLabels[block.field ?? ''] ?? (italian ? 'Campo dinamico' : 'Dynamic field');
   }
+  const filled = (text: string | undefined) => text && fillHeaderFooterText(text, Object.fromEntries(HEADER_FOOTER_FIELDS.map((field) => [field, fieldText({ field })])));
   return <div ref={paperRef} className={styles.paper} data-testid="header-footer-page" data-width-mm={variant.pageWidthMm} data-height-mm={variant.pageHeightMm} data-page-index={pageIndex} data-cover={isCover || undefined} style={{ aspectRatio: `${variant.pageWidthMm} / ${variant.pageHeightMm}`, ...(fitWidth ? { width: fitWidth, maxWidth: 'none' } : {}) }} onClick={(event) => { if (event.target === event.currentTarget) onSelect?.(null); }}>
     {!structural && <div className={styles.actualGraphics} data-testid="header-footer-canonical-graphics" dangerouslySetInnerHTML={{ __html: graphic }} />}
     <div className={styles.bodyPlaceholder} style={{ top: `${(header ? variant.headerHeightMm : 0) / variant.pageHeightMm * 100 + 4}%`, bottom: `${(footer ? variant.footerHeightMm : 0) / variant.pageHeightMm * 100 + 4}%` }}>
@@ -64,12 +65,12 @@ export function HeaderFooterPagePreview({ variant, assets, selectedId, onSelect,
       {edit && <><div className={styles.safeArea} aria-hidden="true" /><span className={styles.stripLabel}>{region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}</span></>}
       {variant.blocks.filter((block) => block.region === region).map((block) => {
         const asset = assets.find((item) => item.id === block.assetId);
-        return <div key={block.id} className={styles.block} role={edit ? 'button' : undefined} tabIndex={edit ? 0 : undefined} aria-label={`${region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}: ${block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.kind === 'rule' ? italian ? 'Separatore' : 'Separator' : block.text || (italian ? 'Testo' : 'Text')}`}
+        return <div key={block.id} className={styles.block} role={edit ? 'button' : undefined} tabIndex={edit ? 0 : undefined} aria-label={`${region === 'header' ? italian ? 'Intestazione' : 'Header' : italian ? 'Piè di pagina' : 'Footer'}: ${block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.kind === 'rule' ? italian ? 'Separatore' : 'Separator' : filled(block.text) || (italian ? 'Testo' : 'Text')}`}
             data-editable={edit || undefined} data-selected={selectedId === block.id || undefined} data-highlight={highlight?.blockId === block.id || undefined} data-unsafe={edit && recurringBlockOutsideSafeArea(block) || undefined} data-structural={structural || undefined} data-graphic-overlay={!structural || undefined} data-testid={`header-footer-block-${block.id}`}
           style={{ left: `${block.x * 100}%`, top: `${block.y * 100}%`, width: `${block.width * 100}%`, height: `${block.height * 100}%`, fontSize: `${(block.fontSize ?? 10) * .3528 / variant.pageWidthMm * 100}cqw`, color: block.color ?? '#243d39', justifyContent: block.align === 'right' ? 'flex-end' : block.align === 'center' ? 'center' : 'flex-start', textAlign: block.align ?? 'left' }}
           onClick={(event) => { if (edit) { event.stopPropagation(); onSelect?.(block.id); } }} onPointerDown={(event) => begin(event, block)} onPointerMove={move} onPointerUp={end} onPointerCancel={end}
           onKeyDown={(event) => { if (!edit || event.target !== event.currentTarget) return; const amount = event.shiftKey ? .025 : .005; if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); onTransform?.(block.id, { x: block.x + (event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0), y: block.y + (event.key === 'ArrowDown' ? amount : event.key === 'ArrowUp' ? -amount : 0), width: block.width, height: block.height }); } if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect?.(block.id); } }}>
-          {structural ? <span>{block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.kind === 'rule' ? italian ? 'Separatore' : 'Separator' : block.text || (italian ? 'Testo' : 'Text')}</span> : null}
+          {structural ? <span>{block.kind === 'logo' ? asset?.name ?? 'Logo' : block.kind === 'field' ? fieldText(block) : block.kind === 'rule' ? italian ? 'Separatore' : 'Separator' : filled(block.text) || (italian ? 'Testo' : 'Text')}</span> : null}
           {edit && selectedId === block.id && <span className={styles.resize} data-resize="true" aria-hidden="true" />}
         </div>;
       })}

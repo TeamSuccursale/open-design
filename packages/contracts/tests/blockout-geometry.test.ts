@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockoutPageSchema, createBlockoutPage, type BlockoutBlock } from '../src/api/blockout.js';
-import { blockoutBounds, blockoutOutsideSafeArea, blockoutSafeArea, snapBlockoutBox } from '../src/api/blockout-geometry.js';
+import { blockoutBounds, blockoutMarginOverflow, blockoutOutsideSafeArea, blockoutSafeArea, snapBlockoutBox } from '../src/api/blockout-geometry.js';
 
 describe('blockout snapping and safe margins', () => {
   it('loads older pages with a 10 mm safe margin and adapts to paper format', () => {
@@ -42,5 +42,16 @@ describe('blockout snapping and safe margins', () => {
     const snapped = snapBlockoutBox(box, page, 'moving', 'se', 1, 1, true);
     expect(snapped.box.width / snapped.box.height).toBeCloseTo(2, 2);
     expect(snapped.box.x).toBe(10); expect(snapped.box.y).toBe(10);
+  });
+});
+// Run 2's A3 plate placed «Fotografia 2» at x 73.95 % with width 22.86 %: 10.6 mm past a 24 mm margin.
+describe('how far a block runs past the page margin', () => {
+  const plate = { ...createBlockoutPage('plate', ''), widthMm: 420, heightMm: 297, safeMarginMm: 24, reservedHeaderMm: 24, reservedFooterMm: 24 };
+  it('names the side and the millimetres beyond the margin', () => {
+    const overflow = blockoutMarginOverflow({ x: 73.949, y: 55.056, width: 22.857, height: 14.141, rotation: 0 }, plate)!;
+    expect(overflow.side).toBe('right'); expect(overflow.mm).toBeCloseTo(10.6, 1);
+  });
+  it('reports nothing for a block inside the margins', () => {
+    expect(blockoutMarginOverflow({ x: 70, y: 55.056, width: 22.857, height: 14.141, rotation: 0 }, plate)).toBeNull();
   });
 });

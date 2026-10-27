@@ -90,6 +90,24 @@ Accepting the brief confirmation now shows the Blockout request about 3 s after 
 
 Checks: guard, typecheck, focused contracts, web and daemon tests, all new tests red first. The remaining failures match the base. The timing was checked live in the browser, operator-driven. See "Follow-ups fixed the same evening" in the [verification report](verification/header-footer-agent-guided-2026-10-26.md).
 
+## 27 October — night pass on the team test roadmap
+
+The coding agent worked through the [team test roadmap](../specs/current/melillodesign-team-test-roadmap.md) unattended, one local commit per item (`cd0cfefa` to the end of the night; none pushed). Two full flow runs, operator-driven and not blind, took a two-document project from a new project to its PDFs and recorded every slow, unclear or wrong step. A third, short run checked the first turns live on the final build.
+
+- **Install and update.** Codex is found on Windows without `CODEX_BIN`. `MelilloDesign.cmd` gained `doctor`, `install` and `update`, and About shows the build. `doctor` and the start command warn when the disk has less than 5 GB free: the disk filled up during run 2 and stopped the daemon.
+- **Speed.** The launcher serves the production web build: 4.2 s to a usable project page instead of 25.6 s. The history rescan no longer starts one Git process per file: 0.3 s instead of 6.8 s. In run 2 the Blockout took 7 min 04 s against 10 min 41 s, and the report's design 11 min 52 s against 14 min.
+- **PDF.** A designed document exports from the button or `od export` as a vector PDF with each page at its own paper size, using the PC's Edge or Chrome.
+- **Clarity.** The changes and their commits are listed in the [night report](verification/melillodesign-night-pass-2026-10-27.md). They include errors now in Italian, labels that say what a button does, internal files kept out of the run outputs, and a survey that no longer asks for answers nothing records.
+- **Prompts.** The agent asks the region contents together with the yes/no questions, talks about the document rather than the machinery, uses the structure names shown on screen, and asks every document's choices in one form. In run 3 the engineer answered one form where run 2 needed three; the agent's working time was about the same.
+
+Checks: focused tests for each change, all new tests red first; web, daemon, contracts and tools-dev typechecks; guard. Full suites were not run. Pre-existing failures that also occur on the base: the brand-string tests that expect "Open Design", three locale-parity tests, two `files upload` CLI tests, seven execution-record tests in `AssistantMessage` and four `ProjectView` reattach-fold tests. Still open: R5, the clean-machine rehearsal, which is the developer's; a person's page-by-page check of the PDFs at 100%; and the decisions listed in the night report.
+
+## 27 October — morning follow-up
+
+The developer approved six findings from the night report, and each became a local commit with a test that failed first (`f712fcbe` to `08d9365f`, none pushed). The rail, the panel tips and the error card no longer point to the upstream project; «Contattaci» opens the team developer's issues. A new project is one screen with one button. While a turn runs, the collapsed header repeats the agent's latest sentence or the step under way (D54). A history save starts four Git processes whatever it saves, which took the Blockout seed from 2.6 s to 0.7 s on a copy of run 3; about 5 s of run 3's 20 s wait is still unexplained. «Pagina {pageNumber} di {totalPages}» is one text block, so the numbering prints as one phrase. A designed block more than 1 mm past the page margin is refused at registration, with the block, page, side and millimetres in the message.
+
+Checks: focused tests for each change, red first; web, daemon and contracts typechecks; guard and repository typecheck at the end. The chat suites' 100 pre-existing failures and the system-prompt matrix snapshot, already about 11,000 characters off, were compared against the base and are unchanged by these commits. Details and commits are in the [night report](verification/melillodesign-night-pass-2026-10-27.md#morning-follow-up).
+
 ## Updating this diary
 
 For each subsequent meaningful commit, append its date and SHA, the user-visible change, the focused checks actually run, and any remaining failure or untested boundary. Link its detailed report instead of repeating raw logs. Record whether a walkthrough was operator-driven, blind, or synthetic, and identify any rescue action. Keep historical failures intact; link the later repair and fresh proof that supersede them.

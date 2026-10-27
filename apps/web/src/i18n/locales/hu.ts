@@ -3941,6 +3941,8 @@ export const hu: Dict = {
   'chat.runError.actionBlocked.busy': "Ebben a beszélgetésben még fut egy feladat. Az újrapróbálkozás a befejezése után lesz elérhető.",
   'chat.support.channel.feishu': "Feishu közösség",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "A MelilloDesign fejlesztője (GitHub)",
+  'chat.support.openReport': "Hiba bejelentése",
   'chat.amrBalanceOwner.title': 'Nincs elég csapategyenleg',
   'chat.amrBalanceOwner.message': 'A csapat egyenlege nem elég. Kérd meg a csapat adminisztrátorát, hogy töltse fel az egyenleget vagy frissítse az előfizetést.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'A csapat egyenlege nem elég. Kérd meg a csapat adminisztrátorát, hogy töltse fel az egyenleget vagy frissítse az előfizetést.',

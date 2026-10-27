@@ -25,6 +25,7 @@ import { CountingNumber } from './CountingNumber';
 import { groupThinking, isThinking, type GroupedShellItem } from '../../runtime/chat/group-thinking';
 import type { RecordFileScope } from '../../runtime/chat/record-file-open';
 import { Foldable } from './primitives/Foldable';
+import { shellLatestUpdate } from '../../runtime/chat/shell-latest-update';
 import { ImageRow } from './primitives/ImageRow';
 import { useThinkingFollow } from './primitives/useThinkingFollow';
 import { ThinkingMarkdown } from './ThinkingMarkdown';
@@ -200,11 +201,18 @@ export function ExecutionShell({
        * (`ThoughtsRow` 的 `live` 形态,球 + 扫光 + 三个点一件不少)。
        * 两处都画就成了同一句话说两遍,所以这里不再读 `shell.thinking`。
        */
+      /*
+       * MelilloDesign (D54): «In corso» stays and the record stays collapsed (D53). After it, on the
+       * same truncated line, comes the agent's latest sentence or the plan step under way: never its
+       * reasoning, never a count of seconds. See `runtime/chat/shell-latest-update.ts`.
+       */
+      const update = shellLatestUpdate(shell);
       return (
         <>
           {/* 不给标签:紧跟着的就是「进行中」那行字,读屏念一遍就够 */}
           <Orb state="connecting" box={24} className={styles.orb} />
           <span className={`${styles.shimmer} ${styles.head}`}>{t('chat.record.running')}</span>
+          {update ? <span className={styles.latestUpdate} title={update} data-testid="chat-record-latest-update">{update}</span> : null}
         </>
       );
     }

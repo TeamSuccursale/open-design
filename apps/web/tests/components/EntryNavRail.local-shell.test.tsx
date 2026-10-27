@@ -182,8 +182,8 @@ describe('EntryNavRail local (signed-out) shell', () => {
     // Not a plain rail destination any more.
     expect(bell.classList.contains('entry-nav-rail__btn')).toBe(false);
     expect(document.querySelector('.entry-nav-rail__group [data-testid="entry-nav-message-center"]')).toBeNull();
-    // The social links ride the dock, above the identity row, as they do signed in.
-    expect(within(dock!).getByTestId('entry-nav-rail-social')).toBeTruthy();
+    // MelilloDesign carries no upstream community links above the identity row.
+    expect(within(dock!).queryByTestId('entry-nav-rail-social')).toBeNull();
     // The sign-in card keeps its slot in the footer.
     expect(screen.getByTestId('local-sign-in-card')).toBeTruthy();
     fireEvent.click(bell);

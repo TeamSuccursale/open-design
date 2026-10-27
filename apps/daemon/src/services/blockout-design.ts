@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { BlockoutDesignRecordRequestSchema, BlockoutDesignStateSchema, BlockoutDocumentSchema, BlockoutHandoffSchema, blockoutHandoffSnapshot, blockoutWorkspacePath, type BlockoutDesignState, type BlockoutDesignRevision, type BlockoutDesignUnderlay } from '@open-design/contracts';
+import { BlockoutDesignRecordRequestSchema, BlockoutDesignStateSchema, BlockoutDocumentSchema, BlockoutHandoffSchema, blockoutHandoffSnapshot, blockoutMarginOverflow, blockoutOutsideSafeArea, blockoutWorkspacePath, type BlockoutDesignState, type BlockoutDesignRevision, type BlockoutDesignUnderlay } from '@open-design/contracts';
 import { containedIntakePath } from './project-intake-settings.js';
 import { withProjectHistoryMutation } from '../project-history-observer.js';
 import { replaceFileAtomically } from '../storage/atomic-file.js';
@@ -9,6 +9,7 @@ import { replaceFileAtomically } from '../storage/atomic-file.js';
 export type BlockoutDesignRunTarget = Readonly<{ projectId: string; documentId: string; handoffId: string; handoffSha256: string }>;
 export type BlockoutDesignRun = { projectId: string | null; status: string; deliverableValid?: boolean; blockoutDesignTargets?: readonly BlockoutDesignRunTarget[] };
 export type BlockoutDesignRunLookup = (id: string) => BlockoutDesignRun | null | undefined | Promise<BlockoutDesignRun | null | undefined>;
+const MEASURED_MARGIN_TOLERANCE_MM = 1;
 const locks = new Map<string, Promise<unknown>>();
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const prefix = (id: string) => { if (!/^(?!\.{1,2}$)[\w.-]{1,120}$/.test(id)) throw new Error('Invalid Blockout identity'); return `blockouts/${id}/design`; };
@@ -83,13 +84,19 @@ export async function recordBlockoutDesign(root: string, documentId: string, pro
     if ((handoff.designBase?.revisionId ?? null) !== (state.applied?.revisionId ?? null)) throw new Error('A newer design superseded this request');
     const requested = handoff.snapshot, snapshot = structuredClone(requested);
     if (new Set(request.pages.map((page) => page.pageId)).size !== request.pages.length || request.pages.length !== snapshot.variant.pages.length) throw new Error('Map each document page exactly once');
-    for (const page of snapshot.variant.pages) {
+    for (const [pageIndex, page] of snapshot.variant.pages.entries()) {
       const mapping = request.pages.find((item) => item.pageId === page.id);
       if (!mapping || new Set(mapping.blocks.map((item) => item.blockId)).size !== mapping.blocks.length) throw new Error('Missing page or duplicate block mapping');
       if (mapping.blocks.some((item) => !page.blocks.some((block) => block.id === item.blockId))) throw new Error('Unknown mapped block');
       for (const block of page.blocks) {
         const mapped = mapping.blocks.find((item) => item.blockId === block.id);
         if (!mapped && block.designRole !== 'background') throw new Error(`Missing conceptual bounds for ${block.id}`);
+        // Bounds are measured on the rendered page, so a block that crosses the margin crosses it on paper. A border or
+        // rounding may add a fraction of a millimetre; a block the approved Blockout itself placed outside stays the engineer's choice.
+        const overflow = mapped && blockoutMarginOverflow(mapped.box, page);
+        if (overflow && overflow.mm > MEASURED_MARGIN_TOLERANCE_MM && !blockoutOutsideSafeArea(block.box, page)) {
+          throw new Error(`${block.label} (${block.id}) on page ${pageIndex + 1} runs ${overflow.mm.toFixed(1)} mm past the ${overflow.side} margin. Keep it inside the page margins, measure the page again and register the design again.`);
+        }
         if (mapped) block.box = mapped.box;
       }
     }

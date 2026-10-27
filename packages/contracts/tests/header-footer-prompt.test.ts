@@ -25,6 +25,7 @@ function expectWorkflow(prompt: string) {
   expect(prompt).toContain('one gpt-6.1-sol/low native session');
   expect(prompt).toContain('Ambiguous candidates need the user');
   expect(prompt).toContain('Aggiorna se viene modificato in futuro');
+  expect(prompt).toContain('Pagina {pageNumber} di {totalPages}');
   expect(prompt).toContain('any other linked document');
   expect(prompt).toContain('headerFooterTarget:{documentId,setId,region:');
   expect(prompt).toContain('data-melillodesign-document-page=');

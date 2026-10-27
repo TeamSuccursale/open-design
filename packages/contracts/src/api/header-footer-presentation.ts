@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { HeaderFooterDraftSchema, headerFooterVariantForFormat } from './header-footer.js';
+import { HEADER_FOOTER_FIELDS, HeaderFooterDraftSchema, headerFooterVariantForFormat, type HeaderFooterField } from './header-footer.js';
 
 /** Portable applied state: assets are copied into this document, never hotlinked. */
 export const AppliedHeaderFooterSchema = z.object({
@@ -28,6 +28,10 @@ export function headerFooterDateText(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
   return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
 }
+/** Fills {pageNumber} and the other field names inside a text block, so «Pagina {pageNumber} di {totalPages}» prints as one phrase. Other braces stay as written. */
+export function fillHeaderFooterText(text: string, values: Partial<Record<HeaderFooterField, string>>): string {
+  return text.replace(/\{(\w+)\}/g, (placeholder, name: string) => (HEADER_FOOTER_FIELDS as readonly string[]).includes(name) ? values[name as HeaderFooterField] ?? placeholder : placeholder);
+}
 /** Render actual recurring graphics around a schematic body. All strings are escaped. */
 export function renderAppliedHeaderFooterSvg(applied: AppliedHeaderFooter, page: HeaderFooterRenderPage): string {
   const variant = headerFooterVariantForFormat(applied.design.variants, page.widthMm, page.heightMm);
@@ -45,7 +49,7 @@ export function renderAppliedHeaderFooterSvg(applied: AppliedHeaderFooter, page:
       return asset ? `<image data-header-footer-block="${escape(block.id)}" x="${round(x)}" y="${round(y)}" width="${round(w)}" height="${round(h)}" preserveAspectRatio="xMidYMid meet" href="${escape(page.assetUrl?.(asset.path) ?? asset.path)}"/>` : '';
     }
     if (block.kind === 'rule') return `<path data-header-footer-block="${escape(block.id)}" d="M ${round(x)} ${round(y + h / 2)} H ${round(x + w)}" fill="none" stroke="${color}" stroke-width=".25"/>`;
-    const text = block.kind === 'field' ? values[block.field ?? 'documentName'] : block.text ?? '';
+    const text = block.kind === 'field' ? values[block.field ?? 'documentName'] : fillHeaderFooterText(block.text ?? '', values);
     const align = block.align ?? 'left', fontMm = (block.fontSize ?? 9) * 25.4 / 72;
     const tx = align === 'center' ? x + w / 2 : align === 'right' ? x + w : x;
     const lines = text.split(/\r?\n/).slice(0, 12);

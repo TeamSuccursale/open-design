@@ -18,7 +18,9 @@ describe('D53 execution shell disclosure', () => {
     const { container } = render(show(shellOf(state)));
     expect(outer(container).open).toBe(false);
     expect(outer(container).querySelector('summary')?.textContent).toContain(en[key as keyof typeof en]);
-    expect(container.textContent).not.toContain('Process detail');
+    // A running header repeats the latest sentence (D54); the details themselves stay out of view.
+    const details = [...outer(container).children].filter((child) => child.tagName !== 'SUMMARY');
+    expect(details.map((child) => child.textContent).join('')).not.toContain('Process detail');
   });
   it('stays collapsed when live output and terminal status arrive', () => {
     const { container, rerender } = render(show(shellOf()));

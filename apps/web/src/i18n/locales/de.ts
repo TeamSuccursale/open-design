@@ -3952,6 +3952,8 @@ export const de: Dict = {
   'chat.runError.actionBlocked.busy': "In dieser Unterhaltung läuft noch eine Aufgabe. Erneut versuchen kannst du, sobald sie beendet ist.",
   'chat.support.channel.feishu': "Feishu-Community",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "MelilloDesign-Entwickler (GitHub)",
+  'chat.support.openReport': "Meldung öffnen",
   'chat.amrBalanceOwner.title': 'Nicht genügend Team-Guthaben',
   'chat.amrBalanceOwner.message': 'Das Guthaben deines Teams reicht nicht aus. Bitte den Team-Admin, Guthaben aufzuladen oder das Abo zu upgraden.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Das Guthaben deines Teams reicht nicht aus. Bitte den Team-Admin, Guthaben aufzuladen oder das Abo zu upgraden.',

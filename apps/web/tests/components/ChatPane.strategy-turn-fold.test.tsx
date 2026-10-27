@@ -67,6 +67,49 @@ describe('foldStrategyTaskTurns', () => {
     expect(turn.runStatus).toBe('running');
   });
 
+  // Flow run 2 (27 October): the live row had already streamed the production Run when the stored
+  // production row arrived, and the closing summary showed twice with a working line between.
+  it('does not append a production Run the live row already streamed', () => {
+    const productionEvents = [{ kind: 'done_key', key: '3333333333333333' }, { kind: 'text', text: 'PRODUCTION_TEXT' }];
+    const folded = foldStrategyTaskTurns([
+      { id: 'u1', role: 'user', content: 'Accetto la struttura' } as ChatMessage,
+      assistant({
+        id: 'a-live',
+        content: 'PLAN_TEXT\n\nPRODUCTION_TEXT',
+        runId: 'run-production',
+        runStatus: 'running',
+        events: [{ kind: 'done_key', key: '1111111111111111' }, { kind: 'text', text: 'PLAN_TEXT' }, ...productionEvents],
+        producedFiles: [{ name: 'documents/b/index.html' } as ProjectFile],
+        strategyTaskExecutionId: 'odnext_3',
+        strategyTaskRunIndex: 1,
+        strategyTaskPrefixLength: 'PLAN_TEXT\n\n'.length,
+        strategyTaskPrefixEventCount: 2,
+      }),
+      assistant({
+        id: 'odnext_assistant_stored',
+        content: 'PRODUCTION_TEXT',
+        runId: 'run-production',
+        runStatus: 'succeeded',
+        endedAt: 5_000,
+        events: productionEvents,
+        producedFiles: [{ name: 'documents/b/index.html' } as ProjectFile],
+        strategyTaskExecutionId: 'odnext_3',
+        strategyTaskRunIndex: 1,
+        strategyTaskDelivered: true,
+      }),
+    ]);
+    const turns = folded.filter((m) => m.role === 'assistant');
+    expect(turns).toHaveLength(1);
+    const turn = turns[0]!;
+    expect(turn.content.split('PRODUCTION_TEXT')).toHaveLength(2);
+    expect(turn.events).toHaveLength(4);
+    expect(turn.producedFiles?.map((f) => f.name)).toEqual(['documents/b/index.html']);
+    // The stored row still settles the turn.
+    expect(turn.runStatus).toBe('succeeded');
+    expect(turn.strategyTaskDelivered).toBe(true);
+    expect(turn.endedAt).toBe(5_000);
+  });
+
   it('leaves Direct Edit and ordinary turns untouched', () => {
     const input = [
       assistant({

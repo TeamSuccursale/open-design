@@ -29,13 +29,38 @@ it('rescans unchanged files without starting git, with the same object ids git g
   expect(blob).not.toHaveBeenCalled();
 });
 
+it('writes every new file with one git process, also on the first snapshot of a project', async () => {
+  const { files, git } = await project();
+  const run = vi.spyOn(git, 'run');
+  const first = await scanHistoryFiles(files, git);
+  expect(run.mock.calls.filter(([args]) => args[0] === 'hash-object')).toHaveLength(1);
+  run.mockRestore();
+  expect(first.find((file) => file.path === 'notes.txt')!.hash).toBe(await git.blob(Buffer.from('riga uno\r\nriga due — accentata è\n')));
+  for (const file of first) expect((await git.run(['cat-file', '-s', file.hash])).trim()).toBe(String(file.size));
+});
+
+it('stores a file on its own when it changed after the check and before git read it', async () => {
+  const { files, git } = await project();
+  const original = git.blobs.bind(git);
+  vi.spyOn(git, 'blobs').mockImplementationOnce(async (paths) => {
+    await writeFile(path.join(files, 'notes.txt'), 'cambiato durante il salvataggio\n');
+    return original(paths);
+  });
+  const blob = vi.spyOn(git, 'blob');
+  const scanned = await scanHistoryFiles(files, git);
+  expect(blob).toHaveBeenCalledOnce();
+  expect(scanned.find((file) => file.path === 'notes.txt')!.hash).toBe(await git.blob(Buffer.from('cambiato durante il salvataggio\n')));
+  expect(scanned).toEqual(await scanHistoryFiles(files, git));
+});
+
 it('stores only the files whose content changed', async () => {
   const { files, git } = await project();
   const first = await scanHistoryFiles(files, git);
   await writeFile(path.join(files, 'notes.txt'), 'testo nuovo\n');
-  const blob = vi.spyOn(git, 'blob');
+  const blobs = vi.spyOn(git, 'blobs');
   const second = await scanHistoryFiles(files, git, undefined, first);
-  expect(blob).toHaveBeenCalledOnce();
+  expect(blobs).toHaveBeenCalledOnce();
+  expect(blobs.mock.calls[0]![0]).toEqual([path.join(files, 'notes.txt')]);
   expect(second).toEqual(await scanHistoryFiles(files, git));
   expect(second.find((file) => file.path === 'notes.txt')!.hash).not.toBe(first.find((file) => file.path === 'notes.txt')!.hash);
 });

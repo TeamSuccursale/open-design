@@ -26,10 +26,11 @@ vi.mock('../../src/providers/registry', async (importOriginal) => ({
 const text = (key: string) => en[`documentStart.${key}` as keyof typeof en];
 const entryText = (key: string) => en[`documentEntry.${key}` as keyof typeof en];
 const wizardText = (key: string) => en[`documentWizard.${key}` as keyof typeof en];
-async function nextToFolders(dialog: ReturnType<typeof within>) {
+// The dialog is one screen: naming the project is all that stands between the document fields and the folders.
+async function nameProject(dialog: ReturnType<typeof within>) {
   const projectName=dialog.getByRole('textbox',{name:text('projectName')}) as HTMLInputElement;
   if(!projectName.value) fireEvent.change(projectName,{target:{value:'Antro — Test job'}});
-  fireEvent.click(dialog.getByRole('button', { name: wizardText('next') })); await dialog.findByRole('radio', { name: text('managed') });
+  await dialog.findByRole('radio', { name: text('managed') });
 }
 function setup(props: Partial<React.ComponentProps<typeof HomeView>> = {}) {
   const onSubmit = vi.fn().mockResolvedValue(true);
@@ -65,7 +66,7 @@ describe('Home document-project creation', () => {
     const dialog = within(await screen.findByRole('dialog', { name: text('title') }));
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'report' } });
     fireEvent.change(dialog.getByLabelText(text('preset')), { target: { value: 'survey' } });
-    await nextToFolders(dialog);
+    await nameProject(dialog);
     fireEvent.click(dialog.getByRole('radio', { name: text('useFolder') }));
     fireEvent.change(dialog.getByLabelText(text('workingFolder')), { target: { value: 'C:\SurveyProject' } });
     fireEvent.change(dialog.getByLabelText(text('extraFolders')), { target: { value: 'C:\ReferenceDocuments' } });
@@ -78,10 +79,9 @@ describe('Home document-project creation', () => {
     expect((await dialog.findByRole('alert')).textContent).toContain(wizardText('createFailed'));
     expect((dialog.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:\SurveyProject');
     expect((dialog.getByLabelText(text('extraFolders')) as HTMLTextAreaElement).value).toBe('C:\ReferenceDocuments');
-    fireEvent.click(dialog.getByRole('button', { name: wizardText('back') }));
     expect((dialog.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('report');
     expect((dialog.getByLabelText(text('preset')) as HTMLSelectElement).value).toBe('survey');
-    await nextToFolders(dialog); fireEvent.click(dialog.getByRole('button', { name: text('openChat') }));
+    fireEvent.click(dialog.getByRole('button', { name: text('openChat') }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
     expect(onSubmit.mock.calls[1]![0]).toEqual(onSubmit.mock.calls[0]![0]);
     await waitFor(() => expect(screen.queryByRole('dialog', { name: text('title') })).toBeNull());
@@ -92,7 +92,7 @@ describe('Home document-project creation', () => {
     fireEvent.click(screen.getByRole('button', { name: entryText('newProject') }));
     const dialog = within(await screen.findByRole('dialog', { name: text('title') }));
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } });
-    await nextToFolders(dialog); fireEvent.click(dialog.getByRole('radio', { name: text('managed') }));
+    await nameProject(dialog); fireEvent.click(dialog.getByRole('radio', { name: text('managed') }));
     fireEvent.click(dialog.getByRole('button', { name: text('openChat') }));
     expect((await dialog.findByRole('alert')).textContent).toContain(wizardText('createFailed'));
     expect(dialog.getByRole('button', { name: text('openChat') }).hasAttribute('disabled')).toBe(false);
@@ -112,7 +112,7 @@ describe('Home document-project creation', () => {
     const dialog = within(await screen.findByRole('dialog', { name: text('title') }));
     expect(screen.queryByTestId('home-hero-input')).toBeNull(); expect(dialog.queryByLabelText(text('purpose'))).toBeNull();
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } });
-    await nextToFolders(dialog); expect(onSubmit).not.toHaveBeenCalled();
+    await nameProject(dialog); expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.click(dialog.getByRole('radio', { name: text('managed') }));
     expect(dialog.queryByRole('checkbox')).toBeNull(); expect(onSubmit).not.toHaveBeenCalled();
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
@@ -141,7 +141,7 @@ describe('Home document-project creation', () => {
     expect(onSubmit).not.toHaveBeenCalled(); expect((dialog.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('');
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'tender-offer' } });
     fireEvent.change(dialog.getByLabelText(text('preset')), { target: { value: 'experience' } });
-    await nextToFolders(dialog); fireEvent.click(dialog.getByRole('radio', { name: text('useFolder') }));
+    await nameProject(dialog); fireEvent.click(dialog.getByRole('radio', { name: text('useFolder') }));
     fireEvent.change(dialog.getByLabelText(text('workingFolder')), { target: { value: 'C:\Projects\Offer' } });
     fireEvent.change(dialog.getByLabelText(text('extraFolders')), { target: { value: 'C:\References\Disciplinare' } });
     fireEvent.click(dialog.getByRole('button', { name: text('openChat') })); await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
@@ -156,7 +156,7 @@ describe('Home document-project creation', () => {
     fireEvent.click(screen.getByTestId('home-hero-submit'));
     const reopened = within(await screen.findByRole('dialog', { name: text('title') }));
     fireEvent.change(reopened.getByLabelText(text('kind')), { target: { value: 'free' } });
-    await nextToFolders(reopened); fireEvent.click(reopened.getByRole('radio', { name: text('managed') }));
+    await nameProject(reopened); fireEvent.click(reopened.getByRole('radio', { name: text('managed') }));
     fireEvent.click(reopened.getByRole('button', { name: text('openChat') })); await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit.mock.calls[0]![0]).toMatchObject({ prompt, attachments: [file], projectMetadata: { documentSetupIntent: { purpose: prompt, imageIntakeConsent: false } } });
   });
@@ -165,7 +165,7 @@ describe('Home document-project creation', () => {
     vi.mocked(isOpenDesignHostAvailable).mockReturnValue(true); vi.mocked(pickHostWorkingDir).mockResolvedValue({ ok: true, baseDir: 'C:\PriorWorkingFolder', token: 'prior-native-grant' });
     const onSubmit = setup(); await showOtherCreations(); fireEvent.click(screen.getByTestId('working-dir-trigger')); fireEvent.click(screen.getByTestId('working-dir-pick'));
     await waitFor(() => expect(pickHostWorkingDir).toHaveBeenCalledOnce()); const dialog = await start('A free project report');
-    fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } }); await nextToFolders(dialog);
+    fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } }); await nameProject(dialog);
     expect((dialog.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:\PriorWorkingFolder');
     fireEvent.click(dialog.getByRole('radio', { name: text('managed') })); fireEvent.click(dialog.getByRole('button', { name: text('openChat') }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce()); expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty('workingDir'); expect(onSubmit.mock.calls[0]![0]).not.toHaveProperty('workingDirToken');
@@ -175,7 +175,7 @@ describe('Home document-project creation', () => {
     vi.mocked(isOpenDesignHostAvailable).mockReturnValue(true); vi.mocked(pickHostWorkingDir).mockResolvedValue({ ok: true, baseDir: 'C:\GrantedWorkingFolder', token: 'native-grant' });
     const onSubmit = setup(); await showOtherCreations(); fireEvent.click(screen.getByTestId('working-dir-trigger')); fireEvent.click(screen.getByTestId('working-dir-pick'));
     await waitFor(() => expect(pickHostWorkingDir).toHaveBeenCalledOnce()); const dialog = await start('A report for this working folder');
-    fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } }); await nextToFolders(dialog);
+    fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } }); await nameProject(dialog);
     fireEvent.click(dialog.getByRole('button', { name: text('openChat') })); await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit.mock.calls[0]![0]).toMatchObject({ workingDir: 'C:\GrantedWorkingFolder', workingDirToken: 'native-grant' });
   });

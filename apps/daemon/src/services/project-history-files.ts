@@ -67,8 +67,11 @@ async function gitBlobId(handle: FileHandle, size: number): Promise<string> {
   return hash.digest('hex');
 }
 
-/** `stored` holds ids already in the object store: content that matches one is not written again. */
-async function stableHistoryFile(root: string, relative: string, git: ProjectHistoryGit, stored: ReadonlySet<string>): Promise<StoredHistoryFile | null> {
+/**
+ * Reads a file's id without starting git; scanHistoryFiles writes the new ones together. `direct` writes
+ * this file now, streamed from the same handle, for a file that changed after its id was read.
+ */
+async function stableHistoryFile(root: string, relative: string, git: ProjectHistoryGit, direct = false): Promise<StoredHistoryFile | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const target = await safeHistoryTarget(root, relative);
     let handle;
@@ -77,9 +80,9 @@ async function stableHistoryFile(root: string, relative: string, git: ProjectHis
     try {
       const before = await handle.stat();
       if (!before.isFile()) throw new ProjectHistoryError(`History refuses special files: ${relative}`);
-      // One git process per file made a rescan of an unchanged project cost seconds on Windows.
-      const known = stored.size ? await gitBlobId(handle, before.size) : null;
-      const hash = known && stored.has(known) ? known : await git.blob(createReadStream(target, { fd: handle.fd, autoClose: false, start: 0, highWaterMark: 64 * 1024 }));
+      const hash = direct
+        ? await git.blob(createReadStream(target, { fd: handle.fd, autoClose: false, start: 0, highWaterMark: 64 * 1024 }))
+        : await gitBlobId(handle, before.size);
       const after = await handle.stat(), current = await lstat(target).catch((error) => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
       if (current?.isSymbolicLink()) throw new ProjectHistoryError(`History refuses linked paths: ${relative}`);
       if (current && current.ino === before.ino && current.size === before.size && current.mtimeMs === before.mtimeMs && current.ctimeMs === before.ctimeMs && after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs) return { path: relative, hash, size: before.size, mode: before.mode & 0o777 };
@@ -88,11 +91,25 @@ async function stableHistoryFile(root: string, relative: string, git: ProjectHis
   throw new ProjectHistoryError(`File changed while history was saving it: ${relative}`, 409);
 }
 
+/**
+ * One git process per new file made the 17-file Blockout seed take 2.6 s on Windows and a first snapshot
+ * of a 99-file project 8 s. Every new file is written with one process; a file whose id no longer matches
+ * changed after its check, so it is stored again as it is now.
+ */
+async function writeHistoryBlobs(root: string, git: ProjectHistoryGit, files: Map<string, StoredHistoryFile>, unwritten: StoredHistoryFile[]): Promise<void> {
+  const written = await git.blobs(unwritten.map((file) => path.join(root, ...file.path.split('/')))).catch(() => [] as string[]);
+  for (const [index, file] of unwritten.entries()) {
+    if (written[index] === file.hash) continue;
+    const current = await stableHistoryFile(root, file.path, git, true);
+    if (current) files.set(file.path, current); else files.delete(file.path);
+  }
+}
+
 /** A full scan is bounded by metadata count; binary content is always streamed. */
 export async function scanHistoryFiles(root: string, git: ProjectHistoryGit, selected?: string[], previous: StoredHistoryFile[] = []): Promise<StoredHistoryFile[]> {
   const paths = selected?.map(normalizeHistoryPath).filter(eligibleHistoryPath);
   if (paths && !paths.length) return previous;
-  const stored = new Set(previous.map((file) => file.hash));
+  const stored = new Set(previous.map((file) => file.hash)), unwritten: StoredHistoryFile[] = [];
   const files = new Map(previous.filter((file) => paths && !paths.some((prefix) => file.path === prefix || file.path.startsWith(`${prefix}/`))).map((file) => [file.path, file]));
   const visit = async (relative: string): Promise<void> => {
     if (relative && !eligibleHistoryPath(relative)) return;
@@ -104,12 +121,13 @@ export async function scanHistoryFiles(root: string, git: ProjectHistoryGit, sel
     if (info.isDirectory()) {
       for await (const item of await opendir(target)) await visit(relative ? `${relative}/${item.name}` : item.name);
     } else if (info.isFile()) {
-      const file = await stableHistoryFile(root, relative, git, stored);
-      if (file) files.set(relative, file);
+      const file = await stableHistoryFile(root, relative, git);
+      if (file) { files.set(relative, file); if (!stored.has(file.hash)) unwritten.push(file); }
       if (files.size > 50_000) throw new ProjectHistoryError('Project history exceeds its 50,000-file metadata limit', 413);
     } else throw new ProjectHistoryError(`History refuses special files: ${relative}`);
   };
   for (const relative of paths ? [...new Set(paths)] : ['']) { if (relative) await safeHistoryTarget(root, relative); await visit(relative); }
+  await writeHistoryBlobs(root, git, files, unwritten);
   return [...files.values()].sort((a, b) => a.path.localeCompare(b.path, 'en'));
 }
 
@@ -121,13 +139,22 @@ export async function historyTree(git: ProjectHistoryGit, files: StoredHistoryFi
     for (const part of parts.slice(0, -1)) { if (!tree.children.has(part)) tree.children.set(part, { files: [], children: new Map() }); tree = tree.children.get(part)!; }
     tree.files.push(file);
   }
-  const write = async (tree: Tree): Promise<string> => {
-    const entries: string[] = [];
-    for (const [name, child] of tree.children) entries.push(`040000 tree ${await write(child)}\t${name}\0`);
-    for (const file of tree.files) entries.push(`${file.mode & 0o111 ? '100755' : '100644'} blob ${file.hash}\t${file.path.split('/').at(-1)}\0`);
-    return git.tree(entries.join(''));
+  // Ids are computed here with Git's own tree encoding, where a folder sorts as if its name ended in a
+  // slash; Git then writes only the trees it does not have yet, children first, with one process.
+  const trees: { id: string; entries: string }[] = [];
+  const write = (tree: Tree): string => {
+    const entries = [
+      ...[...tree.children].map(([name, child]) => ({ name, mode: '40000', type: 'tree', hash: write(child), key: Buffer.from(`${name}/`) })),
+      ...tree.files.map((file) => { const name = file.path.split('/').at(-1)!; return { name, mode: file.mode & 0o111 ? '100755' : '100644', type: 'blob', hash: file.hash, key: Buffer.from(name) }; }),
+    ].sort((a, b) => Buffer.compare(a.key, b.key));
+    const body = Buffer.concat(entries.flatMap((entry) => [Buffer.from(`${entry.mode} ${entry.name}\0`), Buffer.from(entry.hash, 'hex')]));
+    const id = createHash('sha256').update(`tree ${body.length}\0`).update(body).digest('hex');
+    trees.push({ id, entries: entries.map((entry) => `${entry.mode.padStart(6, '0')} ${entry.type} ${entry.hash}\t${entry.name}\0`).join('') });
+    return id;
   };
-  return write(root);
+  const id = write(root);
+  await git.writeTrees(trees);
+  return id;
 }
 
 export function changedHistoryPaths(before: StoredHistoryFile[], after: StoredHistoryFile[]): string[] {

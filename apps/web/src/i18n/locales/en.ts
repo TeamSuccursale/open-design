@@ -3964,6 +3964,8 @@ export const en: Dict = {
   'chat.runError.actionBlocked.busy': "This conversation still has a run in progress. Retry becomes available once it ends.",
   'chat.support.channel.feishu': "Feishu community",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "MelilloDesign developer (GitHub)",
+  'chat.support.openReport': "Open a report",
   'chat.amrBalanceOwner.title': 'Insufficient team allowance',
   'chat.amrBalanceOwner.message': 'Your team’s allowance is insufficient. Ask your team admin to top up or upgrade the subscription.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Your team’s allowance is insufficient. Ask your team admin to top up or upgrade the subscription.',

@@ -65,14 +65,28 @@ export class ProjectHistoryGit {
     return (await this.command(args, input === undefined ? {} : { input })).toString('utf8');
   }
   async blob(input: Readable | Uint8Array): Promise<string> { return (await this.run(['hash-object', '-w', '--stdin', '--no-filters'], input)).trim(); }
-  private readonly trees = new Map<string, string>();
-  /** Trees are content-addressed, so a directory whose entries are unchanged reuses the tree this repository already wrote. */
-  async tree(entries: string): Promise<string> {
-    const key = createHash('sha256').update(entries).digest('hex'), known = this.trees.get(key);
-    if (known) return known;
-    const hash = (await this.run(['mktree', '-z'], Buffer.from(entries))).trim();
-    if (this.trees.size >= 50_000) this.trees.clear();
-    this.trees.set(key, hash); return hash;
+  /**
+   * Writes several files with one process and returns their ids in order. Git reads them by path, so the
+   * caller compares each id with the one it read from the file itself. History paths never hold a line break.
+   */
+  async blobs(paths: string[]): Promise<string[]> {
+    if (!paths.length) return [];
+    return (await this.run(['hash-object', '-w', '--no-filters', '--stdin-paths'], Buffer.from(paths.map((file) => `${file}\n`).join(''))))
+      .split('\n').map((line) => line.trim()).filter(Boolean);
+  }
+  private readonly trees = new Set<string>();
+  /**
+   * Writes, with one process, the trees this repository has not written yet. Their ids are computed by the
+   * caller, children before parents, and each must come back from Git unchanged.
+   */
+  async writeTrees(trees: { id: string; entries: string }[]): Promise<void> {
+    const missing = [...new Map(trees.filter((tree) => !this.trees.has(tree.id)).map((tree) => [tree.id, tree])).values()];
+    if (!missing.length) return;
+    const written = (await this.run(['mktree', '-z', '--batch'], Buffer.from(missing.map((tree) => `${tree.entries}\0`).join(''))))
+      .split('\n').map((line) => line.trim()).filter(Boolean);
+    if (written.length !== missing.length || written.some((id, index) => id !== missing[index]!.id)) throw new Error('Private history tree identity mismatch');
+    if (this.trees.size + missing.length > 50_000) this.trees.clear();
+    for (const tree of missing) this.trees.add(tree.id);
   }
   async json(hash: string): Promise<unknown> { this.assertHash(hash); return JSON.parse(await this.run(['cat-file', 'blob', hash])); }
   async prefix(hash: string, limit: number): Promise<Buffer> { this.assertHash(hash); return this.command(['cat-file', 'blob', hash], { prefix: true, limit }); }

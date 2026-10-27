@@ -3941,6 +3941,8 @@ export const uk: Dict = {
   'chat.runError.actionBlocked.busy': "У цій розмові ще виконується завдання. Повтор стане доступним після його завершення.",
   'chat.support.channel.feishu': "Спільнота Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Розробник MelilloDesign (GitHub)",
+  'chat.support.openReport': "Повідомити про проблему",
   'chat.amrBalanceOwner.title': 'Недостатньо коштів команди',
   'chat.amrBalanceOwner.message': 'У команди недостатньо коштів. Попросіть адміністратора команди поповнити баланс або підвищити підписку.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'У команди недостатньо коштів. Попросіть адміністратора команди поповнити баланс або підвищити підписку.',

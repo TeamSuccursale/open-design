@@ -57,16 +57,9 @@
 .preparingSplit:not([data-preparation-files-open="true"]) > :global(.workspace), .preparingSplit:not([data-preparation-files-open="true"]) > :global(.split-resize-handle) { display: none; }
 .preparingSplit :global(.chat-log) { overflow-y: scroll; scrollbar-width: auto; scrollbar-gutter: stable; scrollbar-color: var(--border) var(--bg-panel); }
 .reviewBackdrop { background: var(--bg); }
-.wizardSteps { display: flex; flex: none; list-style: none; margin: 0; padding: 20px 28px 0; gap: 8px; }
-.wizardSteps li { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 12px; padding: 0 0 13px; border-bottom: 2px solid var(--border-soft); }
-.wizardSteps li[aria-current] { color: var(--text); font-weight: 600; border-bottom-color: var(--text); }
-.wizardSteps li[data-complete] { color: var(--text); }
-.wizardSteps li > span { font-size: 11px; font-variant-numeric: tabular-nums; }
 .wizardSummary { display: flex; flex-direction: column; gap: 10px; margin: 0; max-width: 65ch; }
 .wizardSummary > span { color: var(--text-muted); }
 .wizardNext { color: var(--text-muted); margin: 24px 0 0; max-width: 65ch; }
-.form:has(.folderSection) .folderSection { border-top: 0; padding-top: 0; margin-top: 0; }
-@media (max-width: 650px) { .wizardSteps { padding: 16px 18px 0; gap: 5px; }.wizardSteps li { flex-direction: column; align-items: start; gap: 2px; font-size: 11px; } }
 .reviewBody { overflow-y: auto; min-height: 0; padding: 18px 28px 24px; }
 .folderCaption,.sourcePath { overflow-wrap: anywhere; color: var(--text-muted); font-size: 12px; }
 .reviewColumns { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 32px; margin-top: 24px; }

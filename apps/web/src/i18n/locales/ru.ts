@@ -3941,6 +3941,8 @@ export const ru: Dict = {
   'chat.runError.actionBlocked.busy': "В этом диалоге ещё выполняется задача. Повтор станет доступен после её завершения.",
   'chat.support.channel.feishu': "Сообщество в Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Разработчик MelilloDesign (GitHub)",
+  'chat.support.openReport': "Сообщить о проблеме",
   'chat.amrBalanceOwner.title': 'Недостаточно средств команды',
   'chat.amrBalanceOwner.message': 'У команды недостаточно средств. Попросите администратора команды пополнить баланс или повысить подписку.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'У команды недостаточно средств. Попросите администратора команды пополнить баланс или повысить подписку.',

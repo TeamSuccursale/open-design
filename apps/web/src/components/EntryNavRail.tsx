@@ -86,9 +86,7 @@ import { acknowledgeProjectCompletion, useProjectRunStatuses } from '../hooks/us
 import { MessageCenter } from './MessageCenter';
 import type { EntrySettingsSection } from './EntrySettingsMenu';
 import type { Project } from '../types';
-import { isRtlLocale, useI18n } from '../i18n';
-import { communityForLocale } from '../lib/community-links';
-import { FeishuIcon } from './chat/support-brand-icons';
+import { useI18n } from '../i18n';
 import { useDismissOnOutsideInteraction } from '../hooks/useDismissOnOutsideInteraction';
 import {
   beginWorkspaceScopedRead,
@@ -145,8 +143,6 @@ const ACCOUNT_MENU_MIN_HEIGHT = 200;
 const REPO_URL = 'https://github.com/nexu-io/open-design';
 const GITHUB_HELP_URL = `${REPO_URL}/issues/new`;
 const GITHUB_FEATURE_URL = `${REPO_URL}/pulls`;
-const X_URL = 'https://x.com/OpenDesignHQ';
-const CONTACT_EMAIL_URL = 'mailto:support@open-design.ai';
 const externalLinkProps = { target: '_blank', rel: 'noreferrer noopener' } as const;
 
 // Last directory this shell successfully read. `coalescedGet` only collapses
@@ -1654,14 +1650,12 @@ export function EntryTopRightCluster({
         chromeActionsHost,
       )}
       {/* The account module renders into the rail's foot, not the top-right
-          corner — see `accountHost`. Discord / X / mail sit ABOVE the identity
-          row rather than inside the menu: they are outbound links to the
-          project, not account actions, and behind a hover menu nobody found
-          them. */}
+          corner — see `accountHost`. MelilloDesign carries no upstream
+          community links (Discord / X / mail) above the identity row: they do
+          not serve the team's own install. */}
       {accountInRail
         ? createPortal(
             <div className="entry-nav-rail__account-dock">
-              <RailSocialRow page={page} dimensions={workspaceDimensions} />
               <div
                 ref={accountContainerRef}
                 className={`entry-nav-rail__account${accountOpen ? ' is-menu-open' : ''}`}
@@ -1973,122 +1967,6 @@ export function WorkspaceTopRightAccountCluster({
       onOpenSettings={onOpenSettings}
       onSignedOut={onSignedOut}
     />
-  );
-}
-
-/**
- * Community/contact links pinned to the bottom of the nav rail.
- *
- * The row's first slot is the Discord invite for every locale (the Chinese
- * Feishu group entry was retired so there is one community to point at).
- * All three labels are translated and surface through the shared
- * `.od-tooltip` layer. Analytics keeps reporting these
- * under `area: 'account_menu'` so the existing funnel stays comparable across
- * the move out of that menu.
- */
-/** X's own mark (inline SVG — it is not in the Remix set the Icon component
- *  draws from). Sized like its Discord / mail neighbours; the colour rides
- *  the link so hover moves all three together. */
-function XMark({ size }: { size: number }) {
-  return (
-    <svg
-      className="entry-nav-rail__menu-x"
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="currentColor"
-      aria-hidden
-      focusable="false"
-    >
-      <path d="M10.4883 14.651L15.25 21H22.25L14.3917 10.5223L20.9308 3H18.2808L13.1643 8.88578L8.75 3H1.75L9.26086 13.0145L2.31915 21H4.96917L10.4883 14.651ZM16.25 19L5.75 5H7.75L18.25 19H16.25Z" />
-    </svg>
-  );
-}
-
-/**
- * Community / contact links (Discord / X / mail), icon only (OPEND-3180).
- *
- * One row, two homes: the signed-in account dock stacks it directly above
- * the identity row, and the signed-out rail renders the same row in its local
- * dock. The glyph is all a sighted user sees — the name lives on
- * `aria-label` and rides the shared `.od-tooltip` layer on hover, so the icon
- * still explains itself without a label beside it.
- */
-function RailSocialRow({
-  page,
-  dimensions,
-}: {
-  page: TrackingWorkspacePage;
-  dimensions: ReturnType<typeof workspaceAnalyticsDimensions>;
-}) {
-  const { t, locale } = useI18n();
-  const analytics = useAnalytics();
-  // The rail sits on the leading edge, so tooltips open away from it —
-  // right in LTR, left once RTL moves the whole rail to the right edge.
-  // Without the flip the bubble would be clamped against the viewport
-  // and land back on top of the icons it describes.
-  const tooltipPlacement = isRtlLocale(locale) ? 'left' : 'right';
-  // One string per link doubles as the accessible name and the hover
-  // tooltip: the bubble is the only place the icons say what they do, so
-  // the copy leads with the payoff (Discord hands out credits) rather
-  // than naming the destination.
-  const community = communityForLocale(locale);
-  const communityLabel = t('entry.communityAria');
-  const xLabel = t('entry.xAria');
-  const mailLabel = t('entry.mailAria');
-  const btnClass = 'entry-nav-rail__menu-social-btn od-tooltip';
-  const hint = (label: string) => ({
-    'data-tooltip': label,
-    'data-tooltip-placement': tooltipPlacement,
-  });
-  const glyph = 16;
-
-  function track(element: AccountMenuClickProps['element']) {
-    trackAccountMenuClick(analytics.track, {
-      page_name: page,
-      area: 'account_menu',
-      element,
-      ...dimensions,
-    });
-  }
-
-  return (
-    <div className="entry-nav-rail__menu-social" data-testid="entry-nav-rail-social">
-      <a
-        className={btnClass}
-        href={community.href}
-        {...externalLinkProps}
-        aria-label={communityLabel}
-        {...hint(communityLabel)}
-        data-testid="entry-nav-rail-discord"
-        data-community-platform={community.platform}
-        onClick={() => track(community.platform)}
-      >
-        {community.platform === 'feishu'
-          ? <FeishuIcon monochrome width={glyph} height={glyph} />
-          : <Icon name="discord" size={glyph} />}
-      </a>
-      <a
-        className={btnClass}
-        href={X_URL}
-        {...externalLinkProps}
-        aria-label={xLabel}
-        {...hint(xLabel)}
-        onClick={() => track('twitter')}
-      >
-        <XMark size={glyph} />
-      </a>
-      <a
-        className={btnClass}
-        href={CONTACT_EMAIL_URL}
-        aria-label={mailLabel}
-        {...hint(mailLabel)}
-        onClick={() => track('email')}
-      >
-        <Icon name="mail" size={glyph} />
-      </a>
-    </div>
   );
 }
 
@@ -2757,8 +2635,7 @@ export function EntryNavRail({
           {footerNotice}
           {/* Local account dock (OPEND-3140): the signed-out twin of the dock
               `EntryTopRightCluster` portals into the rail foot when signed in
-              — social links above an identity row whose trailing slot is the
-              message-centre bell. The identity here is the local mode itself
+              — an identity row whose trailing slot is the message-centre bell. The identity here is the local mode itself
               (there is no account to name), and opening it lands in Settings,
               where the local CLI / BYOK configuration lives. It sits UNDER the
               sign-in card so the identity row stays the rail's last line on
@@ -2768,7 +2645,6 @@ export function EntryNavRail({
             className="entry-nav-rail__account-dock entry-nav-rail__account-dock--local"
             data-testid="entry-nav-local-account-dock"
           >
-            <RailSocialRow page={analyticsPage} dimensions={workspaceDimensions} />
             <div className="entry-nav-rail__account">
               <button
                 type="button"

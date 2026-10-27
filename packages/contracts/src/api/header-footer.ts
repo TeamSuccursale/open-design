@@ -5,11 +5,14 @@ export const HeaderFooterIdSchema = z.string().min(1).max(120).regex(/^[\w.-]+$/
 export const HeaderFooterTargetSchema = z.object({ documentId: HeaderFooterIdSchema, setId: HeaderFooterIdSchema.optional(), region: z.enum(['header', 'footer']), blockId: HeaderFooterIdSchema.optional() }).strict();
 export type HeaderFooterTarget = z.infer<typeof HeaderFooterTargetSchema>;
 const safeText = z.string().trim().max(12_000);
+/** Values a page supplies to its recurring graphics: a field block prints one, a text block may name several as {field}. */
+export const HEADER_FOOTER_FIELDS = ['projectName', 'documentName', 'pageNumber', 'totalPages', 'date', 'revision'] as const;
+export type HeaderFooterField = typeof HEADER_FOOTER_FIELDS[number];
 export const HeaderFooterBlockSchema = z.object({
   id: HeaderFooterIdSchema, region: z.enum(['header', 'footer']), kind: z.enum(['logo', 'text', 'field', 'rule']),
   x: z.number().finite().min(-1).max(2), y: z.number().finite().min(-1).max(2),
   width: z.number().finite().positive().max(2), height: z.number().finite().positive().max(2),
-  text: safeText.optional(), field: z.enum(['projectName', 'documentName', 'pageNumber', 'totalPages', 'date', 'revision']).optional(),
+  text: safeText.optional(), field: z.enum(HEADER_FOOTER_FIELDS).optional(),
   assetId: HeaderFooterIdSchema.optional(), fontSize: z.number().min(5).max(72).optional(),
   color: z.string().regex(/^#[a-fA-F0-9]{6}$/).optional(), align: z.enum(['left', 'center', 'right']).optional(),
   guidance: safeText.optional(), lockedRatio: z.boolean().optional(),

@@ -60,7 +60,7 @@ describe('header/footer CLI command closure', () => {
     expect(output).toEqual([HEADER_FOOTER_CLI_HELP]);
     const advertised = output[0]!.match(/od header-footer <([^>]+)>/)![1]!.split('|'); expect(advertised).toEqual([...HEADER_FOOTER_CLI_COMMANDS]);
     expect(output[0]).toContain('x,y,width,height,assetId?,text?,field?'); expect(output[0]).toContain('Coordinates are 0..1');
-    expect(output[0]).toContain('pageNumber|totalPages'); expect(output[0]).toContain('engineer\'s explicit approval'); expect(output[0]).toContain('Draft saves never apply automatically');
+    expect(output[0]).toContain('pageNumber|totalPages'); expect(output[0]).toContain('"Pagina {pageNumber} di {totalPages}"'); expect(output[0]).toContain('engineer\'s explicit approval'); expect(output[0]).toContain('Draft saves never apply automatically');
     expect(new Set([...cases.map((item) => item.action), 'export-logo'])).toEqual(new Set(HEADER_FOOTER_CLI_COMMANDS));
     const rootCli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8'), rootActions = rootCli.match(/od header-footer <([^>]+)>/)![1]!.split('|');
     expect(new Set(rootActions)).toEqual(new Set(HEADER_FOOTER_CLI_COMMANDS));

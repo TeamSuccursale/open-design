@@ -200,7 +200,8 @@ describe('ChatPane — 报错卡的常驻动作', () => {
     expect(labels[labels.length - 1]).toBe('chat-error-retry');
   });
 
-  it('点〔联系支持〕开出联系支持弹窗,里面是飞书社群 + Discord 两行', () => {
+  // MelilloDesign: the dialog's one row reports to the team developer on the fork.
+  it('点〔联系支持〕开出联系支持弹窗,里面是团队开发者的一行', () => {
     renderChat({ messages: [failedMessage({ code: 'AGENT_EXECUTION_FAILED' })] });
 
     expect(screen.queryByTestId('chat-support-dialog')).toBeNull();
@@ -211,7 +212,7 @@ describe('ChatPane — 报错卡的常驻动作', () => {
     const hrefs = Array.from(dialog.querySelectorAll('[data-support-channel]')).map((n) =>
       n.getAttribute('data-support-channel'),
     );
-    expect(hrefs).toEqual(['feishu', 'discord']);
+    expect(hrefs).toEqual(['developer']);
   });
 });
 

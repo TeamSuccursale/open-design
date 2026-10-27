@@ -3941,6 +3941,8 @@ export const ptBR: Dict = {
   'chat.runError.actionBlocked.busy': "Esta conversa ainda tem uma tarefa em andamento. Você poderá tentar novamente quando ela terminar.",
   'chat.support.channel.feishu': "Comunidade no Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Desenvolvedor do MelilloDesign (GitHub)",
+  'chat.support.openReport': "Abrir um relato",
   'chat.amrBalanceOwner.title': 'Saldo da equipe insuficiente',
   'chat.amrBalanceOwner.message': 'O saldo da equipe é insuficiente. Peça ao administrador da equipe para recarregar ou fazer upgrade da assinatura.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'O saldo da equipe é insuficiente. Peça ao administrador da equipe para recarregar ou fazer upgrade da assinatura.',

@@ -918,6 +918,26 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): FoldedChatMessag
     }
     const headIndex = turnHeadIndexByTask.get(taskId)!;
     const head = folded[headIndex]!;
+    // A Run is folded at most once. While a turn streams, ProjectView writes
+    // every successor Run into the head's live row; the stored row of a Run
+    // the head already carries only settles the turn.
+    if (runAlreadyFolded(head, message)) {
+      folded[headIndex] = {
+        ...head,
+        foldedMessageIds: [...(head.foldedMessageIds ?? [head.id]), message.id],
+        producedFiles: [...new Map([
+          ...(head.producedFiles ?? []), ...(message.producedFiles ?? []),
+        ].map((file) => [file.name, file])).values()],
+        runId: message.runId ?? head.runId,
+        runStatus: message.runStatus ?? head.runStatus,
+        strategyTaskDelivered: message.strategyTaskDelivered,
+        ...(message.endedAt ? { endedAt: message.endedAt } : {}),
+        ...(message.resultDeliveryState
+          ? { resultDeliveryState: message.resultDeliveryState }
+          : {}),
+      };
+      continue;
+    }
     const headContent = head.content ?? '';
     const tailContent = message.content ?? '';
     const separator = headContent && tailContent && !headContent.endsWith('\n') ? '\n\n' : '';
@@ -953,6 +973,19 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): FoldedChatMessag
     };
   }
   return folded;
+}
+
+/** Every `done_key` nonce is one physical Run's, so a head that carries all of
+ *  a successor's keys already holds that Run's events. */
+function runAlreadyFolded(head: ChatMessage, successor: ChatMessage): boolean {
+  const keys = (successor.events ?? []).flatMap((event) => (
+    event.kind === 'done_key' && event.key.trim() ? [event.key] : []
+  ));
+  if (keys.length === 0) return false;
+  const headKeys = new Set((head.events ?? []).flatMap((event) => (
+    event.kind === 'done_key' ? [event.key] : []
+  )));
+  return keys.every((key) => headKeys.has(key));
 }
 
 /**

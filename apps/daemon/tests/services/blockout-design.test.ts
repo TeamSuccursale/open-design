@@ -129,3 +129,18 @@ it('limits delegated collection runs to the exact validated owner, document, han
   expect(applied.applied?.runId).toBe('run');
   expect((await recordBlockoutDesign(f.root, 'document-1', 'project', f.payload, lookup)).applied?.revisionId).toBe(applied.applied?.revisionId);
 });
+// Run 2's A3 plate registered a measured box 10.6 mm past the right margin and nothing said so.
+it('refuses a designed block that runs past the page margin, and names the block, the side and the millimetres', async () => {
+  const f = await fixture();
+  const wide = { ...f.payload, pages: [{ ...f.payload.pages[0]!, blocks: [{ blockId: 'body', box: { x: 12, y: 13, width: 86, height: 63, rotation: 0 } }] }] };
+  await expect(recordBlockoutDesign(f.root, f.document.documentId, 'project', wide, f.getRun)).rejects.toThrow(/Text \(body\) on page 1 runs 5\.8 mm past the right margin/);
+  const hairline = { ...f.payload, pages: [{ ...f.payload.pages[0]!, blocks: [{ blockId: 'body', box: { x: 12, y: 13, width: 83.4, height: 63, rotation: 0 } }] }] };
+  expect((await recordBlockoutDesign(f.root, f.document.documentId, 'project', hairline, f.getRun)).pending).toHaveLength(1);
+});
+it('accepts a designed block past the margin when the approved Blockout already placed it there', async () => {
+  const f = await fixture();
+  await f.save((value) => { value.variants[0]!.pages[0]!.blocks[0]!.box = { x: 0, y: 10, width: 100, height: 60, rotation: 0 }; });
+  const request = await f.prepare('bleed');
+  const bleed = { ...f.payload, handoffId: request.handoff.id, pages: [{ ...f.payload.pages[0]!, blocks: [{ blockId: 'body', box: { x: 0, y: 13, width: 100, height: 63, rotation: 0 } }] }] };
+  expect((await recordBlockoutDesign(f.root, f.document.documentId, 'project', bleed, f.getRun)).pending).toHaveLength(1);
+});

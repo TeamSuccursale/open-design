@@ -4133,6 +4133,8 @@ export const zhCN: Dict = {
   "chat.runError.actionBlocked.busy": "这条对话还有任务在运行，结束后才能重试。",
   "chat.support.channel.feishu": "飞书社群",
   "chat.support.channel.discord": "Discord",
+  "chat.support.channel.developer": "MelilloDesign 开发者（GitHub）",
+  "chat.support.openReport": "提交问题",
   "chat.amrBalanceOwner.title": "团队额度不足",
   "chat.amrBalanceOwner.message": "当前团队额度不足，请联系团队管理员充值或升级订阅。",
   "chat.amrBalanceOwner.messageNoOwnerName": "当前团队额度不足，请联系团队管理员充值或升级订阅。",

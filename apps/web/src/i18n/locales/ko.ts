@@ -3941,6 +3941,8 @@ export const ko: Dict = {
   'chat.runError.actionBlocked.busy': "이 대화에 아직 실행 중인 작업이 있습니다. 끝난 뒤에 재시도할 수 있습니다.",
   'chat.support.channel.feishu': "Feishu 커뮤니티",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "MelilloDesign 개발자 (GitHub)",
+  'chat.support.openReport': "문제 보고하기",
   'chat.amrBalanceOwner.title': '팀 잔액 부족',
   'chat.amrBalanceOwner.message': '팀 잔액이 부족합니다. 팀 관리자에게 충전 또는 구독 업그레이드를 요청해 주세요.',
   'chat.amrBalanceOwner.messageNoOwnerName': '팀 잔액이 부족합니다. 팀 관리자에게 충전 또는 구독 업그레이드를 요청해 주세요.',

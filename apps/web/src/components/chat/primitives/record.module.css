@@ -61,6 +61,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* MelilloDesign (D54): the running record's latest sentence after «In corso»; as the last child it is
+   the part that truncates, so the header keeps one line. */
+.latestUpdate {
+  font-weight: 400;
+  color: var(--chat-text-muted);
+}
 /* 命令失败头是「图标 + .name + 失败按钮」；只截标题，不截操作。 */
 .summaryContent:has(> .name) > :last-child:not(.name) {
   flex: none;

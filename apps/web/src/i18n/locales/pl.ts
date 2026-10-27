@@ -3941,6 +3941,8 @@ export const pl: Dict = {
   'chat.runError.actionBlocked.busy': "W tej rozmowie wciąż trwa zadanie. Ponowna próba będzie możliwa po jego zakończeniu.",
   'chat.support.channel.feishu': "Społeczność Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Deweloper MelilloDesign (GitHub)",
+  'chat.support.openReport': "Zgłoś problem",
   'chat.amrBalanceOwner.title': 'Niewystarczające środki zespołu',
   'chat.amrBalanceOwner.message': 'Zespół ma za mało środków. Poproś administratora zespołu o doładowanie lub ulepszenie subskrypcji.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Zespół ma za mało środków. Poproś administratora zespołu o doładowanie lub ulepszenie subskrypcji.',

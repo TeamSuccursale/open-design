@@ -134,9 +134,12 @@ export class ProjectHistoryStore {
       if (!file || !eligibleHistoryPath(file.path) || normalizeHistoryPath(file.path) !== file.path || seen.has(file.path) || !identity(file.hash) || !Number.isSafeInteger(file.size) || file.size < 0 || !Number.isInteger(file.mode) || file.mode < 0 || file.mode > 0o777) throw new Error('Unsafe project history manifest');
       seen.add(file.path);
     }
-    const bytes = json(value).length; this.cache.set(id, { value, bytes }); this.cacheBytes += bytes;
-    while (this.cacheBytes > 32_000_000 && this.cache.size > 1) { const first = this.cache.keys().next().value!; this.cacheBytes -= this.cache.get(first)!.bytes; this.cache.delete(first); }
+    this.cacheManifest(id, value, json(value).length);
     return value;
+  }
+  private cacheManifest(id: string, value: HistoryManifest, bytes: number): void {
+    this.cache.set(id, { value, bytes }); this.cacheBytes += bytes;
+    while (this.cacheBytes > 32_000_000 && this.cache.size > 1) { const first = this.cache.keys().next().value!; this.cacheBytes -= this.cache.get(first)!.bytes; this.cache.delete(first); }
   }
   private entry(id: string, manifest: HistoryManifest): ProjectHistoryEntry { return { id, ...manifest.entry }; }
   private advance(time = this.now()): void {
@@ -162,6 +165,8 @@ export class ProjectHistoryStore {
     const manifest: HistoryManifest = { version: 1, projectId: this.options.projectId, projectRoot: this.root, entry, files, tree };
     const content = json(manifest); if (content.length > 16_000_000) throw new ProjectHistoryError('History manifest exceeds its metadata limit', 413);
     const id = await this.git.blob(content); await this.git.publish(id, tree, gitCommit);
+    // The next save compares against this manifest; reading it back would start one more git process.
+    this.cacheManifest(id, manifest, content.length);
     this.state.latestId = id;
     if (kind === 'commit') { this.state.lastCommitId = id; this.state.lastCommittedTree = tree; this.state.lastGitCommit = gitCommit!; this.state.lastCommitAt = time; this.state.activeWorkMs = 0; this.state.summaries = []; }
     else if (changedPaths.length && reason !== 'initial') { this.advance(time); this.state.changeSequence++; this.state.lastActivityAt = time; }

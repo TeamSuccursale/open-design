@@ -4,7 +4,6 @@ import { isBlockoutFile } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useI18n, useT } from '../i18n';
-import { communityForLocale } from '../lib/community-links';
 import { LIBRARY_UI_VISIBLE } from '../features/libraryUi';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
@@ -357,9 +356,10 @@ function DesignFileImageThumb({
 
 // Useful-info tips that rotate one at a time in the panel footer, ordered as
 // a loose journey: file basics → feeding context → generating → iterating →
-// exporting/sharing → community. A tip with a `url` renders its typed line as
-// a link to that destination.
-const USEFUL_TIPS: ReadonlyArray<{ key: keyof Dict; url?: string }> = [
+// exporting/sharing. A tip with a `url` renders its typed line as a link to
+// that destination. MelilloDesign leaves out the upstream community tips
+// (Discord, GitHub, X, Threads, Instagram, YouTube, LinkedIn, Xiaohongshu).
+export const USEFUL_TIPS: ReadonlyArray<{ key: keyof Dict; url?: string }> = [
   { key: 'designFiles.usefulInfoTip' },
   { key: 'designFiles.usefulInfoTip2' },
   { key: 'designFiles.usefulInfoTip9' },
@@ -371,17 +371,6 @@ const USEFUL_TIPS: ReadonlyArray<{ key: keyof Dict; url?: string }> = [
   { key: 'designFiles.usefulInfoTip14' },
   { key: 'designFiles.usefulInfoTip15' },
   { key: 'designFiles.usefulInfoTip5' },
-  { key: 'designFiles.usefulInfoTip6' },
-  { key: 'designFiles.usefulInfoTip7', url: 'https://github.com/nexu-io/open-design' },
-  { key: 'designFiles.usefulInfoTip8', url: 'https://x.com/OpenDesignHQ' },
-  { key: 'designFiles.usefulInfoTip16', url: 'https://www.threads.com/@opendesign.ai' },
-  { key: 'designFiles.usefulInfoTip17', url: 'https://www.instagram.com/opendesign.ai/' },
-  { key: 'designFiles.usefulInfoTip18', url: 'https://www.youtube.com/@Open-Design-ai' },
-  { key: 'designFiles.usefulInfoTip19', url: 'https://www.linkedin.com/company/open-design-ai/' },
-  {
-    key: 'designFiles.usefulInfoTip20',
-    url: 'https://www.xiaohongshu.com/user/profile/691effad000000003002978f',
-  },
 ];
 const TIP_TYPE_MS = 32; // per-character typing speed
 const TIP_HOLD_MS = 3800; // pause on a fully-typed tip before advancing
@@ -401,7 +390,6 @@ function prefersReducedMotion(): boolean {
 // shown immediately and just cycles.
 function RotatingTip({ auxiliary = false }: { auxiliary?: boolean }) {
   const { t, locale } = useI18n();
-  const community = communityForLocale(locale);
   const [index, setIndex] = useState(0);
   const [typed, setTyped] = useState('');
   // Resolve tips each render but read them through a ref so the typing effect
@@ -449,7 +437,7 @@ function RotatingTip({ auxiliary = false }: { auxiliary?: boolean }) {
   }, [index, locale]);
 
   const tip = USEFUL_TIPS[index];
-  const tipUrl = tip?.key === 'designFiles.usefulInfoTip6' ? community.href : tip?.url;
+  const tipUrl = tip?.url;
 
   return (
     <div className={`df-useful-info${auxiliary ? ' df-useful-info-auxiliary' : ''}`}>

@@ -27,6 +27,16 @@ export function blockoutOutsideSafeArea(box: BlockoutBox, page: Pick<BlockoutPag
   return bounds.left < safe.left - 0.015 || bounds.top < safe.top - 0.015 || bounds.right > safe.right + 0.015 || bounds.bottom > safe.bottom + 0.015;
 }
 
+/** The side where a block runs furthest past the safe area, in millimetres on the printed page; null inside it. */
+export function blockoutMarginOverflow(box: BlockoutBox, page: Pick<BlockoutPage, 'widthMm' | 'heightMm' | 'safeMarginMm' | 'reservedHeaderMm' | 'reservedFooterMm'>): { side: 'left' | 'top' | 'right' | 'bottom'; mm: number } | null {
+  const bounds = blockoutBounds(box, page.widthMm / page.heightMm), safe = blockoutSafeArea(page);
+  const sides = [
+    { side: 'left' as const, mm: (safe.left - bounds.left) * page.widthMm / 100 }, { side: 'right' as const, mm: (bounds.right - safe.right) * page.widthMm / 100 },
+    { side: 'top' as const, mm: (safe.top - bounds.top) * page.heightMm / 100 }, { side: 'bottom' as const, mm: (bounds.bottom - safe.bottom) * page.heightMm / 100 },
+  ].sort((a, b) => b.mm - a.mm);
+  return sides[0]!.mm > 0 ? sides[0]! : null;
+}
+
 /** What a run-authored save moved so a page's body stays out of the applied header/footer reserve. Bands are % of page height. */
 export interface BlockoutReserveAdjustment { variantId: string; pageId: string; blockIds: string[]; from: Band; to: Band }
 /** A body that would have to shrink further is recomposed by its author, not squeezed by the host. */

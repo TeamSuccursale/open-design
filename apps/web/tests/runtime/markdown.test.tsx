@@ -62,6 +62,19 @@ describe('renderMarkdown', () => {
     expect(out).toContain('>here</a>');
   });
 
+  // Flow run 3 (27 October): the Blockout summary linked each document's comparison as
+  // `[**Relazione tecnica**](…)`, and the chat showed the asterisks.
+  it('renders bold, italic and code inside link text without nesting another link', () => {
+    const out = html(
+      '[**Relazione tecnica**](documents/a/blockout-comparison.html): tre strutture; [*nota* e `x.html`](b.html); [compose_report.py](c.py); [https://a.example](https://a.example)',
+    );
+    expect(out).toContain('<strong>Relazione tecnica</strong></a>');
+    expect(out).not.toContain('**');
+    expect(out).toContain('<em>nota</em> e <code class="md-inline-code">x.html</code></a>');
+    expect(out).toContain('>compose_report.py</a>');
+    expect(out.match(/<a /g)).toHaveLength(4);
+  });
+
   it('renders angle-wrapped destinations that contain spaces', () => {
     const out = html(
       '打开 [index.html](</Users/me/Library/Application Support/Open Design/project/index.html>)',

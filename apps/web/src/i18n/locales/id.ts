@@ -3941,6 +3941,8 @@ export const id: Dict = {
   'chat.runError.actionBlocked.busy': "Percakapan ini masih menjalankan tugas. Coba lagi setelah selesai.",
   'chat.support.channel.feishu': "Komunitas Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "Pengembang MelilloDesign (GitHub)",
+  'chat.support.openReport': "Laporkan masalah",
   'chat.amrBalanceOwner.title': 'Saldo tim tidak cukup',
   'chat.amrBalanceOwner.message': 'Saldo tim tidak cukup. Minta admin tim untuk mengisi ulang atau meningkatkan langganan.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Saldo tim tidak cukup. Minta admin tim untuk mengisi ulang atau meningkatkan langganan.',

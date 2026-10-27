@@ -662,7 +662,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
             rel="noreferrer noopener"
             onClick={linkClickHandler?.(href)}
           >
-            {m[4]}
+            {renderLinkLabel(m[4])}
           </a>,
         );
       } else {
@@ -699,6 +699,26 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
   if (lastIndex < text.length) {
     pushText(out, text.slice(lastIndex), key++, options);
   }
+  return <Fragment>{out}</Fragment>;
+}
+
+// Link text keeps its `code`, **bold** and *italic* runs but never autolinks,
+// so a link cannot nest another one. Underscore emphasis is left alone here:
+// link text is often a file name such as `compose_report.py`.
+function renderLinkLabel(label: string): ReactNode {
+  const out: ReactNode[] = [];
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(label))) {
+    if (m.index > lastIndex) out.push(label.slice(lastIndex, m.index));
+    if (m[1]) out.push(renderInlineCodeSpan(m[1].slice(1, -1), key++));
+    else if (m[2]) out.push(<strong key={key++}>{m[2].slice(2, -2)}</strong>);
+    else if (m[3]) out.push(<em key={key++}>{m[3].slice(1, -1)}</em>);
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < label.length) out.push(label.slice(lastIndex));
   return <Fragment>{out}</Fragment>;
 }
 

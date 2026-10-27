@@ -3941,6 +3941,8 @@ export const ja: Dict = {
   'chat.runError.actionBlocked.busy': "この会話ではまだ実行中のタスクがあります。終了後に再試行できます。",
   'chat.support.channel.feishu': "Feishu コミュニティ",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "MelilloDesign の開発者（GitHub）",
+  'chat.support.openReport': "報告を作成",
   'chat.amrBalanceOwner.title': 'チームの残高が不足しています',
   'chat.amrBalanceOwner.message': 'チームの残高が不足しています。チーム管理者にチャージまたはサブスクリプションのアップグレードを依頼してください。',
   'chat.amrBalanceOwner.messageNoOwnerName': 'チームの残高が不足しています。チーム管理者にチャージまたはサブスクリプションのアップグレードを依頼してください。',

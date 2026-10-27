@@ -836,7 +836,6 @@ async function confirmBlankDocument() {
   const dialog = await screen.findByRole('dialog', { name: 'Start a document project' });
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Project name' }), { target: { value: 'Antro — Test job' } });
   fireEvent.change(within(dialog).getByRole('combobox', { name: 'What is the project’s first document?' }), { target: { value: 'free' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
   fireEvent.click(within(dialog).getByRole('radio', { name: 'Create a new folder managed by the app' }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create project and open chat' }));
 }

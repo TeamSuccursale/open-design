@@ -22,7 +22,23 @@ describe('private project history Git', () => {
     expect(path.join(git.directory, 'objects', hash.slice(0, 2), hash.slice(2)).length).toBeGreaterThan(260);
     expect(await git.run(['cat-file', 'blob', hash])).toBe('pagina 1');
   });
-  it('rebuilds only the trees on a changed path, since every save captures the whole project', async () => {
+  it('gives the tree ids git gives, in the order git sorts folders, dotted and accented names', async () => {
+    base = await mkdtemp(path.join(tmpdir(), 'melillo-history-order-'));
+    const git = new ProjectHistoryGit(base);
+    await git.initialize();
+    const names = ['foo/a.txt', 'foo.txt', 'foo-bar/b.txt', 'foo0', 'àccento.md', 'Zeta.md', 'a b/c.txt', 'eseguibile.sh', 'cartella/sotto/profonda.json'];
+    const files = await Promise.all(names.map(async (name) => ({ path: name, hash: await git.blob(Buffer.from(name)), size: name.length, mode: name.endsWith('.sh') ? 0o755 : 0o644 })));
+    // One `git mktree` per folder, children first: git sorts the entries itself.
+    const reference = async (prefix: string): Promise<string> => {
+      const below = files.filter((file) => file.path.startsWith(prefix)).map((file) => ({ ...file, rest: file.path.slice(prefix.length) }));
+      const folders = [...new Set(below.filter((file) => file.rest.includes('/')).map((file) => file.rest.split('/')[0]!))];
+      const entries = [...await Promise.all(folders.map(async (folder) => `040000 tree ${await reference(`${prefix}${folder}/`)}\t${folder}\0`)),
+        ...below.filter((file) => !file.rest.includes('/')).map((file) => `${file.mode & 0o111 ? '100755' : '100644'} blob ${file.hash}\t${file.rest}\0`)];
+      return (await git.run(['mktree', '-z'], Buffer.from(entries.join('')))).trim();
+    };
+    expect(await historyTree(git, files)).toBe(await reference(''));
+  });
+  it('writes the trees of a changed path with one git process, and none when nothing changed', async () => {
     base = await mkdtemp(path.join(tmpdir(), 'melillo-history-trees-'));
     const git = new ProjectHistoryGit(base);
     await git.initialize();
@@ -32,10 +48,12 @@ describe('private project history Git', () => {
     const run = vi.spyOn(git, 'run');
     const changed = [files[0]!, await file('blockouts/tavole/page-1.blockout.json', '2 bis'), files[2]!, files[3]!];
     const second = await historyTree(git, changed);
-    // tavole, blockouts and the root: relazione and intake are unchanged.
-    expect(run.mock.calls.filter(([args]) => args[0] === 'mktree')).toHaveLength(3);
+    // tavole, blockouts and the root change; relazione and intake are already written.
+    expect(run.mock.calls.filter(([args]) => args[0] === 'mktree')).toHaveLength(1);
     expect(second).not.toBe(first);
+    run.mockClear();
     expect(await historyTree(git, files)).toBe(first);
+    expect(run).not.toHaveBeenCalled();
     expect((await git.run(['cat-file', '-t', first])).trim()).toBe('tree');
   });
   it.runIf(process.platform === 'win32')('explains a data folder too deep for Git instead of passing on its raw error', async () => {

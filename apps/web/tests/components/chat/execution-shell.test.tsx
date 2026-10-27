@@ -8,7 +8,7 @@
  * 手捏的话组件与数据层可能各自漂移,接起来才发现对不上。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import type { PersistedAgentEvent } from '@open-design/contracts';
 import { I18nProvider } from '../../../src/i18n';
@@ -192,7 +192,9 @@ describe('没有清单:平铺', () => {
       ...call('t1', 'Bash', { command: 'cat 规格.md' }),
     ], 'running');
     render(<ExecutionShell shell={shell as ShellData} deferCollapsedBodies={false} />);
-    expect(screen.getByText('我先看一下工作区里的规格文件。')).toBeTruthy();
+    // 壳头在运行中会复述最近一句(D54),这里只看壳 body
+    const body = document.querySelector<HTMLElement>('details > div[class*="body"]')!;
+    expect(within(body).getByText('我先看一下工作区里的规格文件。')).toBeTruthy();
     // 工具行照旧在壳里,而且排在那句话后面
     expect(screen.getByText('读取')).toBeTruthy();
   });

@@ -3941,6 +3941,8 @@ export const tr: Dict = {
   'chat.runError.actionBlocked.busy': "Bu sohbette hâlâ süren bir görev var. Bittiğinde yeniden deneyebilirsiniz.",
   'chat.support.channel.feishu': "Feishu topluluğu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "MelilloDesign geliştiricisi (GitHub)",
+  'chat.support.openReport': "Sorun bildir",
   'chat.amrBalanceOwner.title': 'Ekip bakiyesi yetersiz',
   'chat.amrBalanceOwner.message': 'Ekibinizin bakiyesi yetersiz. Ekip yöneticisinden bakiye yüklemesini veya aboneliği yükseltmesini isteyin.',
   'chat.amrBalanceOwner.messageNoOwnerName': 'Ekibinizin bakiyesi yetersiz. Ekip yöneticisinden bakiye yüklemesini veya aboneliği yükseltmesini isteyin.',

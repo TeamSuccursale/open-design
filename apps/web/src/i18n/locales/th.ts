@@ -3941,6 +3941,8 @@ export const th: Dict = {
   'chat.runError.actionBlocked.busy': "บทสนทนานี้ยังมีงานที่กำลังทำงานอยู่ ลองใหม่ได้เมื่องานเสร็จ",
   'chat.support.channel.feishu': "ชุมชน Feishu",
   'chat.support.channel.discord': "Discord",
+  'chat.support.channel.developer': "ผู้พัฒนา MelilloDesign (GitHub)",
+  'chat.support.openReport': "รายงานปัญหา",
   'chat.amrBalanceOwner.title': 'ยอดคงเหลือของทีมไม่เพียงพอ',
   'chat.amrBalanceOwner.message': 'ยอดคงเหลือของทีมไม่เพียงพอ โปรดติดต่อผู้ดูแลทีมเพื่อเติมเงินหรืออัปเกรดการสมัครใช้งาน',
   'chat.amrBalanceOwner.messageNoOwnerName': 'ยอดคงเหลือของทีมไม่เพียงพอ โปรดติดต่อผู้ดูแลทีมเพื่อเติมเงินหรืออัปเกรดการสมัครใช้งาน',

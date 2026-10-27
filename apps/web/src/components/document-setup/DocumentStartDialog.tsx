@@ -8,7 +8,6 @@ import { fetchProjectLocations } from '../../state/project-locations';
 import { RequestDeadlineError, withRequestDeadline } from '../../runtime/request-deadline';
 import { useCreationWait } from '../useCreationWait';
 import { Icon } from '../Icon';
-import { DocumentWizardSteps } from './DocumentWizardSteps';
 import styles from './DocumentSetup.module.css';
 
 export interface DocumentStartDraft { projectName: string; intent: DocumentSetupIntent; workingDir: string | null; workingDirToken?: string }
@@ -37,12 +36,12 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
   const confirming = useRef(false);
   const validation = useRef<AbortController | null>(null);
   const creation = useCreationWait();
-  const [step, setStep] = useState<0 | 1>(0);
   const [managedLocation, setManagedLocation] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [locationRetry, setLocationRetry] = useState(0);
+  const managed = destination === 'managed';
   useEffect(() => {
-    if (step !== 1) return;
+    if (!managed) return;
     let canceled = false;
     const controller = new AbortController();
     setLocationStatus('loading');
@@ -52,9 +51,9 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
       setManagedLocation(path); setLocationStatus(path ? 'ready' : 'error');
     }).catch(() => { if (!canceled) { setManagedLocation(null); setLocationStatus('error'); } });
     return () => { canceled = true; controller.abort(); };
-  }, [step, locationRetry]);
+  }, [managed, locationRetry]);
   useEffect(() => () => validation.current?.abort(), []);
-  const stepName = (['document', 'folders'] as const)[step];
+  const ready = projectName.trim() && namedDocument && kind && (kind === 'free' || subtype) && destination && (destination !== 'folder' || folder.trim());
   async function pick(extra = false) {
     setError(''); setBusy(true);
     try {
@@ -73,7 +72,7 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
     finally { setBusy(false); }
   }
   async function confirm() {
-    if (confirming.current || busy || !projectName.trim() || !namedDocument || !kind || !destination) return;
+    if (confirming.current || busy || !ready) return;
     confirming.current = true;
     setBusy(true); setError(''); setValidationExpired(false);
     const controller = new AbortController();
@@ -95,11 +94,10 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
     } catch (failure) { setValidationExpired(failure instanceof RequestDeadlineError); setError(failure instanceof RequestDeadlineError ? t('documentStart.validationTimeout') : failure instanceof Error && !('issues' in failure) ? failure.message : t('documentStart.required')); }
     finally { validation.current = null; confirming.current = false; setBusy(false); }
   }
+  // One screen, one button: the team asked for the agent to guide the work instead of a numbered wizard.
   return <Dialog ariaLabel={t('documentStart.title')} className={styles.dialog} backdropClassName={styles.backdrop} includeChromeClassName={false} closeOnBackdrop={false}>
-    <DocumentWizardSteps step={step} />
-    <header className={styles.header}><div><h2>{t(`documentWizard.title.${stepName}`)}</h2><p>{t(`documentWizard.intro.${stepName}`)}</p></div><Button variant="ghost" aria-label={t('common.close')} disabled={busy} onClick={onCancel}><Icon name="close" size={20} /></Button></header>
+    <header className={styles.header}><div><h2>{t('documentWizard.title.document')}</h2><p>{t('documentWizard.intro.document')}</p></div><Button variant="ghost" aria-label={t('common.close')} disabled={busy} onClick={onCancel}><Icon name="close" size={20} /></Button></header>
     <div className={styles.form}>
-      {step === 0 && <>
       <label>{t('documentStart.projectName')}<Input value={projectName} maxLength={240} disabled={busy} placeholder={t('documentStart.projectNameHint')} onChange={(event) => setProjectName(event.target.value)} /></label>
       <p>{t('documentStart.projectScopeHint')}</p>
       <div className={styles.twoColumns}><label>{t('documentStart.kind')}<Select value={kind} onChange={(event) => { setKind(event.target.value as typeof kind); setPreset(''); }} disabled={busy}>
@@ -107,8 +105,6 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
       </Select></label>{kind && kind in presets && <label>{t('documentStart.preset')}<Select value={preset} disabled={busy} onChange={(event) => setPreset(event.target.value)}><option value="">{t('documentStart.choosePreset')}</option>{presets[kind as keyof typeof presets].map((value) => <option key={value} value={value}>{t(`documentStart.preset.${value}`)}</option>)}</Select></label>}</div>
       {(kind === 'other' || preset === 'other') && <label>{t('documentStart.customType')}<Input value={customType} maxLength={120} disabled={busy} onChange={(event) => setCustomType(event.target.value)} /></label>}
       <label>{t('documentStart.documentName')}<Input value={documentNameEdited ? documentName : namedDocument} maxLength={240} disabled={busy} onChange={(event) => { setDocumentNameEdited(true); setDocumentName(event.target.value); }} /></label>
-      </>}
-      {step === 1 && <>
       <section className={styles.folderSection}><h3>{t('documentStart.destination')}</h3><p>{t('documentStart.destinationHint')}</p>
         <div className={styles.destinationChoices}><label><input type="radio" name="destination" disabled={busy} checked={destination === 'folder'} onChange={() => setDestination('folder')} />{t('documentStart.useFolder')}</label><label><input type="radio" name="destination" disabled={busy} checked={destination === 'managed'} onChange={() => setDestination('managed')} />{t('documentStart.managed')}</label></div>
         {destination === 'folder' && <div className={styles.folderRow}><Input aria-label={t('documentStart.workingFolder')} placeholder={t('documentStart.workingFolderHint')} value={folder} disabled={busy} onChange={(event) => { setFolder(event.target.value); setToken(undefined); }} /><Button variant="secondary" disabled={busy} onClick={() => void pick()}>{t('documentStart.browse')}</Button></div>}
@@ -117,13 +113,12 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
         <Button variant="ghost" disabled={busy} onClick={() => void pick(true)}><Icon name="plus" size={15} />{t('documentStart.addContextFolder')}</Button><small>{t('documentStart.contextReadonly')}</small>
         <p className={styles.wizardNext}>{t('documentStart.folderNext')}</p>
       </section>
-      </>}
       {error && <p role="alert" className={styles.error}>{error}</p>}
       {creation.slow && <div role="status"><p>{t('projectCreation.slow')}</p><Button variant="secondary" onClick={creation.continueWaiting}>{t('projectCreation.continueWaiting')}</Button></div>}
     </div>
     <footer className={styles.footer}>
-      <Button variant="ghost" disabled={busy} onClick={() => { setError(''); if (step === 0) onCancel(); else setStep(0); }}>{t(step === 0 ? 'common.cancel' : 'documentWizard.back')}</Button>
-      {step === 0 ? <Button variant="primary" disabled={busy || !projectName.trim() || !namedDocument || !kind || (kind !== 'free' && !subtype)} onClick={() => { setError(''); setStep(1); }}>{t('documentWizard.next')}</Button> : <Button variant="primary" disabled={busy || !projectName.trim() || !namedDocument || !destination || (destination === 'folder' && !folder.trim())} onClick={() => void confirm()}>{busy ? t('common.loading') : t(validationExpired ? 'documentStart.retryValidation' : 'documentStart.openChat')}</Button>}
+      <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('common.cancel')}</Button>
+      <Button variant="primary" disabled={busy || !ready} onClick={() => void confirm()}>{busy ? t('common.loading') : t(validationExpired ? 'documentStart.retryValidation' : 'documentStart.openChat')}</Button>
     </footer>
   </Dialog>;
 }

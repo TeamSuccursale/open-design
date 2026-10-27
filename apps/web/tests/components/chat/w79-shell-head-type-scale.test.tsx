@@ -240,7 +240,8 @@ function headWord(root: HTMLElement): HTMLElement {
     flatOf(root).querySelector<HTMLElement>(`:scope > summary > .${cls('summaryContent')}`),
     '壳头',
   );
-  const spans = [...content.querySelectorAll<HTMLElement>(':scope > span:not([data-orb])')];
+  // MelilloDesign (D54): the running header's latest sentence follows the status word; it is not the word.
+  const spans = [...content.querySelectorAll<HTMLElement>(':scope > span:not([data-orb]):not([data-testid="chat-record-latest-update"])')];
   return need(spans[spans.length - 1], '壳头的状态词');
 }
 

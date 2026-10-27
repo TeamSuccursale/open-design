@@ -27,10 +27,8 @@ function chooseFolder(path: string) {
   fireEvent.change(screen.getByLabelText(text('workingFolder')), { target: { value: path } });
 }
 const createButton = () => screen.getByRole('button', { name: text('openChat') });
-const nextButton = () => screen.getByRole('button', { name: wizard('next') });
-async function nextToFolders() { fireEvent.click(nextButton()); await screen.findByRole('radio', { name: text('managed') }); }
-async function goToFolders(kind = 'free') { chooseKind(kind); await nextToFolders(); }
-function back() { fireEvent.click(screen.getByRole('button', { name: wizard('back') })); }
+// One screen: the folder choices sit under the document fields, so there is no step to move to.
+async function goToFolders(kind = 'free') { chooseKind(kind); }
 
 beforeEach(() => {
   vi.mocked(fetchProjectLocations).mockResolvedValue([{ id: 'default', name: 'App projects', path: 'C:/TestRuntime/projects', builtIn: true }]);
@@ -53,9 +51,9 @@ describe('new document project setup', () => {
     const { onConfirm } = setup(); chooseKind('report'); choosePreset('technical');
     expect((screen.getByLabelText(text('documentName')) as HTMLInputElement).value).toBe(text('preset.technical'));
     fireEvent.change(screen.getByLabelText(text('documentName')), { target: { value: 'Relazione B — metodo' } });
-    await nextToFolders(); back();
+    chooseFolder('C:/Working'); chooseManaged();
     expect((screen.getByLabelText(text('documentName')) as HTMLInputElement).value).toBe('Relazione B — metodo');
-    await nextToFolders(); chooseManaged(); fireEvent.click(createButton());
+    fireEvent.click(createButton());
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent).toMatchObject({ documentName: 'Relazione B — metodo' });
   });
@@ -128,61 +126,61 @@ describe('new document project setup', () => {
     expect(createButton().hasAttribute('disabled')).toBe(false);
   });
   it('requires a project name independently of the document type and preserves the typed name', async () => {
-    const {onConfirm}=setup({initialProjectName:''});chooseKind();
-    expect(nextButton().hasAttribute('disabled')).toBe(true);
+    const {onConfirm}=setup({initialProjectName:''});chooseKind();chooseManaged();
+    expect(createButton().hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByRole('textbox',{name:'Project name'}),{target:{value:'  Antro — Test job  '}});
-    await nextToFolders();chooseManaged();fireEvent.click(createButton());
+    fireEvent.click(createButton());
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].projectName).toBe('Antro — Test job');
   });
-  it('requires explicit document type and destination in only two screens before opening chat', async () => {
+  // The night run of 27 October still met two numbered screens before the chat; the team asked for the
+  // agent to guide instead of a wizard, so name, document and folders are one screen with one button.
+  it('asks for the document type and the destination on one screen, with no steps, before opening chat', async () => {
     const { onConfirm } = setup();
+    expect(screen.queryByRole('list', { name: wizard('progress') })).toBeNull();
+    expect(screen.queryByRole('button', { name: wizard('next') })).toBeNull();
     expect((screen.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('');
-    expect(screen.queryByRole('radio')).toBeNull(); expect(screen.queryByRole('checkbox')).toBeNull();
-    expect(screen.queryByLabelText(text('purpose'))).toBeNull();
-    expect(nextButton().hasAttribute('disabled')).toBe(true); fireEvent.click(nextButton());
-    expect(onConfirm).not.toHaveBeenCalled(); expect(dirExists).not.toHaveBeenCalled();
-    await goToFolders();
-    expect(screen.queryByLabelText(text('kind'))).toBeNull(); expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
+    expect(screen.queryByRole('checkbox')).toBeNull(); expect(screen.queryByLabelText(text('purpose'))).toBeNull();
     expect(createButton().hasAttribute('disabled')).toBe(true);
-    expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    chooseManaged(); expect(onConfirm).not.toHaveBeenCalled();
+    chooseManaged(); expect(createButton().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(createButton()); expect(onConfirm).not.toHaveBeenCalled(); expect(dirExists).not.toHaveBeenCalled();
+    chooseKind(); expect(createButton().hasAttribute('disabled')).toBe(false);
     fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent.imageIntakeConsent).toBe(false);
   });
 
   it.each([['report', 'technical'], ['tender-offer', 'methodology'], ['tender-form', 'official-form']])('requires a preset for %s', async (kind, preset) => {
-    const { onConfirm } = setup(); chooseKind(kind);
-    expect(nextButton().hasAttribute('disabled')).toBe(true); fireEvent.click(nextButton()); expect(onConfirm).not.toHaveBeenCalled();
-    choosePreset(preset); await nextToFolders(); chooseManaged(); fireEvent.click(createButton());
+    const { onConfirm } = setup(); chooseKind(kind); chooseManaged();
+    expect(createButton().hasAttribute('disabled')).toBe(true); fireEvent.click(createButton()); expect(onConfirm).not.toHaveBeenCalled();
+    choosePreset(preset); fireEvent.click(createButton());
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0]).toMatchObject({ workingDir: null, intent: { kind, subtype: text(`preset.${preset}`), purpose: 'Prepare the project report', imageIntakeConsent: false } });
   });
 
   it.each(['report', 'tender-offer', 'tender-form', 'other'])('requires a meaningful custom type for %s', async (kind) => {
-    const { onConfirm } = setup(); chooseKind(kind); if (kind !== 'other') choosePreset('other');
-    expect(nextButton().hasAttribute('disabled')).toBe(true);
+    const { onConfirm } = setup(); chooseKind(kind); if (kind !== 'other') choosePreset('other'); chooseManaged();
+    expect(createButton().hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByLabelText(text('customType')), { target: { value: '   ' } });
-    expect(nextButton().hasAttribute('disabled')).toBe(true);
+    expect(createButton().hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByLabelText(text('customType')), { target: { value: '  Structural condition study  ' } });
-    await nextToFolders(); chooseManaged(); fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
+    fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent).toMatchObject({ kind, subtype: 'Structural condition study' });
   });
 
   it('lets a free document open chat without a subtype or separate written purpose', async () => {
-    const { onConfirm } = setup({ purpose: '' }); chooseKind();
+    const { onConfirm } = setup({ purpose: '' }); chooseKind(); chooseManaged();
     expect(screen.queryByLabelText(text('preset'))).toBeNull(); expect(screen.queryByLabelText(text('customType'))).toBeNull();
-    expect(screen.queryByLabelText(text('purpose'))).toBeNull(); expect(nextButton().hasAttribute('disabled')).toBe(false);
-    await nextToFolders(); chooseManaged(); fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
+    expect(screen.queryByLabelText(text('purpose'))).toBeNull(); expect(createButton().hasAttribute('disabled')).toBe(false);
+    fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent).toMatchObject({ kind: 'free', subtype: '', imageIntakeConsent: false });
     expect(onConfirm.mock.calls[0]![0].intent.purpose.trim().length).toBeGreaterThan(0);
   });
 
   it('requires a fresh preset after changing category', () => {
-    setup(); chooseKind('report'); choosePreset('technical'); expect(nextButton().hasAttribute('disabled')).toBe(false);
+    setup(); chooseManaged(); chooseKind('report'); choosePreset('technical'); expect(createButton().hasAttribute('disabled')).toBe(false);
     chooseKind('tender-offer'); expect((screen.getByLabelText(text('preset')) as HTMLSelectElement).value).toBe('');
-    expect(nextButton().hasAttribute('disabled')).toBe(true);
+    expect(createButton().hasAttribute('disabled')).toBe(true);
   });
 
   it('forwards the actual working directory separately from trimmed, deduplicated context folders', async () => {
@@ -197,7 +195,7 @@ describe('new document project setup', () => {
   it('preserves explicitly preselected folders without choosing a document type on the user’s behalf', async () => {
     const { onConfirm } = setup({ initialFolder: 'C:\\Projects\\Existing', initialContextRoots: ['C:\\References\\Previous'] });
     expect((screen.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('');
-    expect(nextButton().hasAttribute('disabled')).toBe(true);
+    expect(createButton().hasAttribute('disabled')).toBe(true);
     await goToFolders();
     expect((screen.getByRole('radio', { name: text('useFolder') }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:\\Projects\\Existing');
@@ -215,7 +213,7 @@ describe('new document project setup', () => {
 
   it('preserves an existing brief and defers preparation and image permission to chat', async () => {
     const { onConfirm } = setup({ purpose: '  Explain the recorded survey findings  ' }); chooseKind('report'); choosePreset('survey');
-    await nextToFolders(); chooseManaged(); expect(screen.queryByRole('checkbox')).toBeNull(); fireEvent.click(createButton());
+    chooseManaged(); expect(screen.queryByRole('checkbox')).toBeNull(); fireEvent.click(createButton());
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(onConfirm.mock.calls[0]![0].intent).toMatchObject({ purpose: 'Explain the recorded survey findings', imageIntakeConsent: false });
   });
@@ -320,13 +318,11 @@ describe('new document project setup', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce()); expect(onConfirm.mock.calls[0]![0].workingDir).toBe('C:\\Working');
   });
 
-  it('preserves preset, folders and a native grant when moving backward and forward', async () => {
+  it('keeps preset, folders and a native grant together on the one screen', async () => {
     const { onConfirm } = setup({ initialFolder: 'C:\\SurveyReport', initialWorkingDirToken: 'survey-grant' }); chooseKind('report'); choosePreset('survey');
-    expect(screen.getByRole('listitem', { current: 'step' }).textContent).toContain(wizard('step.document'));
-    await nextToFolders(); fireEvent.change(screen.getByLabelText(text('extraFolders')), { target: { value: 'C:\\SurveySources' } });
-    expect(screen.getByRole('listitem', { current: 'step' }).textContent).toContain(wizard('step.folders')); back();
+    fireEvent.change(screen.getByLabelText(text('extraFolders')), { target: { value: 'C:\\SurveySources' } });
     expect((screen.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('report');
-    expect((screen.getByLabelText(text('preset')) as HTMLSelectElement).value).toBe('survey'); await nextToFolders();
+    expect((screen.getByLabelText(text('preset')) as HTMLSelectElement).value).toBe('survey');
     expect((screen.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:\\SurveyReport');
     expect((screen.getByLabelText(text('extraFolders')) as HTMLTextAreaElement).value).toBe('C:\\SurveySources');
     expect(onConfirm).not.toHaveBeenCalled(); fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
@@ -338,7 +334,6 @@ describe('new document project setup', () => {
     const { onCancel } = setup({ onConfirm }); await goToFolders(); chooseFolder('C:\\ChosenWorkingFolder');
     fireEvent.change(screen.getByLabelText(text('extraFolders')), { target: { value: 'C:\\ChosenReference' } }); fireEvent.click(createButton());
     expect((await screen.findByRole('alert')).textContent).toContain(wizard('createFailed'));
-    expect(screen.getByRole('listitem', { current: 'step' }).textContent).toContain(wizard('step.folders'));
     expect((screen.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:\\ChosenWorkingFolder'); expect(onCancel).not.toHaveBeenCalled();
     fireEvent.click(createButton()); await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
     expect(onConfirm.mock.calls[1]![0]).toEqual(onConfirm.mock.calls[0]![0]); await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
@@ -352,7 +347,7 @@ describe('new document project setup', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce());
     expect(button.hasAttribute('disabled')).toBe(true);
     expect((screen.getByLabelText(text('extraFolders')) as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.getByRole('button', { name: wizard('back') }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: en['common.cancel'] }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(button); expect(onConfirm).toHaveBeenCalledOnce();
     await act(async () => { finishCreate(false); });
     expect(screen.getByRole('alert').textContent).toContain(wizard('createFailed'));
@@ -363,7 +358,7 @@ describe('new document project setup', () => {
     const onConfirm = vi.fn().mockRejectedValue(new Error('Could not create the project'));
     setup({ onConfirm }); await goToFolders(); chooseManaged(); fireEvent.click(createButton());
     expect((await screen.findByRole('alert')).textContent).toContain('Could not create the project');
-    expect(screen.getByRole('listitem', { current: 'step' }).textContent).toContain(wizard('step.folders'));
+    expect(screen.getByLabelText(text('projectName'))).toBeTruthy();
     expect(createButton().hasAttribute('disabled')).toBe(false);
   });
 

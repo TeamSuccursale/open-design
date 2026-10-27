@@ -11,11 +11,11 @@ vi.mock('../../src/providers/registry', async (importOriginal) => ({
   dirExists: vi.fn(), openFolderDialog: vi.fn(),
 }));
 const text = (key: string) => en[`documentStart.${key}` as keyof typeof en];
-const wizardText = (key: string) => en[`documentWizard.${key}` as keyof typeof en];
-async function nextToFolders(dialog: ReturnType<typeof within>) {
+// The dialog is one screen: naming the project is all that stands between the document fields and the folders.
+async function nameProject(dialog: ReturnType<typeof within>) {
   const projectName=dialog.getByRole('textbox',{name:text('projectName')}) as HTMLInputElement;
   if(!projectName.value)fireEvent.change(projectName,{target:{value:'Survey project'}});
-  fireEvent.click(dialog.getByRole('button', { name: wizardText('next') })); await dialog.findByRole('radio', { name: text('managed') });
+  await dialog.findByRole('radio', { name: text('managed') });
 }
 class ResizeObserverMock { observe() {} disconnect() {} unobserve() {} }
 function setup() {
@@ -35,7 +35,7 @@ describe('New Project document setup', () => {
     const dialog = within(await screen.findByRole('dialog', { name: text('title') }));
     expect((dialog.getByLabelText(text('kind')) as HTMLSelectElement).value).toBe('');
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'free' } });
-    await nextToFolders(dialog);
+    await nameProject(dialog);
     fireEvent.click(dialog.getByRole('radio', { name: text('managed') }));
     fireEvent.click(dialog.getByRole('button', { name: text('openChat') }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
@@ -50,7 +50,7 @@ describe('New Project document setup', () => {
     const dialog = within(await screen.findByRole('dialog', { name: text('title') }));
     fireEvent.change(dialog.getByLabelText(text('kind')), { target: { value: 'report' } });
     fireEvent.change(dialog.getByLabelText(text('preset')), { target: { value: 'survey' } });
-    await nextToFolders(dialog);
+    await nameProject(dialog);
     fireEvent.click(dialog.getByRole('radio', { name: text('useFolder') }));
     fireEvent.change(dialog.getByLabelText(text('workingFolder')), { target: { value: 'C:\\Projects\\SurveyReport' } });
     fireEvent.change(dialog.getByLabelText(text('extraFolders')), { target: { value: 'C:\\References\\PreviousReport\nC:\\References\\Photos' } });
