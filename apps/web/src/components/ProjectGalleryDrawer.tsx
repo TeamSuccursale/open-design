@@ -29,6 +29,9 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
   const [edge, setEdge] = useState<'top' | 'bottom'>(() => {
     try { return localStorage.getItem('melillodesign:gallery-edge') === 'top' ? 'top' : 'bottom'; } catch { return 'bottom'; }
   });
+  const [order, setOrder] = useState<'newest' | 'oldest'>(() => {
+    try { return localStorage.getItem('melillodesign:gallery-order') === 'oldest' ? 'oldest' : 'newest'; } catch { return 'newest'; }
+  });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -76,7 +79,13 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
 
   const visible = useMemo(() => {
     const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-    return catalog.assets.filter((asset) => {
+    // Items follow when their source arrived in the project; equal times keep the catalog's page order.
+    const added = new Map(catalog.documents.map((document) => [document.id, Date.parse(document.addedAt ?? document.updatedAt) || 0]));
+    const direction = order === 'oldest' ? 1 : -1;
+    return catalog.assets.map((asset, index) => ({ asset, index, time: added.get(asset.documentId) ?? 0 }))
+      .sort((a, b) => (a.time - b.time) * direction || a.index - b.index)
+      .map(({ asset }) => asset)
+      .filter((asset) => {
       if (kind && asset.kind !== kind) return false;
       // Page previews appear while extraction runs. Finished figures take
       // their place in the default view; full pages remain in their filter.
@@ -84,7 +93,7 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
       const text = [asset.title, asset.description, asset.sourceName, ...asset.tags].join(' ').toLocaleLowerCase();
       return terms.every((term) => text.includes(term));
     });
-  }, [catalog.assets, kind, query]);
+  }, [catalog.assets, catalog.documents, kind, order, query]);
   const chosen = catalog.assets.filter((asset) => Object.hasOwn(selection, asset.id));
   const processing = catalog.documents.some((document) => ['queued', 'processing'].includes(document.status));
 
@@ -142,6 +151,10 @@ export function ProjectGalleryDrawer({ projectId, open, workspaceContext, onClos
           <Input ref={search} aria-label={t('intake.search')} placeholder={t('intake.search')} value={query} onChange={(event) => setQuery(event.target.value)} />
           <select aria-label={t('intake.filter')} value={kind} onChange={(event) => setKind(event.target.value)}>
             {['all', 'image', 'drawing', 'chart', 'table', 'page'].map((value) => <option key={value} value={value === 'all' ? '' : value}>{t(`intake.kind.${value}` as 'intake.kind.all')}</option>)}
+          </select>
+          <select aria-label={t('intake.sort')} value={order} onChange={(event) => { const next = event.target.value === 'oldest' ? 'oldest' : 'newest'; setOrder(next); try { localStorage.setItem('melillodesign:gallery-order', next); } catch {} }}>
+            <option value="newest">{t('intake.sortNewest')}</option>
+            <option value="oldest">{t('intake.sortOldest')}</option>
           </select>
           <input ref={upload} className={styles.fileInput} type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void intake(files); }} />
           <Button variant="secondary" disabled={busy} onClick={() => upload.current?.click()}><Icon name="attach" size={16} />{t('intake.addDocuments')}</Button>

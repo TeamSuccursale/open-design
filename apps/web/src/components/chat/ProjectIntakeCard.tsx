@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@open-design/components';
-import { intakeSourceLabel, type WorkspaceCollabContext } from '@open-design/contracts';
+import { intakeSourceLabel, isIntakeImageSource, type ProjectIntakeCatalog, type WorkspaceCollabContext } from '@open-design/contracts';
 import { useT } from '../../i18n';
 import { projectRawUrl } from '../../providers/registry';
 import { fetchProjectIntake, OPEN_PROJECT_GALLERY_EVENT } from '../../providers/project-intake';
@@ -9,6 +9,11 @@ import type { IntakeStatusSnapshot } from '../../runtime/chat/project-preparatio
 import { Icon } from '../Icon';
 import { ProjectLogoSources } from '../header-footer/ProjectLogoSources';
 import styles from './ProjectIntakeCard.module.css';
+
+/** A Fast project always has the card; a document chat gets it for PDFs taken in, not for the images its chats send quietly to the gallery. */
+export function intakeCardShown(fast: boolean, catalog: ProjectIntakeCatalog | null | undefined): boolean {
+  return fast || Boolean(catalog?.documents.some((document) => !isIntakeImageSource(document.sourcePath)));
+}
 
 export function ProjectIntakeCard({ projectId, workspaceContext, snapshot, sourceNames }: {
   projectId: string; workspaceContext?: WorkspaceCollabContext | null; snapshot: IntakeStatusSnapshot | null; sourceNames: string[];

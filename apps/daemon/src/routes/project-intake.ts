@@ -1,6 +1,7 @@
 import type { Express } from 'express';
-import { buildIntakeVectorProposal, type IntakeVectorProposalRequest, type StartProjectIntakeRequest } from '@open-design/contracts';
+import { buildIntakeVectorProposal, intakeImagesFromAttachments, type IntakeVectorProposalRequest, type StartProjectIntakeRequest } from '@open-design/contracts';
 import type { RouteDeps } from '../server-context.js';
+import { listProjectUserAttachments } from '../db.js';
 import { resolveProjectDir } from '../projects.js';
 import { ProjectIntakeService } from '../services/project-intake.js';
 import { requireLocalDaemonRequest } from '../http/local-daemon-request.js';
@@ -84,13 +85,21 @@ export function registerProjectIntakeRoutes(app: Express, ctx: RegisterProjectIn
       const input = req.body as StartProjectIntakeRequest | null;
       if (!input || typeof input !== 'object' || Array.isArray(input)
         || (input.retry !== undefined && typeof input.retry !== 'boolean')
+        || (input.attached !== undefined && typeof input.attached !== 'boolean')
         || (input.paths !== undefined && (!Array.isArray(input.paths) || !input.paths.every((entry) => typeof entry === 'string')))
         || (input.pages !== undefined && (!Array.isArray(input.pages) || !input.pages.length || !input.pages.every((page) => Number.isInteger(page) && page > 0)))) {
         ctx.http.sendApiError(res, 400, 'BAD_REQUEST', 'Expected PDF or image paths and optional positive page numbers'); return;
       }
       const root = resolveProjectDir(ctx.paths.PROJECTS_DIR, project.id, project.metadata);
+      // A folder scan and the quiet `attached` top-up both take in the images sent in the chats; named paths stay as given.
+      const attachedImages = input.attached || !input.paths ? intakeImagesFromAttachments(listProjectUserAttachments(ctx.db, project.id)) : [];
+      if (input.attached) {
+        // Every project open asks; when the gallery already has them all there is nothing to snapshot.
+        const catalog = await service.catalog(root);
+        if (attachedImages.every((image) => catalog.documents.some((document) => document.sourcePath === image))) { res.status(202).json(catalog); return; }
+      }
       await ctx.history?.store(project.id, root);
-      res.status(202).json(await service.start(root, input));
+      res.status(202).json(await service.start(root, input, attachedImages));
     } catch (error) { ctx.http.sendApiError(res, 400, 'INTAKE_FAILED', error instanceof Error ? error.message : String(error)); }
   });
 }

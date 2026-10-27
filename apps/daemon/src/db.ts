@@ -10,6 +10,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type {
+  ChatAttachment,
   ChatMessage,
   ChatSessionMode,
   CollabCloudComment,
@@ -3004,6 +3005,26 @@ export function listSiblingRunDoneKeys(
 export function listMessages(db: SqliteDb, conversationId: string) {
   return observeRead('conversation_messages', () => listMessagesUnobserved(db, conversationId), {
     rows: (result) => result.length,
+  });
+}
+
+/** Every attachment the engineer sent in any of the project's chats, oldest message first. */
+export function listProjectUserAttachments(db: SqliteDb, projectId: string): ChatAttachment[] {
+  const rows = db
+    .prepare(
+      `SELECT m.attachments_json AS attachmentsJson
+         FROM messages m JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.project_id = ? AND m.role = 'user' AND m.attachments_json IS NOT NULL
+        ORDER BY m.created_at ASC, m.position ASC`,
+    )
+    .all(projectId) as Array<{ attachmentsJson: string }>;
+  return rows.flatMap((row) => {
+    try {
+      const parsed: unknown = JSON.parse(row.attachmentsJson);
+      return Array.isArray(parsed) ? parsed.filter((item): item is ChatAttachment => typeof item?.path === 'string') : [];
+    } catch {
+      return [];
+    }
   });
 }
 

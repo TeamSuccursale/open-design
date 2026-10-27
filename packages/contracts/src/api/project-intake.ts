@@ -1,10 +1,30 @@
 /** Project-local PDF and image extraction shared by the UI and the od intake CLI. */
+import type { ChatAttachment } from './chat.js';
+
 export const INTAKE_IMAGE_SOURCE = /\.(png|jpe?g|webp)$/i;
 /** A raster image enters the gallery whole, as one asset, instead of being split into pages and figures. */
 export function isIntakeImageSource(path: string): boolean { return INTAKE_IMAGE_SOURCE.test(path); }
 /** Where an asset came from, for labels: a whole image has no page to name, a PDF figure does. */
 export function intakeSourceLabel(asset: { sourceName: string; sourcePath: string; page: number }, paged: (name: string, page: number) => string): string {
   return isIntakeImageSource(asset.sourcePath) ? asset.sourceName : paged(asset.sourceName, asset.page);
+}
+// The mark-up overlay names its captures this way; one without a note's source
+// is a screenshot of a page, not material the engineer brought.
+const MARKED_CAPTURE = /(^|\/)drawing-[^/]*\.png$/i;
+/**
+ * The images an engineer attached to chat messages, as the gallery should take
+ * them in: a marked copy stands for the image its marks were drawn on, while
+ * page screenshots, gallery assets and non-raster files stay out.
+ */
+export function intakeImagesFromAttachments(attachments: readonly ChatAttachment[], outputDir = 'intake-assets'): string[] {
+  const paths = new Set<string>();
+  for (const attachment of attachments) {
+    const path = attachment.annotation?.sourcePath ?? attachment.path;
+    if (!isIntakeImageSource(path) || path.startsWith(`${outputDir}/`)) continue;
+    if (!attachment.annotation?.sourcePath && MARKED_CAPTURE.test(path)) continue;
+    paths.add(path);
+  }
+  return [...paths];
 }
 export type IntakeAssetKind = 'image' | 'drawing' | 'chart' | 'table' | 'page';
 export type IntakeState = 'queued' | 'processing' | 'ready' | 'failed';
@@ -60,6 +80,8 @@ export interface IntakeDocument {
   /** Successfully indexed PDF pages; preserves progress across retries. */
   indexedPages: number[];
   updatedAt: string;
+  /** When the source file arrived in the project, for ordering the gallery. */
+  addedAt?: string;
   error?: string;
 }
 export interface ProjectIntakeCatalog {
@@ -68,8 +90,10 @@ export interface ProjectIntakeCatalog {
   assets: IntakeAsset[];
 }
 export interface StartProjectIntakeRequest {
-  /** Existing project-relative PDF paths. Omit to discover PDFs in the folder. */
+  /** Existing project-relative PDF or image paths. Omit to discover PDFs in the folder and the images attached in the chats. */
   paths?: string[];
+  /** Take in only the images attached in the project's chats that the gallery does not have yet. */
+  attached?: boolean;
   /** Optional 1-based page selection, useful for a deliberate sample intake. */
   pages?: number[];
   retry?: boolean;

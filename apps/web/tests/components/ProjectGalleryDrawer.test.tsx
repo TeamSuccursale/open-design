@@ -37,6 +37,19 @@ describe('Project gallery selection', () => {
     expect(onAdd).toHaveBeenCalledWith([{ asset: catalog.assets[0], note: 'Usa in copertina' }, { asset: catalog.assets[1], note: 'Conserva la legenda' }]);
     expect(onClose).toHaveBeenCalledOnce();
   });
+  it('shows the most recently added items first, and can show the oldest first', async () => {
+    const dated = (id: string, title: string, documentId: string): IntakeAsset => ({ ...asset(id, title), documentId });
+    const document = (id: string, addedAt: string) => ({ id, sourcePath: `${id}.png`, name: `${id}.png`, status: 'ready' as const, pageCount: 1, completedPages: 1, indexedPages: [1], updatedAt: '2026-10-27T12:00:00.000Z', addedAt });
+    vi.mocked(fetchProjectIntake).mockResolvedValue({ version: 1,
+      documents: [document('old', '2026-10-27T09:00:00.000Z'), document('new', '2026-10-27T11:00:00.000Z')],
+      assets: [dated('a', 'Vecchia', 'old'), dated('b', 'Nuova', 'new')] });
+    setup();
+    await screen.findByRole('checkbox', { name: 'Seleziona Nuova' });
+    const titles = () => screen.getAllByRole('checkbox').map((box) => box.getAttribute('aria-label'));
+    expect(titles()).toEqual(['Seleziona Nuova', 'Seleziona Vecchia']);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Ordine' }), { target: { value: 'oldest' } });
+    expect(titles()).toEqual(['Seleziona Vecchia', 'Seleziona Nuova']);
+  });
   it('moves the drawer between edges and closes with Escape', async () => {
     const { onClose } = setup();
     await screen.findByRole('checkbox', { name: 'Seleziona Planimetria' });

@@ -6144,6 +6144,9 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   'intake.moveBottom': string;
   'intake.search': string;
   'intake.filter': string;
+  'intake.sort': string;
+  'intake.sortNewest': string;
+  'intake.sortOldest': string;
   'intake.addDocuments': string;
   'intake.scanFolder': string;
   'intake.uploadFailed': string;

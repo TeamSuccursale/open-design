@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../../../src/i18n';
-import { ProjectIntakeCard } from '../../../src/components/chat/ProjectIntakeCard';
+import { intakeCardShown, ProjectIntakeCard } from '../../../src/components/chat/ProjectIntakeCard';
 import { fetchProjectIntake, OPEN_PROJECT_GALLERY_EVENT } from '../../../src/providers/project-intake';
 import { intakeSnapshot } from '../../helpers/project-status-fixtures';
 vi.mock('../../../src/providers/project-intake', () => ({ fetchProjectIntake: vi.fn(async () => ({ version: 1, documents: [], assets: [] })), OPEN_PROJECT_GALLERY_EVENT: 'melillodesign:open-project-gallery' }));
@@ -28,4 +28,13 @@ it('retains an honest attention state and can be dismissed', () => {
   render(<I18nProvider initial="en"><ProjectIntakeCard projectId="normal" snapshot={snapshot} sourceNames={['Survey.pdf']} /></I18nProvider>);
   expect(screen.getByText('Some materials need attention')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Close' })); expect(screen.queryByTestId('project-intake-card')).toBeNull();
+});
+it('stays out of a document chat whose gallery holds only the images sent in the chats', () => {
+  const snapshot = intakeSnapshot();
+  const pdf = snapshot.catalog.documents[0]!;
+  const photo = { ...pdf, id: 'photo', name: 'images.jpg', sourcePath: 'images.jpg' };
+  expect(intakeCardShown(false, { ...snapshot.catalog, documents: [photo] })).toBe(false);
+  expect(intakeCardShown(false, { ...snapshot.catalog, documents: [photo, pdf] })).toBe(true);
+  expect(intakeCardShown(false, null)).toBe(false);
+  expect(intakeCardShown(true, null)).toBe(true);
 });

@@ -118,6 +118,16 @@ function validatedRegions(value: unknown): PageRegions['regions'] {
   });
 }
 
+/** The project-relative paths that still point at a file; an attached image may have been deleted since. */
+async function existingFiles(root: string, relatives: readonly string[]): Promise<string[]> {
+  const present: string[] = [];
+  for (const relative of new Set(relatives)) {
+    const info = await stat(path.resolve(root, relative)).catch(() => null);
+    if (info?.isFile()) present.push(relative);
+  }
+  return present;
+}
+
 function cropNeedsRepair(asset: IntakeAsset): boolean {
   return asset.kind === 'table' && asset.tableData?.complete === false
     && (asset.analysis?.cropRepairAttempts ?? 0) < 1
@@ -234,8 +244,9 @@ export class ProjectIntakeService {
     void pending.then(clear, clear);
     return pending;
   }
-  async start(root: string, request: StartProjectIntakeRequest): Promise<ProjectIntakeCatalog> {
-    return this.serialize(root, () => this.startUnlocked(root, request));
+  /** `attachedImages` are the images attached in the project's chats, oldest first; a folder scan and `attached` take them in. */
+  async start(root: string, request: StartProjectIntakeRequest, attachedImages: readonly string[] = []): Promise<ProjectIntakeCatalog> {
+    return this.serialize(root, () => this.startUnlocked(root, request, attachedImages));
   }
   private enqueue(action: () => Promise<void>) {
     this.queued.push(action);
@@ -249,17 +260,20 @@ export class ProjectIntakeService {
         .finally(() => { this.activeDocuments -= 1; this.drain(); });
     }
   }
-  private async startUnlocked(root: string, request: StartProjectIntakeRequest): Promise<ProjectIntakeCatalog> {
+  private async startUnlocked(root: string, request: StartProjectIntakeRequest, attachedImages: readonly string[]): Promise<ProjectIntakeCatalog> {
     const catalog = await this.baseCatalog(root);
     const config = await validateIntakeConfig(root, await readIntakeConfig(root));
-    const paths = request.paths ?? await this.discoverSources(root, config);
+    const attached = await existingFiles(root, attachedImages);
+    const paths = request.attached
+      ? attached.filter((relative) => !catalog.documents.some((document) => document.sourcePath === relative))
+      : request.paths ?? [...await this.discoverSources(root, config), ...attached];
     // Discovery that finds no PDFs leaves nothing to acquire (a text-only folder),
     // which is not a failed launch. An explicit empty selection remains an error.
     if (!paths.length && !request.paths) return catalog;
     if (!paths.length) throw new Error('No PDFs found in the project or registered intake folders');
     if (paths.length > 500) throw new Error('Select at most 500 PDFs per intake');
     const jobs: Array<{ document: IntakeDocument; absolute: string }> = [];
-    const verified: Array<{ relative: string; absolute: string; digest: string; sha256: string }> = [];
+    const verified: Array<{ relative: string; absolute: string; digest: string; sha256: string; addedAt: string }> = [];
     for (const relative of [...new Set(paths)]) {
       const image = isIntakeImageSource(relative);
       if (!image && !/\.pdf$/i.test(relative)) throw new Error('PDF documents or images (PNG, JPEG, WebP) are required');
@@ -271,9 +285,11 @@ export class ProjectIntakeService {
       const hash = createHash('sha256');
       for await (const chunk of createReadStream(absolute)) hash.update(chunk);
       const sha256 = hash.digest('hex');
-      verified.push({ relative, absolute, digest: sha256.slice(0, 24), sha256 });
+      // Creation time is when the file arrived in the project; filesystems without it fall back to the last write.
+      const addedAt = (info.birthtimeMs > 0 ? info.birthtime : info.mtime).toISOString();
+      verified.push({ relative, absolute, digest: sha256.slice(0, 24), sha256, addedAt });
     }
-    for (const { relative, absolute, digest, sha256 } of verified) {
+    for (const { relative, absolute, digest, sha256, addedAt } of verified) {
       let document = catalog.documents.find((item) => item.id === digest);
       const indexedPages = document?.indexedPages ?? [];
       if (this.running.has(`${root}:${digest}`)) continue;
@@ -283,7 +299,7 @@ export class ProjectIntakeService {
       if (document?.status === 'failed' && !request.retry) continue;
       if (!document) {
         const sourcePath = insideDirectory(await realpath(root), absolute) ? path.relative(root, absolute).replaceAll('\\', '/') : absolute;
-        document = { id: digest, sourcePath, name: path.basename(absolute), status: 'queued', pageCount: 0, completedPages: 0, indexedPages: [], updatedAt: new Date().toISOString() };
+        document = { id: digest, sourcePath, name: path.basename(absolute), status: 'queued', pageCount: 0, completedPages: 0, indexedPages: [], updatedAt: new Date().toISOString(), addedAt };
         catalog.documents.push(document);
       }
       document.status = 'queued'; delete document.error;

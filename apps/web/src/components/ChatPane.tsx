@@ -12,7 +12,7 @@ import { QuoteBar } from './chat/QuoteBar';
 import { UserSendFailure } from './chat/UserSendFailure';
 import { ProjectPreparationStatus } from './chat/ProjectPreparationStatus';
 import { ProjectIntakeProgress } from './chat/ProjectIntakeProgress';
-import { ProjectIntakeCard } from './chat/ProjectIntakeCard';
+import { intakeCardShown, ProjectIntakeCard } from './chat/ProjectIntakeCard';
 import type { IntakeStatusSnapshot } from '../runtime/chat/project-preparation-status';
 import { chatLogSelfResizeObserveDisabled } from '../runtime/chat-scroll-experiments';
 import { releaseChatScrollTakeover } from '../runtime/chat-scroll-takeover';
@@ -4323,7 +4323,7 @@ export function ChatPane({
                 }}
               >
                 {loading ? <ChatConversationLoading t={t} /> : null}
-                {projectId && !loading && (projectMetadata?.projectMode === 'fast' || (intakeCardSnapshot?.projectId === projectId && intakeCardSnapshot.value.catalog.documents.length > 0)) ? <ProjectIntakeCard key={`intake-card:${projectId}`} projectId={projectId} workspaceContext={workspaceContext} snapshot={intakeCardSnapshot?.projectId === projectId ? intakeCardSnapshot.value : null} sourceNames={intakeCardSources} /> : null}
+                {projectId && !loading && intakeCardShown(projectMetadata?.projectMode === 'fast', intakeCardSnapshot?.projectId === projectId ? intakeCardSnapshot.value.catalog : null) ? <ProjectIntakeCard key={`intake-card:${projectId}`} projectId={projectId} workspaceContext={workspaceContext} snapshot={intakeCardSnapshot?.projectId === projectId ? intakeCardSnapshot.value : null} sourceNames={intakeCardSources} /> : null}
                 {displayMessages.length === 0 && !loading && !documentSetupContent ? (
                   <div className="chat-empty-wrap">
                         {/* #5517 leaves the empty conversation pane clean — no

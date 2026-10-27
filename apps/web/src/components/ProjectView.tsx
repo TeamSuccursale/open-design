@@ -104,6 +104,7 @@ import {
   buildRecoveryTaskAnalytics,
   runAgentProviderId,
 } from '../analytics/run-task';
+import { useAttachedImageIntake } from '../hooks/useAttachedImageIntake';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
@@ -2387,6 +2388,7 @@ export function ProjectView({
   const collectionProjectId = project.metadata?.collectionProjectId ?? project.id;
   const collectionProjectName = project.metadata?.collectionProjectName ?? project.name;
   const documentLibrary = useProjectDocuments(collectionProjectId, projectRunWorkspaceContext, !projectReadsHeld);
+  useAttachedImageIntake(projectReadsHeld ? null : project.id, projectRunWorkspaceContext);
   const [documentsPanelOpen, setDocumentsPanelOpen] = useState(false);
   const activeProjectDocumentId = project.metadata?.collectionDocumentId
     ?? projectDocumentForConversation(documentLibrary.documents, project.id, routeConversationId)?.id
