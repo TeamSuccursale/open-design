@@ -367,9 +367,29 @@ function collectTurnCandidates(
   options: SelectAutoOpenTurnOptions,
 ): CandidateFile[] {
   const delivered = filterIntakeOwnedFiles(producedFiles, allFiles);
+  const seen = new Set(delivered.map((f) => f.name));
+  return [...delivered, ...filesRewrittenInTurn(allFiles, options, seen)];
+}
+
+/**
+ * Pre-existing project files the turn rewrote in place: their mtime lands
+ * inside the turn's window. Same exclusions as the auto-open candidates
+ * (dirs, dotfiles, user sketches, intake files, and — when the agent's write
+ * events name project files — anything it did not name). Without
+ * turnStartedAt nothing is attributed.
+ *
+ * Delivery uses this too: an agent that regenerates an existing page from a
+ * script run through a shell has no Write/Edit event on the project file and
+ * no new file name, yet it did deliver.
+ */
+export function filesRewrittenInTurn<T extends CandidateFile>(
+  allFiles: ReadonlyArray<T>,
+  options: SelectAutoOpenTurnOptions,
+  exclude: ReadonlySet<string> = new Set(),
+): T[] {
   const startedAt = options.turnStartedAt;
   if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || startedAt <= 0) {
-    return delivered;
+    return [];
   }
   const endedAt = options.turnEndedAt;
   const windowEnd =
@@ -378,10 +398,9 @@ function collectTurnCandidates(
       : null;
   const touched = options.agentTouchedFileNames;
   const restrictToTouched = touched != null && touched.size > 0;
-  const seen = new Set(delivered.map((f) => f.name));
-  const candidates = [...delivered];
+  const rewritten: T[] = [];
   for (const file of allFiles) {
-    if (!file.name || seen.has(file.name)) continue;
+    if (!file.name || exclude.has(file.name)) continue;
     if (file.type === 'dir') continue;
     if (file.name.startsWith('.') || file.name.includes('/.')) continue;
     if (isUserSketchFile(file)) continue;
@@ -390,9 +409,9 @@ function collectTurnCandidates(
     const mtime = typeof file.mtime === 'number' && Number.isFinite(file.mtime) ? file.mtime : null;
     if (mtime === null || mtime < startedAt - TURN_MTIME_GRACE_MS) continue;
     if (windowEnd !== null && mtime > windowEnd) continue;
-    candidates.push(file);
+    rewritten.push(file);
   }
-  return candidates;
+  return rewritten;
 }
 
 export interface AgentFocusOpenInput {

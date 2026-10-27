@@ -386,6 +386,7 @@ import { invalidateHtmlSourceSnapshotProject } from './html-source-snapshot-cach
 import {
   decideAgentFocusOpen,
   decideAutoOpenAfterWrite,
+  filesRewrittenInTurn,
   isHeaderFooterSupportFile,
   isBlockoutBriefFile,
   isRegisteredDocumentCopy,
@@ -7360,6 +7361,16 @@ export function ProjectView({
               projectDetail.resolvedDir,
             ) ?? [];
             const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
+            const turnWindow = {
+              turnStartedAt: status.createdAt || message.startedAt || message.createdAt || null,
+              turnEndedAt: message.endedAt || legacyReplayEndedAt || null,
+              agentTouchedFileNames: resolveAgentTouchedFileNames(
+                [...touchedFilePaths, ...(status.artifactPaths ?? [])],
+                nextFiles,
+                project.id,
+                projectDetail.resolvedDir,
+              ),
+            };
             const traceObjectFiles = mergeRecoveredTraceObjectFile(
               computeTraceObjectFiles(
                 beforeFileNames,
@@ -7367,6 +7378,7 @@ export function ProjectView({
                 [...touchedFilePaths, ...(status.artifactPaths ?? [])],
                 project.id,
                 projectDetail.resolvedDir,
+                filesRewrittenInTurn(ownedFiles, turnWindow),
               ) ?? [],
               recoveredExistingArtifact,
             );
@@ -7376,14 +7388,7 @@ export function ProjectView({
             const turnArtifacts = withLiveArtifactDeliveries(selectAutoOpenTurnArtifacts(produced, nextFiles, {
               ...autoOpenArtifactOptions,
               preTurnFileNames: beforeFileNames,
-              turnStartedAt: status.createdAt || message.startedAt || message.createdAt || null,
-              turnEndedAt: message.endedAt || legacyReplayEndedAt || null,
-              agentTouchedFileNames: resolveAgentTouchedFileNames(
-                [...touchedFilePaths, ...(status.artifactPaths ?? [])],
-                nextFiles,
-                project.id,
-                projectDetail.resolvedDir,
-              ),
+              ...turnWindow,
             }), message.events);
             if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
               requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
@@ -7901,24 +7906,7 @@ export function ProjectView({
                   projectDetail.resolvedDir,
                 ) ?? [];
                 const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
-                const traceObjectFiles = mergeRecoveredTraceObjectFile(
-                  computeTraceObjectFiles(
-                    beforeFileNames,
-                    ownedFiles,
-                    [
-                      ...touchedFilePaths,
-                      ...(authoritativeReattachArtifactPaths ?? []),
-                    ],
-                    project.id,
-                    projectDetail.resolvedDir,
-                  ) ?? [],
-                  recoveredExistingArtifact,
-                );
-                // OPEND-2588 (2026-09-04): see the replay path above — a run
-                // that lands while reattached is still a turn finishing.
-                const turnArtifacts = withLiveArtifactDeliveries(selectAutoOpenTurnArtifacts(produced, nextFiles, {
-                  ...autoOpenArtifactOptions,
-                  preTurnFileNames: beforeFileNames,
+                const turnWindow = {
                   turnStartedAt: status.createdAt || message.startedAt || message.createdAt || null,
                   turnEndedAt: endedAt ?? null,
                   agentTouchedFileNames: resolveAgentTouchedFileNames(
@@ -7930,6 +7918,27 @@ export function ProjectView({
                     project.id,
                     projectDetail.resolvedDir,
                   ),
+                };
+                const traceObjectFiles = mergeRecoveredTraceObjectFile(
+                  computeTraceObjectFiles(
+                    beforeFileNames,
+                    ownedFiles,
+                    [
+                      ...touchedFilePaths,
+                      ...(authoritativeReattachArtifactPaths ?? []),
+                    ],
+                    project.id,
+                    projectDetail.resolvedDir,
+                    filesRewrittenInTurn(ownedFiles, turnWindow),
+                  ) ?? [],
+                  recoveredExistingArtifact,
+                );
+                // OPEND-2588 (2026-09-04): see the replay path above — a run
+                // that lands while reattached is still a turn finishing.
+                const turnArtifacts = withLiveArtifactDeliveries(selectAutoOpenTurnArtifacts(produced, nextFiles, {
+                  ...autoOpenArtifactOptions,
+                  preTurnFileNames: beforeFileNames,
+                  ...turnWindow,
                 }), needsFullReplay ? replayedEvents : message.events);
                 if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
                   requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
@@ -10303,24 +10312,7 @@ export function ProjectView({
                 });
                 recordFirstLoopStep(analytics.track, 'generated', project.id);
               }
-              const traceObjectFiles = computeTraceObjectFiles(
-                beforeFileNames,
-                ownedFiles,
-                [
-                  ...traceTouchedFilePaths,
-                  ...(authoritativeArtifactPaths ?? []),
-                ],
-                project.id,
-                projectDetail.resolvedDir,
-              ) ?? [];
-              // OPEND-2588 (product ruling 2026-09-04): the turn is over —
-              // open ALL of its primary artifacts, not just the best one.
-              // `turnArtifacts.focused` is byte-for-byte the old
-              // `selectAutoOpenTurnArtifact` answer, so the focused tab below
-              // is decided exactly as it was before; only `.open` is new.
-              const turnArtifacts = withLiveArtifactDeliveries(selectAutoOpenTurnArtifacts(produced, nextFiles, {
-                ...autoOpenArtifactOptions,
-                preTurnFileNames: beforeFileNames,
+              const turnWindow = {
                 turnStartedAt: startedAt,
                 turnEndedAt: endedAt ?? null,
                 agentTouchedFileNames: resolveAgentTouchedFileNames(
@@ -10332,6 +10324,27 @@ export function ProjectView({
                   project.id,
                   projectDetail.resolvedDir,
                 ),
+              };
+              const traceObjectFiles = computeTraceObjectFiles(
+                beforeFileNames,
+                ownedFiles,
+                [
+                  ...traceTouchedFilePaths,
+                  ...(authoritativeArtifactPaths ?? []),
+                ],
+                project.id,
+                projectDetail.resolvedDir,
+                filesRewrittenInTurn(ownedFiles, turnWindow),
+              ) ?? [];
+              // OPEND-2588 (product ruling 2026-09-04): the turn is over —
+              // open ALL of its primary artifacts, not just the best one.
+              // `turnArtifacts.focused` is byte-for-byte the old
+              // `selectAutoOpenTurnArtifact` answer, so the focused tab below
+              // is decided exactly as it was before; only `.open` is new.
+              const turnArtifacts = withLiveArtifactDeliveries(selectAutoOpenTurnArtifacts(produced, nextFiles, {
+                ...autoOpenArtifactOptions,
+                preTurnFileNames: beforeFileNames,
+                ...turnWindow,
               }), latestAssistantMsg.events);
               const turnArtifactToOpen = turnArtifacts.focused;
               const producedArtifactToOpen = turnArtifactToOpen && isLiveArtifactTabId(turnArtifactToOpen)
@@ -15873,12 +15886,19 @@ export function computeTraceObjectFiles(
   touchedPaths: Iterable<string> = [],
   projectId?: string,
   projectRoot?: string | null,
+  rewrittenInTurn: readonly ProjectFile[] = [],
 ): ProjectFile[] | undefined {
   if (!beforeNames) return undefined;
   const set = beforeNames instanceof Set ? beforeNames : new Set(beforeNames);
   const byName = new Map<string, ProjectFile>();
   for (const file of filterImplicitProducedFiles(next.filter((f) => !set.has(f.name)))) {
     byName.set(file.name, { ...file, traceObjectReason: 'new' });
+  }
+  // Existing files rewritten inside the turn window (filesRewrittenInTurn):
+  // a page regenerated by a script the agent ran has no Write/Edit path.
+  for (const file of rewrittenInTurn) {
+    if (byName.has(file.name) || isIntakeOwnedFile(file)) continue;
+    byName.set(file.name, { ...file, traceObjectReason: set.has(file.name) ? 'modified' : 'new' });
   }
   for (const rawPath of touchedPaths) {
     const file = findTouchedProjectFile(rawPath, next, projectId, projectRoot);
