@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { statfs } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
+
+import { resolveToolsDevDataRoot } from "./data-root.js";
 
 /**
  * The setup check behind `MelilloDesign.cmd doctor`: what the launcher and the daemon assume about a team PC.
@@ -21,8 +24,12 @@ export interface DoctorProbes {
   nodeVersion: string;
   pythonExecutable: string;
   codexExecutable: string | null;
+  /** OD_DATA_DIR as tools-dev hands it to the daemon; null when it is not set. */
+  dataRoot: string | null;
   run: (command: string, args: string[], options?: { cwd?: string }) => Promise<DoctorRunResult>;
   portState: (port: number) => Promise<DoctorPortState>;
+  /** Free bytes on the disk holding the given folder; null when the system cannot say. */
+  freeDiskBytes: (folder: string) => Promise<number | null>;
 }
 
 export interface DoctorResult {
@@ -33,6 +40,19 @@ export interface DoctorResult {
 }
 
 const PDF_REQUIREMENTS = path.join("apps", "daemon", "pdf-intake", "requirements.txt");
+/** Below this the production web build, project history and extracted images can fill the disk mid-run. */
+export const MIN_FREE_DISK_BYTES = 5 * 1024 ** 3;
+
+const gigabytes = (bytes: number) => (bytes / 1024 ** 3).toLocaleString("it-IT", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** The free-space line for the disk that holds the app and, unless OD_DATA_DIR moves them, the projects. */
+export function diskSpaceResult(freeBytes: number | null): DoctorResult | null {
+  if (freeBytes === null) return null;
+  const label = `Spazio libero sul disco: ${gigabytes(freeBytes)} GB`;
+  return freeBytes >= MIN_FREE_DISK_BYTES
+    ? { id: "disk", label, ok: true }
+    : { id: "disk", label, ok: false, fix: `Sul disco restano ${gigabytes(freeBytes)} GB liberi: liberane almeno 5, perché con il disco pieno il programma si ferma e il lavoro in corso non si salva.` };
+}
 
 export async function runDoctor(probes: DoctorProbes, ports: { daemonPort: number; webPort: number }, workspaceRoot = "."): Promise<DoctorResult[]> {
   const results: DoctorResult[] = [];
@@ -70,6 +90,15 @@ export async function runDoctor(probes: DoctorProbes, ports: { daemonPort: numbe
       ? { id: "codex", label: "Codex con accesso effettuato", ok: true }
       : { id: "codex", label: "Codex", ok: false, fix: "Codex non ha un accesso attivo: apri l'app Codex e accedi con il tuo account." });
   }
+
+  // Project history guards against an engineer's own mistakes, not against losing the disk: the folder the
+  // projects live in belongs in the PC's normal backup, and this is where the guide sends people to find it.
+  results.push(probes.dataRoot
+    ? { id: "data-root", label: `Cartella dei progetti (OD_DATA_DIR): ${probes.dataRoot}, da includere nel backup del PC`, ok: true }
+    : { id: "data-root", label: "Cartella dei progetti: quella predefinita, perché OD_DATA_DIR non è impostata", ok: true });
+
+  const disk = diskSpaceResult(await probes.freeDiskBytes(probes.dataRoot ?? workspaceRoot));
+  if (disk) results.push(disk);
 
   for (const [id, port] of [["port-daemon", ports.daemonPort], ["port-web", ports.webPort]] as const) {
     const state = await probes.portState(port);
@@ -118,6 +147,15 @@ async function portState(port: number): Promise<DoctorPortState> {
   return (await answers(`http://127.0.0.1:${port}/api/version`)) || (await answers(`http://127.0.0.1:${port}/api/health`)) ? "melillodesign" : "other";
 }
 
+export async function freeDiskBytes(folder: string): Promise<number | null> {
+  try {
+    const stats = await statfs(folder);
+    return stats.bavail * stats.bsize;
+  } catch {
+    return null;
+  }
+}
+
 /** The daemon reads PDFs with the Codex runtime's Python unless MELILLO_PYTHON names another one. */
 function pythonExecutable(): string {
   const bundled = path.join(homedir(), ".cache", "codex-runtimes", "codex-primary-runtime", "dependencies", "python", "python.exe");
@@ -134,6 +172,14 @@ function codexExecutable(): string | null {
   return found[0] ?? (process.platform === "win32" ? null : "codex");
 }
 
-export function localDoctorProbes(): DoctorProbes {
-  return { nodeVersion: process.version, pythonExecutable: pythonExecutable(), codexExecutable: codexExecutable(), run: runCommand, portState };
+export function localDoctorProbes(workspaceRoot: string): DoctorProbes {
+  return {
+    nodeVersion: process.version,
+    pythonExecutable: pythonExecutable(),
+    codexExecutable: codexExecutable(),
+    dataRoot: resolveToolsDevDataRoot(workspaceRoot),
+    run: runCommand,
+    portState,
+    freeDiskBytes,
+  };
 }

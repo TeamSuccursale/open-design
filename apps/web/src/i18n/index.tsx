@@ -212,15 +212,25 @@ export function isRtlLocale(locale: Locale): boolean {
 export function I18nProvider({ initial, children }: ProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(() => initial ?? detectInitialLocale());
 
-  // Keep <html lang="…" dir="…"> in sync so screen readers and CSS hooks
-  // pick the right language token and direction without each component
-  // having to set it itself.
+  // Keep <html lang="…" dir="…"> in sync so screen readers, the spellchecker
+  // and CSS hooks pick the right language token and direction without each
+  // component having to set it itself. Libraries write there too — Excalidraw
+  // stamps its own language on mount, so the hidden sketch prewarm used to
+  // leave an Italian workspace marked "en" — so the provider puts the locale
+  // back whenever something else changes it.
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      const dir = isRtlLocale(locale) ? 'rtl' : 'ltr';
-      document.documentElement.setAttribute('lang', locale);
-      document.documentElement.setAttribute('dir', dir);
-    }
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const dir = isRtlLocale(locale) ? 'rtl' : 'ltr';
+    const apply = () => {
+      if (root.getAttribute('lang') !== locale) root.setAttribute('lang', locale);
+      if (root.getAttribute('dir') !== dir) root.setAttribute('dir', dir);
+    };
+    apply();
+    if (typeof MutationObserver === 'undefined') return;
+    const observer = new MutationObserver(apply);
+    observer.observe(root, { attributes: true, attributeFilter: ['lang', 'dir'] });
+    return () => observer.disconnect();
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {

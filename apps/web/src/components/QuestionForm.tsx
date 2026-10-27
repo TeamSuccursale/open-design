@@ -626,10 +626,10 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       className="qf-primary-action"
       onClick={handleSubmit}
       disabled={submissionBlocked || !ready}
+      // A ready button's label says what it does; a fixed "Avanti" hover contradicted "Invia risposte".
       title={submitting
         ? submittingText
-        : !ready ? uiT('qf.submitDisabledTitle')
-          : !submitDisabled ? uiT('qf.submitTitle') : undefined}
+        : !ready ? uiT('qf.submitDisabledTitle') : undefined}
     >
       {submitting ? submittingText : form.submitLabel ?? uiT(form.layout === 'grouped' ? 'qf.submitGrouped' : 'qf.submitDefault')}
     </Button>
@@ -1162,9 +1162,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                       submitting ? submittingText
                         : activeQuestion?.required === true && !currentQuestionReady
                           ? uiT('qf.submitDisabledTitle')
-                          : isLastQuestion && !submitDisabled && ready
-                            ? uiT('qf.submitTitle')
-                            : undefined
+                          : undefined
                     }
                   >
                     {submitting ? submittingText : isLastQuestion

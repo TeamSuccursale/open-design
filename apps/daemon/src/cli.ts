@@ -804,7 +804,9 @@ function printExportHelp() {
 
 Programmatic export of an HTML/deck artifact to standalone HTML, PDF, image,
 or PPTX. Runs without model/agent calls. Standalone HTML works in a headless
-daemon; visual formats require the desktop runtime's bundled Chromium.
+daemon. A PDF of a document whose pages declare their paper size is printed
+by the PC's Edge or Chrome (OD_BROWSER_EXECUTABLE_PATH overrides which one);
+other visual formats require the desktop runtime's bundled Chromium.
 
 Formats:  ${EXPORT_FORMATS.join(', ')}
 
@@ -1061,10 +1063,17 @@ if (first && SUBCOMMAND_MAP[first]) {
   await SUBCOMMAND_MAP[first](rest);
   // Respect a non-zero exit code a handler set via process.exitCode (e.g. a
   // failed `od resource get`); default to 0 when it left it unset.
-  // Intake and run streaming drain their HTTP clients and let Windows finish
-  // libuv close callbacks and flush stdout naturally. Forcing process.exit
-  // while those callbacks are pending can abort an otherwise successful run.
-  if (first !== 'intake' && first !== 'run') process.exit(process.exitCode ?? 0);
+  // The process then ends by itself once stdout is flushed and libuv's close
+  // callbacks have run. Forcing process.exit while those are pending aborts
+  // Node on Windows with exit code 127 ("Assertion failed ... async.c"): a
+  // result of a few hundred kilobytes, such as `od project list --json`, was
+  // enough to make a successful command look failed. A handler that leaves a
+  // handle open is still closed after a grace period. Intake and run streaming
+  // already drain their HTTP clients and need no forced exit at all.
+  process.exitCode = process.exitCode ?? 0;
+  if (first !== 'intake' && first !== 'run') {
+    setTimeout(() => process.exit(process.exitCode ?? 0), 2_000).unref();
+  }
 } else if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
   runLiveArtifactsToolCli(argv.slice(2))
     .then(({ exitCode }) => {

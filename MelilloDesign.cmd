@@ -14,25 +14,37 @@ set "NODE_OPTIONS=--max-old-space-size=6144 %NODE_OPTIONS%"
 set "MELILLO_ACTION=start"
 set "MELILLO_SCOPE=web"
 set "MELILLO_PORTS=--daemon-port 17456 --web-port 17573"
+rem start and restart serve the production web build, several times faster to load than the dev server;
+rem tools-dev builds it first when it is missing or older than the checkout (about a minute).
+set "MELILLO_MODE=--prod"
 if "%~1"=="" goto launch
 if /i "%~1"=="start" goto launch
 if /i "%~1"=="restart" set "MELILLO_ACTION=restart"
 if /i "%~1"=="restart" goto launch
 if /i "%~1"=="status" set "MELILLO_ACTION=status"
 if /i "%~1"=="status" set "MELILLO_SCOPE="
+if /i "%~1"=="status" set "MELILLO_MODE="
 if /i "%~1"=="status" set "MELILLO_PORTS="
 if /i "%~1"=="status" goto launch
 if /i "%~1"=="stop" set "MELILLO_ACTION=stop"
 if /i "%~1"=="stop" set "MELILLO_SCOPE="
+if /i "%~1"=="stop" set "MELILLO_MODE="
 if /i "%~1"=="stop" set "MELILLO_PORTS="
 if /i "%~1"=="stop" goto launch
 if /i "%~1"=="doctor" set "MELILLO_ACTION=doctor"
 if /i "%~1"=="doctor" set "MELILLO_SCOPE="
+if /i "%~1"=="doctor" set "MELILLO_MODE="
 if /i "%~1"=="doctor" goto launch
 if /i "%~1"=="update" goto update
-echo Usage: MelilloDesign.cmd [start^|restart^|status^|stop^|doctor^|update]
+if /i "%~1"=="install" goto first_install
+echo Usage: MelilloDesign.cmd [start^|restart^|status^|stop^|doctor^|update^|install]
 exit /b 2
+rem A fresh clone has no node_modules, so doctor and update cannot run before this first install.
+:first_install
+set "MELILLO_RETRY=install"
+goto install
 :update
+set "MELILLO_RETRY=update"
 rem tools-dev refuses, or stops the app and fast-forwards the checkout. Only a moved checkout needs an
 rem install, and an install that failed leaves a marker so the next update repeats it.
 set "MELILLO_BEFORE="
@@ -52,10 +64,15 @@ call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 install --frozen
 if errorlevel 1 goto install_failed
 del ".tmp\melillo-install-pending"
 set "MELILLO_ACTION=start"
+if "%MELILLO_RETRY%"=="install" set "MELILLO_ACTION=doctor"
+if "%MELILLO_RETRY%"=="install" set "MELILLO_SCOPE="
+if "%MELILLO_RETRY%"=="install" set "MELILLO_MODE="
 goto launch
 :install_failed
+if "%MELILLO_RETRY%"=="install" echo Installazione non riuscita: leggi l'errore qui sopra. Spesso mancano i Visual Studio Build Tools 2022 con Sviluppo di applicazioni desktop C++; installali, poi rilancia MelilloDesign.cmd install.
+if "%MELILLO_RETRY%"=="install" exit /b 1
 echo Installazione non riuscita. MelilloDesign.cmd doctor dice che cosa manca; poi rilancia MelilloDesign.cmd update, che ripete l'installazione.
 exit /b 1
 :launch
-call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 tools-dev %MELILLO_ACTION% %MELILLO_SCOPE% --namespace project-workspace %MELILLO_PORTS%
+call "%MELILLO_RUNTIME%\bin\fallback\pnpm.cmd" dlx pnpm@10.33.2 tools-dev %MELILLO_ACTION% %MELILLO_SCOPE% --namespace project-workspace %MELILLO_PORTS% %MELILLO_MODE%
 exit /b %ERRORLEVEL%

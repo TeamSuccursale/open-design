@@ -946,6 +946,7 @@ import { registerTerminalRoutes } from './routes/terminal.js';
 import { registerBrowserSessionRoutes } from './routes/browser-sessions.js';
 import { createTerminalService } from './terminals.js';
 import { createBrowserSessionService } from './browser-sessions.js';
+import { createSystemPagedDocumentPrinter, type PagedDocumentPrinter } from './paged-document-pdf.js';
 import { registerSocialShareRoutes } from './routes/social-share.js';
 import { registerOpenDesignPublicMetadataRoutes } from './routes/open-design-public-metadata.js';
 import { registerWhatsNewRoutes } from './routes/whats-new.js';
@@ -3192,6 +3193,8 @@ export interface StartServerOptions {
   desktopFrameRenderer?: DesktopFrameRenderer | null;
   desktopPdfExporter?: DesktopPdfExporter | null;
   desktopSlideRenderer?: DesktopSlideRenderer | null;
+  /** Prints designed documents to PDF; defaults to the PC's own Chrome or Edge. */
+  pagedDocumentPrinter?: PagedDocumentPrinter | null;
   host?: string;
   port?: number;
   returnServer?: boolean;
@@ -3232,6 +3235,7 @@ export async function startServer({
   desktopFrameRenderer = null,
   desktopSlideRenderer = null,
   desktopArtifactExporter = null,
+  pagedDocumentPrinter = createSystemPagedDocumentPrinter(),
   runtime = null,
   staticDir = STATIC_DIR,
   inheritedEnvironment = () => ({}),
@@ -8986,6 +8990,7 @@ export async function startServer({
     desktopPdfExporter,
     desktopSlideRenderer,
     desktopArtifactExporter,
+    pagedDocumentPrinter,
     daemonUrlRef,
     sanitizeArchiveFilename,
   };

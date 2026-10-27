@@ -70,12 +70,13 @@ import {
 } from "./sidecar-client.js";
 import { rewriteCliArgsForDefaultStart } from "./cli-args.js";
 import { ensureDaemonGateForDesktop } from "./desktop-auth-gate.js";
-import { formatDoctorReport, localDoctorProbes, runDoctor } from "./doctor.js";
+import { diskSpaceResult, formatDoctorReport, freeDiskBytes, localDoctorProbes, runDoctor } from "./doctor.js";
 import { loadWorkspaceLocalEnv } from "./local-env.js";
 import { resolveSharedPortsFromRunningState } from "./shared-ports.js";
 import { applyUpdate, formatUpdatePlan, gitIn, planUpdate } from "./update.js";
 import { resolveDevVelaEnv } from "./vela-runtime.js";
 import { resolveWebRuntimeNodeEnv, WEB_MAX_OLD_SPACE_SIZE_ENV } from "./web-node-options.js";
+import { checkWebProdBuild, recordWebProdBuild, WEB_PROD_BUILD_ARGS, webProdBuildEnv } from "./web-prod-build.js";
 
 type CliOptions = ToolDevOptions & {
   envFile?: string | string[];
@@ -461,6 +462,7 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
 
   try {
     const webNodeEnv = resolveWebRuntimeNodeEnv(process.env);
+    const prod = options.prod === true && await ensureWebProdBuild(config, logHandle);
     await ensureWebDevNodeModules(config);
     await writeWebDevTsconfig(config);
     await logHandle.write(`\n[tools-dev] launching web at ${new Date().toISOString()}\n`);
@@ -483,7 +485,7 @@ async function spawnWebRuntime(config: ToolDevConfig, options: CliOptions): Prom
         [SIDECAR_ENV.WEB_PORT]: String(webPort ?? 0),
         PORT: String(webPort ?? 0),
         ...(options.parentPid == null ? {} : { [TOOLS_DEV_PARENT_PID_ENV]: String(options.parentPid) }),
-        ...(options.prod === true
+        ...(prod
           ? { NODE_ENV: "production", OD_WEB_OUTPUT_MODE: "server", OD_WEB_PROD: "1" }
           : {}),
       },
@@ -545,6 +547,37 @@ async function ensureDaemonCliBuild(config: ToolDevConfig, logHandle: FileHandle
     logFd: logHandle.fd,
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
+}
+
+/**
+ * Builds the production web app when it is missing or stale. A failed build falls back to the dev server, which
+ * is slower but serves the same app, rather than leaving the PC without one.
+ */
+async function ensureWebProdBuild(config: ToolDevConfig, logHandle: FileHandle): Promise<boolean> {
+  const check = await checkWebProdBuild(config.workspaceRoot);
+  if (!check.needed) return true;
+
+  const startedAtMs = Date.now();
+  process.stderr.write(`[tools-dev] building the production web app because ${check.reason}; this takes about a minute\n`);
+  await logHandle.write(`\n[tools-dev] building the production web app because ${check.reason} at ${new Date(startedAtMs).toISOString()}\n`);
+  const invocation = createPackageManagerInvocation(WEB_PROD_BUILD_ARGS, process.env);
+  try {
+    await runLoggedCommand({
+      args: invocation.args,
+      command: invocation.command,
+      cwd: config.workspaceRoot,
+      env: webProdBuildEnv(process.env),
+      logFd: logHandle.fd,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+  } catch (error) {
+    const message = `[tools-dev] the production web build failed (${error instanceof Error ? error.message : String(error)}); starting the slower development server instead. The web log has the build output.\n`;
+    process.stderr.write(message);
+    await logHandle.write(message);
+    return false;
+  }
+  await recordWebProdBuild(config.workspaceRoot, startedAtMs);
+  return true;
 }
 
 async function ensureContractsBuild(config: ToolDevConfig, logHandle: FileHandle): Promise<void> {
@@ -1174,7 +1207,13 @@ function addPortOptions(command: ReturnType<typeof cli.command>) {
   return command
     .option("--daemon-port <port>", "force daemon port; conflict quick-fails")
     .option("--web-port <port>", "force web port; conflict quick-fails")
-    .option("--prod", "use production build (requires pnpm --filter @open-design/web build first)");
+    .option("--prod", "serve the production web build, building it first when it is missing or older than its sources");
+}
+
+/** A full disk stops the daemon mid-run, so starting says so while there is still room; it never refuses to start. */
+async function warnWhenDiskIsLow(config: ToolDevConfig): Promise<void> {
+  const disk = diskSpaceResult(await freeDiskBytes(resolveToolsDevDataRoot(config.workspaceRoot) ?? config.workspaceRoot));
+  if (disk && !disk.ok) process.stderr.write(`[tools-dev] ${disk.fix}\n`);
 }
 
 addPortOptions(addSharedOptions(cli.command("start [app]", "Start daemon, web, desktop, or all when app is omitted")))
@@ -1188,6 +1227,7 @@ addPortOptions(addSharedOptions(cli.command("start [app]", "Start daemon, web, d
       }
       const startOptions = parentPid == null ? options : { ...options, parentPid };
       const config = resolveToolDevConfig(startOptions);
+      await warnWhenDiskIsLow(config);
       const targets = resolveStartApps(appName);
       await resolveSharedPortsFromRunningState(targets, startOptions, {
         daemonUrl: async () => (await inspectDaemonRuntime(runtimeLookup(config)))?.url,
@@ -1226,7 +1266,9 @@ addSharedOptions(cli.command("stop [app]", "Stop daemon, web, desktop, or all wh
 addPortOptions(addSharedOptions(cli.command("restart [app]", "Restart daemon, web, desktop, or all when app is omitted"))).action(
   async (appName: string | undefined, options: CliOptions) => {
     assertSupportedNodeRuntimeForStart();
-    printRestartResult(await restartTargets(resolveToolDevConfig(options), appName, options), options);
+    const config = resolveToolDevConfig(options);
+    await warnWhenDiskIsLow(config);
+    printRestartResult(await restartTargets(config, appName, options), options);
   },
 );
 
@@ -1269,7 +1311,7 @@ addSharedOptions(cli.command("check [app]", "Print status and recent logs for qu
 
 addPortOptions(addSharedOptions(cli.command("doctor", "Check this PC's setup and say in Italian what to fix"))).action(
   async (options: CliOptions) => {
-    const results = await runDoctor(localDoctorProbes(), {
+    const results = await runDoctor(localDoctorProbes(WORKSPACE_ROOT), {
       daemonPort: Number(options.daemonPort ?? 17456),
       webPort: Number(options.webPort ?? 17573),
     }, WORKSPACE_ROOT);

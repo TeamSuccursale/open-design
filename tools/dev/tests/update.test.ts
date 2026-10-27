@@ -118,7 +118,7 @@ const fakePnpm = [
 ].join("\r\n");
 
 /** Runs the real launcher against a fake Codex runtime whose pnpm only records its calls. */
-function launch(update: "advance" | "same" | "fail", installExit = 0, pc?: string) {
+function launch(update: "advance" | "same" | "fail", installExit = 0, pc?: string, action = "update") {
   const root = mkdtempSync(path.join(tmpdir(), "melillo-launcher-"));
   roots.push(root);
   const checkout = pc ?? path.join(root, "pc");
@@ -135,19 +135,19 @@ function launch(update: "advance" | "same" | "fail", installExit = 0, pc?: strin
   writeFileSync(path.join(runtime, "node", "bin", "node.exe"), "");
   writeFileSync(path.join(runtime, "bin", "fallback", "pnpm.cmd"), fakePnpm);
   const log = path.join(root, "pnpm.log");
-  const result = spawnSync("cmd.exe", ["/d", "/c", path.join(checkout, "MelilloDesign.cmd"), "update"], {
+  const result = spawnSync("cmd.exe", ["/d", "/c", path.join(checkout, "MelilloDesign.cmd"), action], {
     env: { ...gitEnv, USERPROFILE: path.join(root, "home"), FAKE_PNPM_LOG: log, FAKE_UPDATE: update, FAKE_INSTALL_EXIT: String(installExit) },
     encoding: "utf8",
   });
-  const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split(/\r?\n/).map((line) => line.replace(/^dlx pnpm@10\.33\.2 /, "").trim()) : [];
-  return { code: result.status, calls, checkout, pending: existsSync(path.join(checkout, ".tmp", "melillo-install-pending")) };
+  const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split(/\r?\n/).map((line) => line.replace(/^dlx pnpm@10\.33\.2 /, "").replace(/\s+/g, " ").trim()) : [];
+  return { code: result.status, calls, checkout, output: `${result.stdout}${result.stderr}`, pending: existsSync(path.join(checkout, ".tmp", "melillo-install-pending")) };
 }
 
 describe("MelilloDesign.cmd update", { skip: process.platform !== "win32" }, () => {
   it("installs and starts only after the checkout moved", () => {
     const run = launch("advance");
     assert.equal(run.code, 0);
-    assert.deepEqual(run.calls, ["tools-dev update --namespace project-workspace", "install --frozen-lockfile", "tools-dev start web --namespace project-workspace --daemon-port 17456 --web-port 17573"]);
+    assert.deepEqual(run.calls, ["tools-dev update --namespace project-workspace", "install --frozen-lockfile", "tools-dev start web --namespace project-workspace --daemon-port 17456 --web-port 17573 --prod"]);
     assert.equal(run.pending, false);
   });
 
@@ -170,7 +170,41 @@ describe("MelilloDesign.cmd update", { skip: process.platform !== "win32" }, () 
     assert.equal(failed.pending, true);
     const retried = launch("same", 0, failed.checkout);
     assert.equal(retried.code, 0);
-    assert.deepEqual(retried.calls, ["tools-dev update --namespace project-workspace", "install --frozen-lockfile", "tools-dev start web --namespace project-workspace --daemon-port 17456 --web-port 17573"]);
+    assert.deepEqual(retried.calls, ["tools-dev update --namespace project-workspace", "install --frozen-lockfile", "tools-dev start web --namespace project-workspace --daemon-port 17456 --web-port 17573 --prod"]);
     assert.equal(retried.pending, false);
+  });
+});
+
+// The team works on the production web build, several times faster to load than the dev server; tools-dev
+// builds it when it is missing or older than the checkout.
+describe("MelilloDesign.cmd start", { skip: process.platform !== "win32" }, () => {
+  it("serves the production web build", () => {
+    for (const action of ["start", "restart"]) {
+      const run = launch("same", 0, undefined, action);
+      assert.equal(run.code, 0);
+      assert.deepEqual(run.calls, [`tools-dev ${action} web --namespace project-workspace --daemon-port 17456 --web-port 17573 --prod`]);
+    }
+  });
+
+  it("leaves status and stop as they were", () => {
+    assert.deepEqual(launch("same", 0, undefined, "status").calls, ["tools-dev status --namespace project-workspace"]);
+    assert.deepEqual(launch("same", 0, undefined, "stop").calls, ["tools-dev stop --namespace project-workspace"]);
+  });
+});
+
+// A fresh clone has no node_modules, so `pnpm tools-dev` (doctor, update) cannot run until the first install.
+describe("MelilloDesign.cmd install", { skip: process.platform !== "win32" }, () => {
+  it("installs a fresh checkout, then checks the PC instead of starting", () => {
+    const run = launch("same", 0, undefined, "install");
+    assert.equal(run.code, 0);
+    assert.deepEqual(run.calls, ["install --frozen-lockfile", "tools-dev doctor --namespace project-workspace --daemon-port 17456 --web-port 17573"]);
+    assert.equal(run.pending, false);
+  });
+
+  it("after a failed install asks to repeat the install, since doctor cannot run yet", () => {
+    const run = launch("same", 1, undefined, "install");
+    assert.equal(run.code, 1);
+    assert.deepEqual(run.calls, ["install --frozen-lockfile"]);
+    assert.match(run.output, /rilancia MelilloDesign\.cmd install/);
   });
 });

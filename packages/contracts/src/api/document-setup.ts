@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { DocumentPresentationSchema, DOCUMENT_PRESENTATION_PROMPT } from './document-presentation.js';
 
 export const DOCUMENT_SETUP_PATH = '.melillodesign/document-setup.json';
+/** The app's own folder inside a working folder: preparation state, extracted text and the agent's
+ *  helper scripts. Nothing under it is ever a deliverable. */
+export function isMelilloDesignInternalPath(path: string): boolean {
+  const clean = path.replaceAll('\\', '/').replace(/^\.\//, '');
+  return clean === '.melillodesign' || clean.startsWith('.melillodesign/');
+}
 export function documentSetupPath(projectId?: string): string {
   if (!projectId) return DOCUMENT_SETUP_PATH;
   if (projectId.length > 120 || !/^(?!\.{1,2}$)[\w.-]+$/.test(projectId)) throw new Error('Invalid document setup project identity');

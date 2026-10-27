@@ -607,6 +607,54 @@ describe('输入框发出的一轮:整轮都要留在顶端', () => {
  * 上面那组把「我们自己滚」从判据里摘出去了。这一格钉的是它没有摘过头:
  * 用户的手一动,钉住状态照样要放。
  */
+/*
+ * The first turn of a document project is sent from the setup screen, and the gallery card appears ABOVE it a
+ * moment later (`ProjectIntakeCard` renders before the messages). The anchor path assumed nothing above the
+ * pinned message changes, so it only resized the spacer: at scrollTop 0 the browser's own scroll anchoring does
+ * not step in either, and the turn slid down until the agent's "In corso" row sat cut off under the composer.
+ */
+describe('content appearing above the pinned turn', () => {
+  it('keeps the turn at the top when a card appears above it', async () => {
+    geom.contentHeight = 0;
+    geom.lastUserTopInContent = 0;
+    const first = [{ id: 'u-setup', role: 'user' as const, content: 'from the setup screen', createdAt: 1 }];
+    const { rerender } = render(chatPaneEl([], false));
+    await flushFrames();
+
+    geom.contentHeight = USER_MSG_H;
+    await act(async () => {
+      rerender(chatPaneEl(first, true));
+    });
+    await flushFrames();
+    expect(geom.scrollTop).toBe(anchoredScrollTop());
+
+    // The gallery card mounts above the turn: everything below it moves down by its height.
+    geom.contentHeight += 267;
+    geom.lastUserTopInContent += 267;
+    await triggerResize();
+
+    expect(geom.scrollTop).toBe(anchoredScrollTop());
+    expect(anchoredScrollTop()).toBe(267 - ANCHOR_TOP_PADDING);
+  });
+
+  it('follows the turn back up when content above it goes away', async () => {
+    const { rerender } = render(chatPaneEl(history(), false));
+    await flushFrames();
+    arriveNewUserTurn();
+    await act(async () => {
+      rerender(chatPaneEl(withNewTurn(null), true));
+    });
+    await flushFrames();
+    expect(geom.scrollTop).toBe(anchoredScrollTop());
+
+    geom.contentHeight -= 300;
+    geom.lastUserTopInContent -= 300;
+    await triggerResize();
+
+    expect(geom.scrollTop).toBe(anchoredScrollTop());
+  });
+});
+
 describe('用户自己滚开就松手', () => {
   it('往上滚出容差之后,占位块不再跟着回复收缩', async () => {
     const { rerender } = render(chatPaneEl(history(), false));

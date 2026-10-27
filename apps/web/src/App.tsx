@@ -6125,8 +6125,10 @@ function AppInner() {
       {/* Mounted at shell level, outside the route views, so a survey armed by
           an export inside a project stays on screen when the user navigates
           back to home. */}
+      {/* Consent alone is not enough: without an analytics key the answers
+          would be dropped, and a card that asks for them must not appear. */}
       <ExperienceSurvey
-        metricsConsent={config.telemetry?.metrics === true}
+        metricsConsent={config.telemetry?.metrics === true && analytics.recording}
         onExposure={() => trackExperienceSurveyShown(analytics.track)}
         onDismiss={() => trackExperienceSurveyDismissed(analytics.track)}
         onSubmit={(answers) => trackExperienceSurveySent(analytics.track, answers)}

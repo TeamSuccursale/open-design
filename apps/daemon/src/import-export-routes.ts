@@ -7,6 +7,7 @@ import { deleteProjectWorkspaceArtifacts } from './chat-artifacts/store.js';
 import {
   PROJECT_EXPORT_MANIFEST_SCHEMA,
   isExportFormat,
+  isPagedDocumentHtml,
   type StandaloneHtmlExportRequest,
 } from '@open-design/contracts';
 import nodePath from 'node:path';
@@ -657,6 +658,7 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
     desktopPdfExporter,
     desktopSlideRenderer,
     desktopArtifactExporter,
+    pagedDocumentPrinter,
     daemonUrlRef,
     sanitizeArchiveFilename,
   } = ctx.exports;
@@ -987,6 +989,56 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       }
       if (height != null && (typeof height !== 'number' || !Number.isFinite(height) || height <= 0)) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'height must be a positive number');
+      }
+      // A designed document declares each page's paper size, which the screenshot renderer would lose, and the
+      // desktop app may not be running at all: it is printed by the PC's own browser. Without a browser it keeps
+      // the screenshot path.
+      if (format === 'pdf' && typeof pagedDocumentPrinter === 'function') {
+        const html = sourceHtml
+          ?? (await readProjectFile(PROJECTS_DIR, projectId, fileName, metadata)).buffer.toString('utf8');
+        if (isPagedDocumentHtml(html)) {
+          renderOutputDir = path.join(RUNTIME_DATA_DIR_CANONICAL, 'export-render', randomId());
+          renderPreviewScope = ctx.projectPreviewScopes.mint(
+            projectId,
+            authority.previewWorkspace,
+            { ttlMs: SCREENSHOT_RENDER_PREVIEW_SCOPE_TTL_MS },
+          );
+          let pdf: Buffer | null;
+          try {
+            pdf = await pagedDocumentPrinter({
+              html,
+              baseHref: scopedProjectPreviewBaseHref(projectId, fileName, renderPreviewScope),
+              scratchDir: renderOutputDir,
+            });
+          } catch (err: any) {
+            return sendApiError(
+              res,
+              502,
+              'UPSTREAM_UNAVAILABLE',
+              `the system browser could not print the document: ${String(err?.message || err)}`,
+            );
+          } finally {
+            ctx.projectPreviewScopes.revoke(renderPreviewScope);
+            renderPreviewScope = null;
+            await fs.promises.rm(renderOutputDir, { recursive: true, force: true }).catch(() => {});
+            renderOutputDir = null;
+          }
+          if (pdf) {
+            const titleBase =
+              typeof title === 'string' && title.trim().length > 0
+                ? title.trim()
+                : path.basename(fileName, path.extname(fileName)) || 'document';
+            const filename = `${sanitizeArchiveFilename(titleBase) || 'document'}.pdf`;
+            const asciiFallback =
+              filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '_') || 'document.pdf';
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader(
+              'Content-Disposition',
+              `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            );
+            return res.send(pdf);
+          }
+        }
       }
       if (typeof desktopSlideRenderer !== 'function') {
         if (format === 'image' && typeof desktopArtifactExporter === 'function') {

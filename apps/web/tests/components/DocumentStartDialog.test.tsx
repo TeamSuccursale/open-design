@@ -83,6 +83,17 @@ describe('new document project setup', () => {
     expect(await screen.findByText('C:/TestRuntime/projects')).toBeTruthy();
     expect((screen.getByLabelText(text('extraFolders')) as HTMLTextAreaElement).value).toBe('C:/Sources');
   });
+  // With the daemon down every request comes back 502; the dialog showed the check's own English sentence,
+  // which says neither why nor what to do.
+  it('says the app is not responding when the folder cannot be checked, and keeps the choices', async () => {
+    vi.mocked(dirExists).mockRejectedValueOnce(new Error('Could not check the selected folder'));
+    const { onConfirm } = setup(); await goToFolders(); chooseFolder('C:/Working');
+    fireEvent.click(createButton());
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(text('folderCheckFailed')));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect((screen.getByLabelText(text('workingFolder')) as HTMLInputElement).value).toBe('C:/Working');
+    expect(createButton().hasAttribute('disabled')).toBe(false);
+  });
   it('times out folder validation before creation and lets the same choices be checked again', async () => {
     const signals: AbortSignal[] = [];
     vi.mocked(dirExists).mockImplementationOnce((_path, options) => {

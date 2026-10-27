@@ -106,6 +106,7 @@ export const fa: Dict = {
   "documentStart.folderError": "Could not choose the folder. Try again.",
   "documentStart.folderRequired": "Choose a working folder.",
   "documentStart.folderMissing": "The folder is unavailable: {path}",
+  "documentStart.folderCheckFailed": "Could not check the folder because the app is not responding. Restart it, then try again.",
   "documentStart.required": "Complete the document type, purpose and folder choice.",
   "documentStart.reviewTitle": "Confirm the document before Blockout",
   "documentStart.reviewIntro": "Check the purpose and graphic constraints found in the selected folders. Correct them before planning the pages.",

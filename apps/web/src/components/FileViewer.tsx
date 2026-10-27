@@ -210,6 +210,7 @@ import {
   exportProjectAsPptx,
   exportProjectAsZip,
   exportProjectImageDataUrl,
+  exportPdfThroughDaemon,
   exportProjectScreenshotPdf,
   exportSnapshotAsPdf,
   exportReactComponentAsHtml,
@@ -15776,29 +15777,22 @@ function HtmlViewer({
     const pdfTitle = context?.title ?? exportTitle;
     const pdfSource = context?.content ?? source ?? '';
     const pdfDeck = deckExportSignalForContext(context);
-    if (isOpenDesignHostAvailable()) {
-      const res = await exportProjectScreenshotPdf({
-        projectId,
-        fileName: file.name,
-        title: pdfTitle,
-        workspaceContext,
-        // Broader deck signal than the viewer's nav so runtime-managed decks
-        // (<deck-stage>) paginate per slide; the vector fallback below uses
-        // the SAME signal, so an artifact exports identically with or without
-        // a desktop host (no per-host divergence).
-        deck: pdfDeck,
-        ...(context?.versionId ? { versionId: context.versionId } : {}),
-      });
-      if (res.ok) return res.completion;
-      // A SEMANTIC failure (bad deck routing, unreadable renderer output,
-      // renderer 502, ...) must surface, not silently downgrade to the vector
-      // PDF, which can reintroduce the fidelity bugs the screenshot path
-      // exists to avoid. Only a genuinely unavailable renderer falls through.
-      if (!('unavailable' in res)) throw new Error(res.error);
-    }
+    const daemon = await exportPdfThroughDaemon(pdfSource, isOpenDesignHostAvailable(), (documentTitle) => exportProjectScreenshotPdf({
+      projectId,
+      fileName: file.name,
+      title: documentTitle ?? pdfTitle,
+      workspaceContext,
+      // Broader deck signal than the viewer's nav so runtime-managed decks
+      // (<deck-stage>) paginate per slide; the vector fallback below uses
+      // the SAME signal, so an artifact exports identically with or without
+      // a desktop host (no per-host divergence).
+      deck: pdfDeck,
+      ...(context?.versionId ? { versionId: context.versionId } : {}),
+    }));
+    if (daemon.done) return daemon.completion;
     return exportProjectAsPdf({
       deck: pdfDeck,
-      fallbackPdf: () => exportAsPdf(pdfSource, pdfTitle, { deck: pdfDeck, onProgress: onExportProgress }),
+      fallbackPdf: () => exportAsPdf(pdfSource, pdfTitle, { deck: pdfDeck, onProgress: onExportProgress, baseHref: projectRawUrl(projectId, baseDirFor(file.name), workspaceContext) }),
       filePath: file.name,
       projectId,
       title: pdfTitle,
@@ -16243,30 +16237,21 @@ function HtmlViewer({
     // unacceptable for a Chinese-first product. Falls back to the
     // vector/browser print path on web or on failure.
     fireShareExport('pdf', async () => {
-      if (isOpenDesignHostAvailable()) {
-        const res = await exportProjectScreenshotPdf({
-          projectId,
-          fileName: file.name,
-          title: exportTitle,
-          workspaceContext,
-          // Broader deck signal than the viewer's nav so runtime-managed decks
-          // (<deck-stage>) paginate per slide; the vector fallback below uses
-          // the SAME signal, so an artifact exports identically with or without
-          // a desktop host (no per-host divergence).
-          deck: deckExportSignal,
-        });
-        if (res.ok) return res.completion;
-        // A SEMANTIC failure (bad deck routing, unreadable renderer output,
-        // renderer 502, …) must surface — NOT silently downgrade to the vector
-        // PDF, which can reintroduce the CJK-glyph / fidelity bugs the
-        // screenshot path exists to avoid. Only a genuinely unavailable
-        // renderer (no host / 501 / transport) falls through to the vector path
-        // below.
-        if (!('unavailable' in res)) throw new Error(res.error);
-      }
+      const daemon = await exportPdfThroughDaemon(source ?? '', isOpenDesignHostAvailable(), (documentTitle) => exportProjectScreenshotPdf({
+        projectId,
+        fileName: file.name,
+        title: documentTitle ?? exportTitle,
+        workspaceContext,
+        // Broader deck signal than the viewer's nav so runtime-managed decks
+        // (<deck-stage>) paginate per slide; the vector fallback below uses
+        // the SAME signal, so an artifact exports identically with or without
+        // a desktop host (no per-host divergence).
+        deck: deckExportSignal,
+      }));
+      if (daemon.done) return daemon.completion;
       return exportProjectAsPdf({
         deck: deckExportSignal,
-        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, { deck: deckExportSignal, onProgress: onExportProgress }),
+        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, { deck: deckExportSignal, onProgress: onExportProgress, baseHref: projectRawUrl(projectId, baseDirFor(file.name), workspaceContext) }),
         filePath: file.name,
         projectId,
         title: exportTitle,

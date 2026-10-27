@@ -15,7 +15,7 @@
  * AssistantMessage's render shape.
  */
 import { useEffect, useId, useState } from 'react';
-import { isBlockoutFile, isInternalBlockoutFile } from '@open-design/contracts';
+import { isBlockoutFile, isInternalBlockoutFile, isMelilloDesignInternalPath } from '@open-design/contracts';
 import { BlockoutArtifactCard } from './blockout/BlockoutArtifactCard';
 import { VisuallyHidden } from '@open-design/components';
 import { useT } from '../i18n';
@@ -140,7 +140,8 @@ export function FileOpsSummary({
   const [expanded, setExpanded] = useState(false);
   // 音频胶囊要自己拼文件 URL(它不走 `ArtifactCard`,拿不到那里的上下文)
   const { workspaceContext } = useProjectCollabContext();
-  const entries = sourceEntries.filter((entry) => !isInternalBlockoutFile(entry.path) || isBlockoutFile(entry.path));
+  const entries = sourceEntries.filter((entry) =>
+    !isMelilloDesignInternalPath(entry.path) && (!isInternalBlockoutFile(entry.path) || isBlockoutFile(entry.path)));
 
   if (entries.length === 0) return null;
 
@@ -546,7 +547,7 @@ export function ArtifactCards({
       const name = /^blockout\/proposal[^/]*\.json$/i.test(item.name) ? 'blockout/layout.json' : item.name;
       return [[name, { ...item, name }] as const];
     }
-    return isInternalBlockoutFile(item.name) ? [] : [[item.name, item] as const];
+    return isInternalBlockoutFile(item.name) || isMelilloDesignInternalPath(item.name) ? [] : [[item.name, item] as const];
   })).values()];
   if (visibleItems.length === 0) return null;
   return (

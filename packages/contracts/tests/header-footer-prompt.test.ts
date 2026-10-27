@@ -58,6 +58,14 @@ describe('canonical header/footer host workflow', () => {
     expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).toContain('prefilled with your proposal from the sources');
     expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).not.toContain('or the next one, when the region choice was just made');
   });
+  it('asks every document in scope in one form instead of one form per document', () => {
+    // Flow run 2 (27 October): the report's choices, the A3 booklet's choices and the region contents came as
+    // three forms, each after a full agent turn of 1–2 minutes, because the rule spoke of a per-document group.
+    expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).toContain('in ONE grouped chat question-form');
+    expect(HEADER_FOOTER_WORKFLOW_DIRECTIVE).toContain('never one form per document');
+    expect(DOCUMENT_PRESENTATION_GROUPING_PROMPT).not.toContain('This document-specific group may contain up to ten related controls');
+    expect(DOCUMENT_PRESENTATION_GROUPING_PROMPT).toContain('do not split it by document');
+  });
   it('keeps the shared grouped editorial rule in Blockout and the OD Next stable host context', () => {
     expectWorkflow(composeSystemPrompt({ sessionMode: 'blockout' }));
     const stable = composeOdNextStrategyStableRequestContextV2({ agentId: 'codex', sessionMode: 'blockout', metadata: { projectMode: 'fast' } });

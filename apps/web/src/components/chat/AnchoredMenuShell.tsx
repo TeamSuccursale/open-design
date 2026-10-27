@@ -183,11 +183,16 @@ export function AnchoredMenuShell({
   /*
    * 「浮层身上现在有多少修正」—— 现读,不记账。两条路放的地方不一样:
    *  · Portal menus use right:0. Subtract the measured anchor's right edge from
-   *    the wrapper's inline left + width to remove applied shift and stale geometry.
+   *    the wrapper's left + width to remove applied shift and stale geometry.
    *    Use the hook's snapshot here rather than measuring the anchor again.
-   *    读内联样式而不是 `getBoundingClientRect()`:前者是「盒子现在被摆在哪儿」
-   *    的真值,而且同一帧里连量两次也不会变 —— 没有重排,它就还没动。
-   *    (后者在 jsdom 里恒为 0,量不出来。)
+   *    The wrapper's left and width come from its computed style, the box as
+   *    laid out now, which is what the menu was just measured against. The
+   *    inline style can be a frame ahead: under `prefers-reduced-motion`
+   *    base.css gives every element a 0.01ms transition, so a new `left` is
+   *    laid out only on the next frame, and reading the inline value turned
+   *    that lag into a correction that pushed the toolbar menus off screen.
+   *    (`getBoundingClientRect()` 在 jsdom 里恒为 0,量不出来;计算样式在 jsdom
+   *    里就是内联值。)
    *  · 原地那份:菜单自己的 `transform: translateX()`,从计算样式里读回来。
    * 每次渲染重新赋值即可 —— 它进的是 ref,不参与任何 effect 的依赖。
    */
@@ -196,8 +201,14 @@ export function AnchoredMenuShell({
     if (!anchorId) return readTranslateX(menuRef.current);
     const wrap = wrapperRef.current;
     if (!wrap) return 0;
-    const placed = Number.parseFloat(wrap.style.left);
-    const width = Number.parseFloat(wrap.style.width);
+    let laidOut: CSSStyleDeclaration | null = null;
+    try {
+      laidOut = window.getComputedStyle(wrap);
+    } catch {
+      laidOut = null;
+    }
+    const placed = Number.parseFloat(laidOut?.left || wrap.style.left);
+    const width = Number.parseFloat(laidOut?.width || wrap.style.width);
     if (!Number.isFinite(placed) || !Number.isFinite(width)) return 0;
     return placed + width - rect.right;
   };

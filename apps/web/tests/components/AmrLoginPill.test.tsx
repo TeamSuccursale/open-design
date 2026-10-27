@@ -876,6 +876,7 @@ describe('AmrLoginPill', () => {
       setIdentity: vi.fn(),
       setConfigureGlobals: vi.fn(),
       setUserId: vi.fn(),
+      recording: false,
       anonymousId: 'test-anonymous-id',
       sessionId: 'test-session-id',
       newRequestId: () => 'test-request-id',

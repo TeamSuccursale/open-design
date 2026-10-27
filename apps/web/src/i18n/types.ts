@@ -130,6 +130,7 @@ export interface Dict extends DocumentOverviewDict, DocumentConversationDict, Pr
   "documentStart.folderError": string;
   "documentStart.folderRequired": string;
   "documentStart.folderMissing": string;
+  "documentStart.folderCheckFailed": string;
   "documentStart.required": string;
   "documentStart.reviewTitle": string;
   "documentStart.reviewIntro": string;

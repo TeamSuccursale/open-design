@@ -85,7 +85,10 @@ export function DocumentStartDialog({ purpose, initialProjectName = '', initialF
       const selectedFolder = destination === 'folder' ? folder.trim() : null;
       const required = [...contextRoots, ...(selectedFolder ? [selectedFolder] : [])];
       if (destination === 'folder' && !selectedFolder) throw new Error(t('documentStart.folderRequired'));
-      const valid = await withRequestDeadline((signal) => Promise.all(required.map(async (value) => ({ value, exists: await dirExists(value, { signal, throwOnError: true }) }))), { signal: controller.signal });
+      // The check only fails when the app itself cannot answer (a stopped daemon comes back as 502), so the
+      // engineer is told that and how to recover, not the check's own wording.
+      const valid = await withRequestDeadline((signal) => Promise.all(required.map(async (value) => ({ value, exists: await dirExists(value, { signal, throwOnError: true }) }))), { signal: controller.signal })
+        .catch((failure: unknown) => { throw failure instanceof RequestDeadlineError ? failure : new Error(t('documentStart.folderCheckFailed')); });
       const missing = valid.find((value) => !value.exists);
       if (missing) throw new Error(t('documentStart.folderMissing', { path: missing.value }));
       if (await creation.observe(() => onConfirm({ projectName: projectName.trim(), intent, workingDir: selectedFolder, ...(token && selectedFolder ? { workingDirToken: token } : {}) })) === false) setError(t('documentWizard.createFailed'));

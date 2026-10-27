@@ -67,6 +67,10 @@ interface AnalyticsContextValue {
   // param. Called from App.tsx whenever the AMR login status resolves;
   // null on logout so later events drop the stale id.
   setUserId: (userId: string | null) => void;
+  // True once the daemon has enabled capture for this install: consent given
+  // AND an analytics key configured. Without a key, events go nowhere, so
+  // anything that asks the user for an answer to record must check this.
+  recording: boolean;
   anonymousId: string;
   sessionId: string;
   newRequestId: () => string;
@@ -395,11 +399,12 @@ export function AnalyticsProvider({ children }: { children: ReactNode }) {
       setUserId: (userId: string | null) => {
         setAnalyticsUserId(userId);
       },
+      recording: resolvedAnonId !== null,
       anonymousId: identity.anonymousId,
       sessionId: identity.sessionId,
       newRequestId: () => randomUUID(),
     }),
-    [track, identity, locale, appVersion],
+    [track, identity, locale, appVersion, resolvedAnonId],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -417,6 +422,7 @@ export function useAnalytics(): AnalyticsContextValue {
       setIdentity: () => undefined,
       setConfigureGlobals: () => undefined,
       setUserId: () => undefined,
+      recording: false,
       anonymousId: 'unmounted',
       sessionId: 'unmounted',
       newRequestId: () => randomUUID(),

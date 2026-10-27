@@ -1557,6 +1557,8 @@ export function ChatPane({
    */
   const settledTailUserIdRef = useRef<string | null | undefined>(undefined);
   const anchorActiveRef = useRef(false);
+  /** Where the pinned message sat in the content when it was last pinned — see `keepAnchoredMessageAtTop`. */
+  const anchoredMessageTopRef = useRef<number | null>(null);
   const tailSpacerRef = useRef<HTMLDivElement | null>(null);
   /*
    * 松手之后那块预留空白正在收 —— 见 `stepTailSpacerCollapse`。
@@ -2904,12 +2906,13 @@ export function ChatPane({
       });
       return;
     }
-    // While anchored, the message stays at the top on its own (nothing above
-    // it changes), so we only shrink the spacer as the reply grows — never
-    // re-scroll. This is what keeps scrolling down and the final settle smooth.
+    // While anchored, the reply grows below the message, so we only shrink the
+    // spacer — never re-scroll for it. This is what keeps scrolling down and the
+    // final settle smooth. Only content changing above the message re-pins it.
     if (anchorActiveRef.current) {
       requestAnimationFrame(() => {
         sizeAnchorSpacer();
+        keepAnchoredMessageAtTop();
         syncFollowState();
       });
       return;
@@ -3186,8 +3189,10 @@ export function ChatPane({
         // 松手之后走另一条:那块冻住的空白只在戳进视口时才收,而且一帧一格。
         // 两条互斥 —— 上面那条是等量置换,这条是净减,混用会晃掉锚点。
         let collapsing = false;
-        if (anchorActiveRef.current) sizeAnchorSpacer();
-        else collapsing = stepTailSpacerCollapse();
+        if (anchorActiveRef.current) {
+          sizeAnchorSpacer();
+          keepAnchoredMessageAtTop();
+        } else collapsing = stepTailSpacerCollapse();
         syncFollowState();
         // A layout-only resize changes the geometry that the next scroll
         // event is compared against. Refresh the baseline after the resize
@@ -3814,7 +3819,26 @@ export function ChatPane({
     if (!el) return;
     const msgTopInContent = lastUserMsgTopInContent(el);
     if (msgTopInContent === null) return;
+    anchoredMessageTopRef.current = msgTopInContent;
     writeLogScrollTop(el, anchorScrollTop(msgTopInContent));
+  }
+
+  /**
+   * While anchored, the pinned message must not move on screen. Growth below it is absorbed by the spacer, but
+   * content appearing or vanishing ABOVE it moves it: the gallery card mounts over a document project's first
+   * turn a moment after it is sent. At scrollTop 0 the browser's own scroll anchoring does not step in, so the
+   * turn slid down until the agent's running row sat under the composer. Re-pin it when its offset changed;
+   * when native anchoring already compensated, the position is right and nothing is written.
+   */
+  function keepAnchoredMessageAtTop() {
+    const el = logRef.current;
+    const pinnedAt = anchoredMessageTopRef.current;
+    if (!el || pinnedAt === null) return;
+    const msgTopInContent = lastUserMsgTopInContent(el);
+    if (msgTopInContent === null || Math.abs(msgTopInContent - pinnedAt) < 0.5) return;
+    anchoredMessageTopRef.current = msgTopInContent;
+    const target = anchorScrollTop(msgTopInContent);
+    if (Math.abs(el.scrollTop - target) >= 0.5) writeLogScrollTop(el, target);
   }
 
   function jumpToBottom() {

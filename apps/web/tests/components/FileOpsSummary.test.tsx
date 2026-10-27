@@ -452,3 +452,27 @@ describe('FileOpsSummary artifact cards', () => {
     expect(screen.getByTestId('file-ops-row-old.png')).toBeTruthy();
   });
 });
+
+// Flow run 2 (27 October): while designing the report the agent wrote a helper script under the
+// app's own .melillodesign folder, and the run summary showed it as an output card with Export.
+describe('FileOpsSummary and the app-internal .melillodesign folder', () => {
+  afterEach(() => cleanup());
+
+  it('never lists a file the agent wrote under .melillodesign', () => {
+    render(
+      <FileOpsSummary
+        entries={[
+          entry({ path: '.melillodesign/design-work/compose_report.py' }),
+          entry({ path: 'documents/relazione-illustrativa/index.html' }),
+        ]}
+      />,
+    );
+    expect(screen.queryByTestId('file-ops-row-.melillodesign/design-work/compose_report.py')).toBeNull();
+    expect(screen.getByTestId('file-ops-row-documents/relazione-illustrativa/index.html')).toBeTruthy();
+  });
+
+  it('shows no summary when every file was internal', () => {
+    const { container } = render(<FileOpsSummary entries={[entry({ path: '.melillodesign/design-work/notes.md' })]} />);
+    expect(container.firstChild).toBeNull();
+  });
+});

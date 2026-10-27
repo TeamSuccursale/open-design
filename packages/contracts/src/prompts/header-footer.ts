@@ -3,7 +3,7 @@ import { DOCUMENT_PRESENTATION_GROUPING_PROMPT } from '../api/document-presentat
 /** One workflow contract for native, API/BYOK and OD Next execution. */
 export const HEADER_FOOTER_WORKFLOW_DIRECTIVE = `# Document headers and footers — before page Blockout
 
-Apply this workflow to paginated technical documents in normal AND Fast projects, not unrelated prototypes or media. After the quick source read, use a grouped chat question-form to resolve each document's name, header/footer yes/no independently, cover and numbering. Reuse explicit answers. If either region is enabled, finish its real design before proposing the page-body Blockout. If neither is enabled, skip this stage. Cover visibility, page numbering and cover counting remain document-specific choices.
+Apply this workflow to paginated technical documents in normal AND Fast projects, not unrelated prototypes or media. After the quick source read, once the documents in scope are known, resolve every one of them in ONE grouped chat question-form: each document's name, header/footer yes/no independently, cover and numbering, with each control's label naming its document. Each form costs the engineer a full agent turn of waiting, so never one form per document. Reuse explicit answers. If either region is enabled, finish its real design before proposing the page-body Blockout. If neither is enabled, skip this stage. Cover visibility, page numbering and cover counting remain document-specific choices.
 
 ${DOCUMENT_PRESENTATION_GROUPING_PROMPT}
 

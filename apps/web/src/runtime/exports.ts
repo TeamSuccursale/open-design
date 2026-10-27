@@ -27,7 +27,13 @@ import {
   printHostPdf,
   subscribeHostDownloads,
 } from '@open-design/host';
-import type { WorkspaceCollabContext } from '@open-design/contracts';
+import {
+  DOCUMENT_PRINT_PREPARE_SCRIPT,
+  inlineLinkedStylesheets as inlineDocumentStylesheets,
+  isPagedDocumentHtml,
+  pagedDocumentTitle,
+  type WorkspaceCollabContext,
+} from '@open-design/contracts';
 import {
   workspaceProjectHeaders,
   workspaceResourceUrl,
@@ -1242,6 +1248,26 @@ export function exportProjectScreenshotPdf(opts: {
   return exportProjectAsPptx({ ...opts, format: 'pdf' });
 }
 
+/**
+ * Asks the daemon for an HTML file's PDF before the vector/browser print. With a desktop host the screenshot
+ * renderer runs for every file, and its failures surface, because the vector PDF can lose glyphs. A designed
+ * document, whose pages declare their paper size, is printed by the daemon with the PC's own browser on any
+ * runtime, so it is asked for even without a host and arrives as a file named after the document's own title; when
+ * that print fails, the browser print takes over, since it prepares the same pages.
+ */
+export async function exportPdfThroughDaemon(
+  source: string,
+  hostAvailable: boolean,
+  request: (documentTitle?: string) => Promise<ProjectScreenshotExportResult>,
+): Promise<{ done: true; completion?: DownloadExportResult } | { done: false }> {
+  const paged = isPagedDocumentHtml(source);
+  if (!paged && !hostAvailable) return { done: false };
+  const res = await request(paged ? pagedDocumentTitle(source) : undefined);
+  if (res.ok) return res.completion ? { done: true, completion: res.completion } : { done: true };
+  if (!paged && !('unavailable' in res)) throw new Error(res.error);
+  return { done: false };
+}
+
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1408,6 +1434,95 @@ export function openSandboxedPreviewInNewTab(
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+async function fetchStylesheetText(url: string): Promise<string> {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`stylesheet ${response.status}`);
+  return response.text();
+}
+
+/**
+ * A document printed from a sandboxed frame has an opaque origin and cannot read its linked stylesheets, so the
+ * print preparation could not settle their media queries: the app's own stylesheets are copied in first. The
+ * viewer passes a base href relative to the app.
+ */
+export async function inlineLinkedStylesheets(
+  html: string,
+  baseHref: string | undefined,
+  fetchText: (url: string) => Promise<string> = fetchStylesheetText,
+): Promise<string> {
+  const origin = typeof window !== 'undefined' ? window.location?.origin : undefined;
+  if (!origin) return html;
+  let base: string;
+  try {
+    base = new URL(baseHref ?? currentOriginBaseHref() ?? '', window.location.href).href;
+  } catch {
+    return html;
+  }
+  return inlineDocumentStylesheets(html, { baseHref: base, origin, fetchText });
+}
+
+function pagedSelfPrintScript(nonce: string, title: string): string {
+  return `<script>(function(){
+var nonce=${JSON.stringify(nonce)},title=${JSON.stringify(title)};
+function tell(phase){try{parent.postMessage({type:'od:paged-print',nonce:nonce,phase:phase},'*');}catch(e){}}
+tell('loading');
+function settled(){var waits=[];if(document.fonts&&document.fonts.ready)waits.push(document.fonts.ready);
+[].forEach.call(document.images,function(img){if(img.loading==='lazy')img.loading='eager';if(!img.complete)waits.push(new Promise(function(done){img.addEventListener('load',done);img.addEventListener('error',done);}));});
+return Promise.race([Promise.all(waits),new Promise(function(done){setTimeout(done,10000);})]);}
+addEventListener('load',function(){settled().then(function(){setTimeout(function(){if(title)document.title=title;tell('printing');
+try{window.print();tell('printed');}catch(e){tell('failed');}},60);});});
+})();</script>`;
+}
+
+/**
+ * Print a MelilloDesign document through the browser's own dialog, one sheet per page at the page's paper size
+ * (see DOCUMENT_PRINT_PREPARE_SCRIPT). The document runs in a hidden frame sandboxed like the preview, plus
+ * `allow-modals` for the print dialog. Rejects when the frame's script never starts, or when the document is
+ * still loading its pictures after `loadTimeoutMs` (a first load through the daemon took 30 s).
+ */
+export async function printPagedDocument(
+  html: string,
+  title: string,
+  opts?: SrcdocOptions & { startTimeoutMs?: number; loadTimeoutMs?: number },
+): Promise<void> {
+  const nonce = randomUUID();
+  const baseHref = typeof opts?.baseHref === 'string' ? opts.baseHref : currentOriginBaseHref();
+  const source = await inlineLinkedStylesheets(html, baseHref);
+  const doc = injectBeforeDocumentEnd(
+    buildBlobSafeSrcdoc(source, opts),
+    `<script>${DOCUMENT_PRINT_PREPARE_SCRIPT}</script>${pagedSelfPrintScript(nonce, title)}`,
+  );
+  const frame = document.createElement('iframe');
+  frame.setAttribute('sandbox', 'allow-scripts allow-modals');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.tabIndex = -1;
+  frame.title = title;
+  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:800px;border:0;opacity:0;pointer-events:none';
+  await new Promise<void>((resolve, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow) return;
+      const data = event.data as { type?: unknown; nonce?: unknown; phase?: unknown } | null;
+      if (!data || data.type !== 'od:paged-print' || data.nonce !== nonce) return;
+      if (data.phase === 'loading') { clearTimeout(timer); timer = giveUpAfter(opts?.loadTimeoutMs ?? 120_000, 'The document did not finish loading for print.'); return; }
+      if (data.phase === 'printing') { clearTimeout(timer); return; }
+      window.removeEventListener('message', onMessage);
+      // Some browsers return from print() before their dialog is done with the frame.
+      setTimeout(() => frame.remove(), 60_000);
+      if (data.phase === 'printed') resolve();
+      else reject(new Error('The browser could not print the document.'));
+    };
+    const giveUpAfter = (ms: number, message: string) => setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      frame.remove();
+      reject(new Error(message));
+    }, ms);
+    let timer = giveUpAfter(opts?.startTimeoutMs ?? 15_000, 'The document did not start in the print frame.');
+    window.addEventListener('message', onMessage);
+    frame.srcdoc = doc;
+    document.body.appendChild(frame);
+  });
+}
+
 // Open the artifact in a new tab via a Blob URL with a self-printing
 // script injected. Going through a Blob URL (rather than `window.open('')`
 // + `document.write`) avoids two failure modes we hit before:
@@ -1460,6 +1575,18 @@ export async function exportAsPdf(
       }
     }
     return;
+  }
+
+  // A MelilloDesign document has real paper sizes: the browser's print dialog
+  // keeps its vector text and gives every page its own sheet, where the
+  // capture below would slice it into A4 portrait pictures.
+  if (isPagedDocumentHtml(html)) {
+    try {
+      await printPagedDocument(html, pagedDocumentTitle(html) ?? title, opts);
+      return;
+    } catch (err) {
+      console.warn('[exportAsPdf] paged print failed, falling back to the captured PDF:', err);
+    }
   }
 
   // Browser fallback (pure web): assemble the PDF programmatically — capture

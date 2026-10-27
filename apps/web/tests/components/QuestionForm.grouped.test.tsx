@@ -32,6 +32,16 @@ describe('related native questions answered together', () => {
     expect(screen.queryByRole('button', { name: label })).toBeNull();
   });
 
+  // The grouped button reads "Invia risposte" while its hover said "Avanti", as if another step followed.
+  it('does not contradict its label on hover, and still says why it is disabled', () => {
+    render(<I18nProvider initial="it"><QuestionFormView form={{ ...pageRules('grouped'), submitLabel: undefined }} interactive onSubmit={vi.fn()} /></I18nProvider>);
+    const submit = screen.getByRole('button', { name: 'Invia risposte' });
+    expect(submit.getAttribute('title')).toBe('Compila prima i campi richiesti');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Typography' }), { target: { value: 'Arial 11' } });
+    expect(submit.hasAttribute('disabled')).toBe(false);
+    expect(submit.getAttribute('title')).toBeNull();
+  });
+
   it('shows all related fields and validates them together before one submission', () => {
     const onSubmit = vi.fn();
     render(<I18nProvider initial="en"><QuestionFormView form={pageRules('grouped')} interactive onSubmit={onSubmit} /></I18nProvider>);
